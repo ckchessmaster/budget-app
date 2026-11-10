@@ -62,7 +62,8 @@ budget-app/
 ├── LICENSE                    # Repository license
 ├── README.md                  # Project overview and quickstart
 ├── docs/
-│   └── master_design_document.md  # Comprehensive architectural and system specs
+│   ├── master_design_document.md       # Comprehensive architectural and system specs
+│   └── detailed_task_specifications.md # 62 agent-ready implementation task specs
 ├── apphost/                   # Microsoft Aspire TypeScript AppHost (orchestration)
 ├── backend/                   # Go API service and Temporal worker
 ├── frontend/                  # SvelteKit PWA client application
