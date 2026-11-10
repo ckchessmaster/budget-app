@@ -1,0 +1,23 @@
+DROP TABLE IF EXISTS simplefin_connections CASCADE;
+DROP TABLE IF EXISTS push_subscriptions CASCADE;
+DROP TABLE IF EXISTS transaction_receipt_links CASCADE;
+DROP TABLE IF EXISTS receipt_line_items CASCADE;
+DROP TABLE IF EXISTS receipts CASCADE;
+DROP TABLE IF EXISTS transactions CASCADE;
+DROP TABLE IF EXISTS budget_reallocations CASCADE;
+DROP TABLE IF EXISTS monthly_planned_incomes CASCADE;
+DROP TABLE IF EXISTS monthly_category_budgets CASCADE;
+ALTER TABLE IF EXISTS accounts DROP CONSTRAINT IF EXISTS fk_accounts_debt_category;
+DROP TABLE IF EXISTS categories CASCADE;
+DROP TABLE IF EXISTS accounts CASCADE;
+DROP TABLE IF EXISTS workspace_settings CASCADE;
+DROP TABLE IF EXISTS workspace_members CASCADE;
+DROP TABLE IF EXISTS workspaces CASCADE;
+
+DROP TYPE IF EXISTS receipt_status CASCADE;
+DROP TYPE IF EXISTS transaction_origin CASCADE;
+DROP TYPE IF EXISTS transaction_status CASCADE;
+DROP TYPE IF EXISTS goal_cadence CASCADE;
+DROP TYPE IF EXISTS rollover_type CASCADE;
+DROP TYPE IF EXISTS cc_mode CASCADE;
+DROP TYPE IF EXISTS account_type CASCADE;
