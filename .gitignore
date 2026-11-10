@@ -1,0 +1,81 @@
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.age
+identity.txt
+
+# Node / Frontend (SvelteKit, Vite)
+node_modules/
+.svelte-kit/
+build/
+dist/
+.output/
+package-lock.json.bak
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
+.vite/
+
+# Go / Backend
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+cover.out
+coverage.html
+vendor/
+
+# Microsoft Aspire / Local Orchestration
+.aspire/
+obj/
+bin/
+
+# Temporal Dev Server & Local Storage
+temporal-dev/
+*.temporal
+
+# Databases & Local Data Volumes
+*.sqlite
+*.sqlite3
+*.db
+budget-local-db/
+*.sql.gz
+*.sql.gz.age
+backups/
+
+# Logs
+logs/
+*.log
