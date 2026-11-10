@@ -1,0 +1,17 @@
+issuer: http://localhost:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+staticClients:
+  - id: budget-app-client
+    redirectURIs:
+      - 'http://localhost:5173/auth/callback'
+    name: 'Local Dev Budget App'
+    public: true
+enablePasswordDB: true
+staticPasswords:
+  - email: "admin@dev.local"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
+    username: "admin"
+    userID: "00000000-0000-0000-0000-000000000001"

@@ -1,0 +1,17 @@
+{
+  "name": "budget-apphost",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "aspire run"
+  },
+  "dependencies": {
+    "@microsoft/aspire-cli": "latest",
+    "vscode-jsonrpc": "^8.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  }
+}
