@@ -1,0 +1,52 @@
+backend:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/ckchessmaster/budget-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 8080
+  dbMaxConns: 25
+  runMigrations: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/ckchessmaster/budget-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 8080
+  apiBaseUrl: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+oidc:
+  issuerUrl: "https://auth.example.com/application/o/budget-app/"
+  authority: "https://auth.example.com/application/o/budget-app/"
+  clientId: "budget-app-client"
+
+database:
+  # Name of an existing Secret containing DATABASE_URL (recommended)
+  existingSecret: "budget-backend-secrets"
+  secretKey: "DATABASE_URL"
+  # Or leave existingSecret empty and pass --set database.url=... at install time
+  url: ""
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: budget.example.com
+  tls: []

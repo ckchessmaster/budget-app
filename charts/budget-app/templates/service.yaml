@@ -1,14 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: budget-backend
+  name: {{ include "budget-app.fullname" . }}-backend
   labels:
     app: budget-backend
-    app.kubernetes.io/part-of: budget-app
+    {{- include "budget-app.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
     app: budget-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
       port: 80
@@ -17,14 +18,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: budget-frontend
+  name: {{ include "budget-app.fullname" . }}-frontend
   labels:
     app: budget-frontend
-    app.kubernetes.io/part-of: budget-app
+    {{- include "budget-app.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
     app: budget-frontend
+    app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
       port: 80

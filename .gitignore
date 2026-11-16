@@ -30,8 +30,8 @@ Thumbs.db
 identity.txt
 kubeconfig
 *.kubeconfig
-k8s/**/*secret*.yaml
-!k8s/**/*.example.yaml
+charts/**/values*secret*.yaml
+charts/**/values.local.yaml
 
 # Node / Frontend (SvelteKit, Vite)
 node_modules/

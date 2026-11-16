@@ -1,0 +1,9 @@
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.bak
+*.tmp
+*.orig
+values.local.yaml
+values*secret*.yaml
