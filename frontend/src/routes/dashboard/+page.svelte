@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth.svelte';
+	import { getAppConfig } from '$lib/config';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
@@ -15,7 +16,8 @@
 		if (auth.token) {
 			isLoading = true;
 			try {
-				const res = await fetch('http://localhost:8080/api/v1/workspaces/me', {
+				const { apiBaseUrl } = getAppConfig();
+				const res = await fetch(`${apiBaseUrl}/api/v1/workspaces/me`, {
 					headers: {
 						Authorization: `Bearer ${auth.token}`
 					}

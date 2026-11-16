@@ -28,6 +28,10 @@ Thumbs.db
 *.key
 *.age
 identity.txt
+kubeconfig
+*.kubeconfig
+k8s/**/*secret*.yaml
+!k8s/**/*.example.yaml
 
 # Node / Frontend (SvelteKit, Vite)
 node_modules/

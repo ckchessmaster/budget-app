@@ -110,7 +110,8 @@ func (s *Server) setupRoutes() {
 		})
 	})
 
-	// Health check endpoint
+	// Health check endpoints
+	r.Get("/livez", LivenessHandler())
 	r.Get("/healthz", HealthHandler(s.pool))
 
 	// Protected routes
