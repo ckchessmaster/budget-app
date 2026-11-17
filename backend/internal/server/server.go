@@ -17,8 +17,10 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
+	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 )
 
@@ -126,6 +128,10 @@ func (s *Server) setupRoutes() {
 
 			// Milestone 2: Zero-based budget engine & ledger routes
 			budget.RegisterRoutes(protected, s.pool)
+
+			// Milestone 3: Accounts, solvency, debt projection, & transactions
+			account.RegisterRoutes(protected, s.pool)
+			transaction.RegisterRoutes(protected, s.pool)
 		})
 	}
 }
