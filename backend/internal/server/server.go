@@ -17,6 +17,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 )
@@ -122,6 +123,9 @@ func (s *Server) setupRoutes() {
 			// Workspace auto-provisioning / check endpoint
 			protected.Post("/api/v1/workspaces/provision", s.handleWorkspaceProvision)
 			protected.Get("/api/v1/workspaces/me", s.handleWorkspaceProvision)
+
+			// Milestone 2: Zero-based budget engine & ledger routes
+			budget.RegisterRoutes(protected, s.pool)
 		})
 	}
 }
