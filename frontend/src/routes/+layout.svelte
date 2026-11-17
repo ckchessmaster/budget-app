@@ -18,6 +18,18 @@
 		</div>
 
 		<nav class="flex items-center gap-3">
+			<a
+				href="/dashboard"
+				class="text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
+			>
+				Dashboard
+			</a>
+			<a
+				href="/budget"
+				class="text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
+			>
+				Budget
+			</a>
 			{#if auth.isAuthenticated}
 				<span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded-full border border-slate-700 font-mono">
 					{auth.user?.email || auth.user?.id.slice(0, 8)}
