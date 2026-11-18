@@ -41,6 +41,24 @@ func TestRLSIsolation(t *testing.T) {
 	}
 	defer adminPool.Close()
 
+	if os.Getenv("TEST_DATABASE_URL") == "" && os.Getenv("DATABASE_URL") == "" {
+		_, err = adminPool.Exec(ctx, `
+			DO $$
+			BEGIN
+				IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'budget_app_user') THEN
+					CREATE ROLE budget_app_user WITH LOGIN PASSWORD 'budgetpass';
+				END IF;
+			END
+			$$;
+			GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO budget_app_user;
+			GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO budget_app_user;
+			GRANT ALL PRIVILEGES ON SCHEMA public TO budget_app_user;
+		`)
+		if err != nil {
+			t.Fatalf("failed to ensure test role budget_app_user: %v", err)
+		}
+	}
+
 	appPool, err := pgxpool.New(ctx, getTestDatabaseURL())
 	if err != nil {
 		t.Fatalf("failed to connect to app database: %v", err)

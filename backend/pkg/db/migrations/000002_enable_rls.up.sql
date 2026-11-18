@@ -63,14 +63,3 @@ CREATE POLICY receipts_isolation ON receipts FOR ALL USING (
 CREATE POLICY simplefin_isolation ON simplefin_connections FOR ALL USING (
     workspace_id IN (SELECT id FROM workspaces)
 );
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'budget_app_user') THEN
-    CREATE ROLE budget_app_user WITH LOGIN PASSWORD 'budgetpass';
-  END IF;
-END
-$$;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO budget_app_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO budget_app_user;
-GRANT ALL PRIVILEGES ON SCHEMA public TO budget_app_user;
