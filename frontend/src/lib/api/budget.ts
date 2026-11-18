@@ -19,12 +19,13 @@ function num(val: unknown): number {
 	return 0;
 }
 
-function authHeaders(): HeadersInit {
+async function authHeaders(): Promise<HeadersInit> {
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
 	};
-	if (auth.token) {
-		headers['Authorization'] = `Bearer ${auth.token}`;
+	const token = await auth.getValidToken();
+	if (token) {
+		headers['Authorization'] = `Bearer ${token}`;
 	}
 	return headers;
 }
@@ -81,7 +82,7 @@ function mapIncome(raw: any): PlannedIncome {
 export async function fetchMonthBudget(month: string): Promise<MonthBudgetDetails> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/budget?month=${encodeURIComponent(month)}`, {
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to fetch budget (${res.status})`);
@@ -98,7 +99,7 @@ export async function createCategory(payload: CreateCategoryPayload): Promise<vo
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/categories`, {
 		method: 'POST',
-		headers: authHeaders(),
+		headers: await authHeaders(),
 		body: JSON.stringify(payload)
 	});
 	if (!res.ok) {
@@ -111,7 +112,7 @@ export async function updateCategory(id: string, payload: CreateCategoryPayload)
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/categories/${id}`, {
 		method: 'PUT',
-		headers: authHeaders(),
+		headers: await authHeaders(),
 		body: JSON.stringify(payload)
 	});
 	if (!res.ok) {
@@ -124,7 +125,7 @@ export async function deleteCategory(id: string): Promise<void> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/categories/${id}`, {
 		method: 'DELETE',
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));
@@ -136,7 +137,7 @@ export async function reallocateFunds(payload: ReallocatePayload): Promise<void>
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/budget/reallocate`, {
 		method: 'POST',
-		headers: authHeaders(),
+		headers: await authHeaders(),
 		body: JSON.stringify(payload)
 	});
 	if (!res.ok) {
@@ -149,7 +150,7 @@ export async function createPlannedIncome(payload: CreateIncomePayload): Promise
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/budget/incomes`, {
 		method: 'POST',
-		headers: authHeaders(),
+		headers: await authHeaders(),
 		body: JSON.stringify(payload)
 	});
 	if (!res.ok) {
@@ -163,7 +164,7 @@ export async function deletePlannedIncome(id: string): Promise<void> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/budget/incomes/${id}`, {
 		method: 'DELETE',
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));

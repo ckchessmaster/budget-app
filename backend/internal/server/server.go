@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,13 +16,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
+	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/internal/temporal/schedules"
 	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 )
 
 type Config struct {
@@ -132,6 +139,10 @@ func (s *Server) setupRoutes() {
 			// Milestone 3: Accounts, solvency, debt paydown, and transactions
 			account.RegisterRoutes(protected, s.pool)
 			transaction.RegisterRoutes(protected, s.pool)
+
+			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
+			simplefin.RegisterRoutes(protected, s.pool)
+			protected.Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
 		})
 	}
 }
@@ -152,6 +163,44 @@ func (s *Server) handleWorkspaceProvision(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var wsID uuid.UUID
+	err = db.WithWorkspaceTx(r.Context(), s.pool, userID, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.Context(), `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&wsID)
+	})
+	if err != nil {
+		http.Error(w, `{"error": "workspace_not_found"}`, http.StatusNotFound)
+		return
+	}
+
+	tc, err := temporalinternal.NewClient(slog.Default())
+	if err != nil {
+		http.Error(w, `{"error": "temporal_unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	defer tc.Close()
+
+	_ = schedules.EnsureWorkspaceSyncSchedule(r.Context(), tc, wsID)
+	workflowID, err := schedules.TriggerSyncNow(r.Context(), tc, wsID)
+	if err != nil {
+		http.Error(w, `{"error": "failed_to_trigger_sync"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"workflow_id": workflowID,
+		"status":      "accepted",
+	})
 }
 
 func (s *Server) Run() error {

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { auth } from '$lib/stores/auth.svelte';
 	import {
 		createTransaction,
 		fetchAccounts,
@@ -55,6 +57,11 @@
 	});
 
 	async function loadData() {
+		await auth.ready();
+		if (!auth.isAuthenticated) {
+			void goto('/login');
+			return;
+		}
 		loading = true;
 		errorMessage = null;
 		try {

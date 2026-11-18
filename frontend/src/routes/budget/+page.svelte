@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { fetchMonthBudget } from '$lib/api/budget';
+	import { auth } from '$lib/stores/auth.svelte';
 	import BudgetHeader from '$lib/components/budget/BudgetHeader.svelte';
 	import CategoryModal from '$lib/components/budget/CategoryModal.svelte';
 	import CategoryRow from '$lib/components/budget/CategoryRow.svelte';
@@ -30,6 +31,11 @@
 	let isIncomeModalOpen = $state(false);
 
 	async function loadBudget(month: string) {
+		await auth.ready();
+		if (!auth.isAuthenticated) {
+			goto('/login');
+			return;
+		}
 		isLoading = true;
 		errorMsg = '';
 		try {

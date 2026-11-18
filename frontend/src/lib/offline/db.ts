@@ -91,7 +91,19 @@ export class BudgetLocalDB {
 		const idbTx = db.transaction(STORE_TX_QUEUE, 'readwrite');
 		const done = txDone(idbTx);
 		const store = idbTx.objectStore(STORE_TX_QUEUE);
-		await reqToPromise(store.put(tx));
+		await reqToPromise(
+			store.put({
+				localId: tx.localId,
+				accountId: tx.accountId,
+				amount: tx.amount,
+				merchantRaw: tx.merchantRaw,
+				categoryId: tx.categoryId,
+				transactionDate: tx.transactionDate,
+				syncStatus: tx.syncStatus,
+				createdAt: tx.createdAt,
+				userNotes: tx.userNotes
+			})
+		);
 		await done;
 	}
 
@@ -134,9 +146,14 @@ export class BudgetLocalDB {
 		const idbTx = db.transaction(STORE_CACHED_CATEGORIES, 'readwrite');
 		const done = txDone(idbTx);
 		const store = idbTx.objectStore(STORE_CACHED_CATEGORIES);
-		await reqToPromise(store.clear());
+		store.clear();
 		for (const cat of categories) {
-			await reqToPromise(store.put(cat));
+			store.put({
+				id: cat.id,
+				name: cat.name,
+				groupName: cat.groupName,
+				remaining: cat.remaining
+			});
 		}
 		await done;
 	}
@@ -156,9 +173,16 @@ export class BudgetLocalDB {
 		const idbTx = db.transaction(STORE_CACHED_ACCOUNTS, 'readwrite');
 		const done = txDone(idbTx);
 		const store = idbTx.objectStore(STORE_CACHED_ACCOUNTS);
-		await reqToPromise(store.clear());
+		store.clear();
 		for (const acct of accounts) {
-			await reqToPromise(store.put(acct));
+			store.put({
+				id: acct.id,
+				name: acct.name,
+				type: acct.type,
+				currentBalance: acct.currentBalance,
+				isOnBudget: acct.isOnBudget,
+				cardMode: acct.cardMode
+			});
 		}
 		await done;
 	}

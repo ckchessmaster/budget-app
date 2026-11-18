@@ -3,7 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
 
-	onMount(() => {
+	onMount(async () => {
+		await auth.ready();
 		if (auth.isAuthenticated) {
 			goto('/dashboard');
 		} else {

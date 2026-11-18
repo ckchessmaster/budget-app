@@ -16,12 +16,13 @@ function num(val: unknown): number {
 	return 0;
 }
 
-function authHeaders(): HeadersInit {
+async function authHeaders(): Promise<HeadersInit> {
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
 	};
-	if (auth.token) {
-		headers['Authorization'] = `Bearer ${auth.token}`;
+	const token = await auth.getValidToken();
+	if (token) {
+		headers['Authorization'] = `Bearer ${token}`;
 	}
 	return headers;
 }
@@ -67,7 +68,7 @@ export async function fetchTransactions(params?: {
 
 	const query = qs.toString();
 	const res = await fetch(`${apiBaseUrl}/api/v1/transactions${query ? `?${query}` : ''}`, {
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to fetch transactions (${res.status})`);
@@ -83,7 +84,7 @@ export async function createTransaction(payload: CreateTransactionPayload): Prom
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/transactions`, {
 		method: 'POST',
-		headers: authHeaders(),
+		headers: await authHeaders(),
 		body: JSON.stringify({
 			account_id: payload.accountId,
 			total_amount: payload.totalAmount,
@@ -109,7 +110,7 @@ export async function deleteTransaction(id: string): Promise<void> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/${encodeURIComponent(id)}`, {
 		method: 'DELETE',
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to delete transaction (${res.status})`);
@@ -119,7 +120,7 @@ export async function deleteTransaction(id: string): Promise<void> {
 export async function fetchAccounts(): Promise<AccountItem[]> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/accounts`, {
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to fetch accounts (${res.status})`);
@@ -140,7 +141,7 @@ export async function fetchAccounts(): Promise<AccountItem[]> {
 export async function fetchSolvencyReport(): Promise<SolvencyReport> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/accounts/solvency`, {
-		headers: authHeaders()
+		headers: await authHeaders()
 	});
 	if (!res.ok) {
 		throw new Error(`Failed to fetch solvency report (${res.status})`);

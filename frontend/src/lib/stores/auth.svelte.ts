@@ -6,15 +6,39 @@ export interface UserProfile {
 	email: string;
 }
 
+function isJwt(token: string | undefined | null): token is string {
+	return Boolean(token && token.split('.').length === 3);
+}
+
+function selectBestToken(accessToken?: string, idToken?: string): string | null {
+	if (isJwt(accessToken)) return accessToken;
+	if (isJwt(idToken)) return idToken;
+	return accessToken || idToken || null;
+}
+
 export class AuthStore {
 	isAuthenticated = $state(false);
 	user = $state<UserProfile | null>(null);
 	token = $state<string | null>(null);
+	private readyPromise: Promise<void> = Promise.resolve();
 
 	constructor() {
 		if (browser) {
-			this.checkUser();
+			this.readyPromise = this.checkUser();
 		}
+	}
+
+	async ready(): Promise<void> {
+		await this.readyPromise;
+	}
+
+	async getValidToken(): Promise<string | null> {
+		if (!browser) return this.token;
+		await this.readyPromise;
+		if (!this.token) {
+			await this.checkUser();
+		}
+		return this.token;
 	}
 
 	async checkUser(): Promise<void> {
@@ -23,7 +47,7 @@ export class AuthStore {
 			const user = await getUserManager().getUser();
 			if (user && !user.expired) {
 				this.isAuthenticated = true;
-				this.token = user.access_token || user.id_token || null;
+				this.token = selectBestToken(user.access_token, user.id_token);
 				this.user = {
 					id: user.profile.sub,
 					email: user.profile.email || ''
@@ -53,7 +77,7 @@ export class AuthStore {
 		const user = await userManager.signinCallback();
 		if (user) {
 			this.isAuthenticated = true;
-			this.token = user.access_token || user.id_token || null;
+			this.token = selectBestToken(user.access_token, user.id_token);
 			this.user = {
 				id: user.profile.sub,
 				email: user.profile.email || ''

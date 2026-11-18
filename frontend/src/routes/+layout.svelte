@@ -1,8 +1,24 @@
 <script lang="ts">
 	import '../app.css';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { auth } from '$lib/stores/auth.svelte';
 
 	let { children } = $props();
+
+	const PUBLIC_PATHS = ['/login', '/auth/callback'];
+
+	$effect(() => {
+		const path = page.url.pathname;
+		if (PUBLIC_PATHS.some((p) => path.startsWith(p))) {
+			return;
+		}
+		void auth.ready().then(() => {
+			if (!auth.isAuthenticated) {
+				void goto('/login');
+			}
+		});
+	});
 </script>
 
 <div class="flex flex-col h-dvh w-full bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -35,6 +51,12 @@
 				class="text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
 			>
 				Transactions
+			</a>
+			<a
+				href="/accounts"
+				class="text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
+			>
+				Accounts
 			</a>
 			{#if auth.isAuthenticated}
 				<span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded-full border border-slate-700 font-mono">

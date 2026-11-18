@@ -20,7 +20,7 @@ export async function flushOfflineQueue(
 	}
 
 	const baseUrl = apiBaseUrl ?? getAppConfig().apiBaseUrl;
-	const authToken = token !== undefined ? token : auth.token;
+	const authToken = token !== undefined ? token : await auth.getValidToken();
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
