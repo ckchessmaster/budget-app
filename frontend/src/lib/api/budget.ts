@@ -95,6 +95,23 @@ export async function fetchMonthBudget(month: string): Promise<MonthBudgetDetail
 	};
 }
 
+export async function fetchCategories(): Promise<Array<{ id: string; name: string; groupName: string }>> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/categories`, {
+		headers: await authHeaders()
+	});
+	if (!res.ok) {
+		throw new Error(`Failed to fetch categories (${res.status})`);
+	}
+	const raw = await res.json();
+	if (!Array.isArray(raw)) return [];
+	return raw.map((c: any) => ({
+		id: c.id,
+		name: c.name,
+		groupName: c.group_name
+	}));
+}
+
 export async function createCategory(payload: CreateCategoryPayload): Promise<void> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/categories`, {

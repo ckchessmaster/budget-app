@@ -54,22 +54,45 @@
 		});
 		return n < 0 ? `-$${abs}` : `$${abs}`;
 	}
+	function handleRowClick() {
+		onEditClick?.(category.id);
+	}
+
+	function handleRowKeydown(e: KeyboardEvent) {
+		if (!onEditClick) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			onEditClick(category.id);
+		}
+	}
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
-	class="group rounded-xl border border-slate-800/80 bg-slate-900/70 p-3.5 transition-colors hover:border-slate-700"
+	role={onEditClick ? 'button' : undefined}
+	tabindex={onEditClick ? 0 : undefined}
+	onclick={onEditClick ? handleRowClick : undefined}
+	onkeydown={onEditClick ? handleRowKeydown : undefined}
+	class="group rounded-xl border border-slate-800/80 bg-slate-900/70 p-3.5 transition-colors hover:border-slate-700 {onEditClick
+		? 'cursor-pointer'
+		: ''}"
 	data-testid="category-row"
 >
 	<div class="flex items-center justify-between gap-3">
 		<div class="min-w-0 flex-1">
 			<div class="flex items-center gap-2">
-				<button
-					type="button"
-					onclick={() => onEditClick?.(category.id)}
-					class="truncate text-left text-sm font-medium text-slate-100 hover:text-emerald-400 transition-colors"
+				<span
+					class="truncate text-left text-sm font-medium text-slate-100 group-hover:text-emerald-400 transition-colors"
 				>
 					{category.name}
-				</button>
+				</span>
+				{#if onEditClick}
+					<span
+						class="text-[11px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
+					>
+						Edit
+					</span>
+				{/if}
 				{#if category.pacing && !category.pacing.isMet}
 					<span
 						class="hidden sm:inline-flex items-center rounded-md bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-slate-300 border border-slate-700"
@@ -93,7 +116,10 @@
 				<button
 					type="button"
 					data-testid="overspent-badge"
-					onclick={() => onCoverClick(category.id)}
+					onclick={(e) => {
+						e.stopPropagation();
+						onCoverClick(category.id);
+					}}
 					class="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-3 py-1 text-xs font-semibold text-rose-400 border border-rose-500/40 hover:bg-rose-500/25 transition-colors"
 				>
 					<span>{fmt(category.remaining)}</span>

@@ -126,6 +126,136 @@ func TestAccountServiceValidation(t *testing.T) {
 			t.Fatalf("expected ErrInvalidStatementDueDay, got %v", err)
 		}
 	})
+
+	t.Run("accepts cash account type", func(t *testing.T) {
+		a := &Account{
+			Name:           "Household Cash",
+			Type:           Cash,
+			CurrentBalance: decimal.NewFromFloat(120.00),
+			IsOnBudget:     true,
+		}
+		if err := ValidateAccount(a); err != nil {
+			t.Fatalf("unexpected error for cash account: %v", err)
+		}
+	})
+}
+
+func TestApplyAccountUpdate(t *testing.T) {
+	t.Run("allows updating numeric fields to zero and clearing nullable fields", func(t *testing.T) {
+		due := 15
+		catID := uuid.New()
+		acct := &Account{
+			ID:                   uuid.New(),
+			Name:                 "Revolver Card",
+			Type:                 CreditCard,
+			CurrentBalance:       decimal.NewFromFloat(-500.00),
+			IsOnBudget:           true,
+			CardMode:             DebtPaydown,
+			InitialDebtBaseline:  decimal.NewFromFloat(1000.00),
+			APRPercentage:        decimal.NewFromFloat(22.99),
+			StatementDueDay:      &due,
+			DebtPayoffCategoryID: &catID,
+		}
+
+		zero := decimal.Zero
+		payInFull := PayInFull
+		delta, err := applyAccountUpdate(acct, UpdateAccountRequest{
+			CurrentBalance:          &zero,
+			APRPercentage:           &zero,
+			InitialDebtBaseline:     &zero,
+			CardMode:                &payInFull,
+			ClearStatementDueDay:    true,
+			ClearDebtPayoffCategory: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if delta.StringFixed(2) != "500.00" {
+			t.Fatalf("delta = %s, want 500.00", delta.StringFixed(2))
+		}
+		if !acct.CurrentBalance.IsZero() || !acct.APRPercentage.IsZero() || !acct.InitialDebtBaseline.IsZero() {
+			t.Fatalf("expected zeroed numeric fields, got bal=%s apr=%s base=%s",
+				acct.CurrentBalance, acct.APRPercentage, acct.InitialDebtBaseline)
+		}
+		if acct.StatementDueDay != nil || acct.DebtPayoffCategoryID != nil {
+			t.Fatalf("expected cleared nullable fields, got due=%v cat=%v", acct.StatementDueDay, acct.DebtPayoffCategoryID)
+		}
+	})
+
+	t.Run("switching from DEBT_PAYDOWN credit card to checking cleans up card fields", func(t *testing.T) {
+		due := 20
+		catID := uuid.New()
+		acct := &Account{
+			ID:                   uuid.New(),
+			Name:                 "Card",
+			Type:                 CreditCard,
+			CurrentBalance:       decimal.NewFromFloat(-250.00),
+			IsOnBudget:           true,
+			CardMode:             DebtPaydown,
+			InitialDebtBaseline:  decimal.NewFromFloat(300.00),
+			StatementDueDay:      &due,
+			DebtPayoffCategoryID: &catID,
+		}
+
+		checking := Checking
+		newBal := decimal.NewFromFloat(100.00)
+		delta, err := applyAccountUpdate(acct, UpdateAccountRequest{
+			Type:           &checking,
+			CurrentBalance: &newBal,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if delta.StringFixed(2) != "350.00" {
+			t.Fatalf("delta = %s, want 350.00", delta.StringFixed(2))
+		}
+		if acct.CardMode != PayInFull || acct.DebtPayoffCategoryID != nil || acct.StatementDueDay != nil || !acct.InitialDebtBaseline.IsZero() {
+			t.Fatalf("expected card fields cleaned up, got %+v", acct)
+		}
+	})
+
+	t.Run("rejects balance edit on SimpleFIN-linked account unless unlinked", func(t *testing.T) {
+		extID := "sf-acct-1"
+		acct := &Account{
+			ID:                uuid.New(),
+			ExternalAccountID: &extID,
+			Name:              "Bank Checking",
+			Type:              Checking,
+			CurrentBalance:    decimal.NewFromFloat(1000.00),
+			IsOnBudget:        true,
+		}
+
+		newBal := decimal.NewFromFloat(850.00)
+		if _, err := applyAccountUpdate(acct, UpdateAccountRequest{CurrentBalance: &newBal}); !errors.Is(err, ErrLinkedAccountBalanceReadOnly) {
+			t.Fatalf("expected ErrLinkedAccountBalanceReadOnly, got %v", err)
+		}
+
+		// Metadata-only update with unchanged balance succeeds
+		renamed := "Renamed Bank Checking"
+		sameBal := decimal.NewFromFloat(1000.00)
+		delta, err := applyAccountUpdate(acct, UpdateAccountRequest{
+			Name:           &renamed,
+			CurrentBalance: &sameBal,
+		})
+		if err != nil || !delta.IsZero() || acct.Name != renamed {
+			t.Fatalf("expected metadata update to succeed, got delta=%s err=%v", delta, err)
+		}
+
+		// Unlink and modify balance in same patch succeeds and returns negative delta
+		delta, err = applyAccountUpdate(acct, UpdateAccountRequest{
+			UnlinkExternal: true,
+			CurrentBalance: &newBal,
+		})
+		if err != nil {
+			t.Fatalf("expected unlink + balance update to succeed, got %v", err)
+		}
+		if acct.ExternalAccountID != nil {
+			t.Fatalf("expected ExternalAccountID to be nil after unlink")
+		}
+		if delta.StringFixed(2) != "-150.00" {
+			t.Fatalf("delta = %s, want -150.00", delta.StringFixed(2))
+		}
+	})
 }
 
 func TestAccountServiceIntegration(t *testing.T) {

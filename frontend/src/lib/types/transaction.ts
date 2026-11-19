@@ -27,14 +27,48 @@ export interface TransactionItemModel {
 	splits?: TransactionSplit[];
 }
 
+export type AccountType = 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment' | 'loan';
+
 export interface AccountItem {
 	id: string;
 	name: string;
-	type: 'checking' | 'savings' | 'credit_card' | 'investment' | 'loan';
+	type: AccountType;
 	currentBalance: number;
 	isOnBudget: boolean;
 	cardMode: 'PAY_IN_FULL' | 'DEBT_PAYDOWN';
 	aprPercentage: number;
+	externalAccountId: string | null;
+	initialDebtBaseline: number;
+	statementDueDay: number | null;
+	debtPayoffCategoryId: string | null;
+}
+
+export interface CreateAccountPayload {
+	name: string;
+	type: AccountType;
+	currentBalance: number;
+	isOnBudget: boolean;
+	cardMode?: 'PAY_IN_FULL' | 'DEBT_PAYDOWN';
+	initialDebtBaseline?: number;
+	aprPercentage?: number;
+	statementDueDay?: number | null;
+	debtPayoffCategoryId?: string | null;
+}
+
+export interface UpdateAccountPayload {
+	name?: string;
+	type?: AccountType;
+	currentBalance?: number;
+	isOnBudget?: boolean;
+	cardMode?: 'PAY_IN_FULL' | 'DEBT_PAYDOWN';
+	initialDebtBaseline?: number;
+	aprPercentage?: number;
+	statementDueDay?: number | null;
+	clearStatementDueDay?: boolean;
+	debtPayoffCategoryId?: string | null;
+	clearDebtPayoffCategory?: boolean;
+	unlinkExternal?: boolean;
+	recordBalanceAdjustment?: boolean;
 }
 
 export interface SolvencyReport {

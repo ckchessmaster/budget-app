@@ -150,7 +150,7 @@ func (h *Handler) LinkAccounts(w http.ResponseWriter, r *http.Request) {
 		for _, m := range req.Accounts {
 			accType := account.AccountType(m.Type)
 			switch accType {
-			case account.Checking, account.Savings, account.CreditCard, account.Investment, account.Loan:
+			case account.Checking, account.Savings, account.Cash, account.CreditCard, account.Investment, account.Loan:
 			default:
 				return account.ErrInvalidAccountType
 			}

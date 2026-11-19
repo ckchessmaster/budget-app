@@ -50,4 +50,32 @@ describe('CategoryRow', () => {
 		expect(getByTestId('bar-pending')).toBeTruthy();
 		expect(getByTestId('bar-original-tick')).toBeTruthy();
 	});
+
+	it('fires onEditClick when clicking the row and stops propagation on overspent badge', async () => {
+		const onCoverClick = vi.fn();
+		const onEditClick = vi.fn();
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-789',
+					name: 'Utilities',
+					originalPlanned: 100,
+					effectiveTarget: 100,
+					spentCleared: 120,
+					spentPending: 0,
+					remaining: -20
+				},
+				onCoverClick,
+				onEditClick
+			}
+		});
+
+		await fireEvent.click(getByTestId('overspent-badge'));
+		expect(onCoverClick).toHaveBeenCalledTimes(1);
+		expect(onEditClick).not.toHaveBeenCalled();
+
+		await fireEvent.click(getByTestId('category-row'));
+		expect(onEditClick).toHaveBeenCalledTimes(1);
+		expect(onEditClick).toHaveBeenCalledWith('cat-789');
+	});
 });
