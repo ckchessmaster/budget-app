@@ -108,15 +108,17 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 			GROUP BY c.id
 		),
 		cat_spend AS (
-			SELECT category_id,
-			       COALESCE(SUM(CASE WHEN status = 'POSTED' AND amount < 0 THEN -amount ELSE 0 END), 0) AS spent_cleared,
-			       COALESCE(SUM(CASE WHEN status = 'PENDING' AND amount < 0 THEN -amount ELSE 0 END), 0) AS spent_pending
-			FROM transactions
-			WHERE category_id IS NOT NULL
-			  AND is_transfer = FALSE
-			  AND transaction_date >= $1::date
-			  AND transaction_date < $2::date
-			GROUP BY category_id
+			SELECT t.category_id,
+			       COALESCE(SUM(CASE WHEN t.status = 'POSTED' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_cleared,
+			       COALESCE(SUM(CASE WHEN t.status = 'PENDING' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_pending
+			FROM transactions t
+			INNER JOIN accounts a ON a.id = t.account_id
+			WHERE t.category_id IS NOT NULL
+			  AND t.is_transfer = FALSE
+			  AND a.is_on_budget = TRUE
+			  AND t.transaction_date >= $1::date
+			  AND t.transaction_date < $2::date
+			GROUP BY t.category_id
 		)
 		SELECT c.id,
 		       c.name,

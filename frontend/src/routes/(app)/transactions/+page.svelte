@@ -31,11 +31,23 @@
 
 	// Quick-add form state
 	let formAccountId = $state('');
+	let formDirection = $state<'expense' | 'inflow'>('expense');
 	let formCategoryId = $state('');
 	let formMerchant = $state('');
 	let formAmount = $state('');
 	let formDate = $state(new Date().toISOString().slice(0, 10));
 	let submitting = $state(false);
+
+	let selectedFormAccount = $derived(accounts.find((a) => a.id === formAccountId) ?? null);
+	let isOffBudgetFormAccount = $derived(
+		selectedFormAccount !== null && !selectedFormAccount.isOnBudget
+	);
+
+	$effect(() => {
+		if (isOffBudgetFormAccount && formCategoryId !== '') {
+			formCategoryId = '';
+		}
+	});
 
 	let accountMap = $derived(new Map(accounts.map((a) => [a.id, a.name])));
 	let categoryMap = $derived(new Map(categories.map((c) => [c.id, c.name])));
@@ -77,7 +89,11 @@
 					currentBalance: a.currentBalance,
 					isOnBudget: a.isOnBudget,
 					cardMode: (a.cardMode as AccountItem['cardMode']) ?? 'PAY_IN_FULL',
-					aprPercentage: 0
+					aprPercentage: 0,
+					externalAccountId: null,
+					initialDebtBaseline: 0,
+					statementDueDay: null,
+					debtPayoffCategoryId: null
 				}));
 				categories = await localDB.getCachedCategories();
 				if (!formAccountId && accounts.length > 0) formAccountId = accounts[0].id;
@@ -152,7 +168,9 @@
 
 		submitting = true;
 		errorMessage = null;
-		const normalizedAmount = parsedAmount > 0 ? -Math.abs(parsedAmount) : parsedAmount;
+		const absAmount = Math.abs(parsedAmount);
+		const normalizedAmount = formDirection === 'inflow' ? absAmount : -absAmount;
+		const effectiveCategoryId = isOffBudgetFormAccount ? null : formCategoryId || null;
 
 		try {
 			if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -161,15 +179,15 @@
 					accountId: formAccountId,
 					amount: normalizedAmount,
 					merchantRaw: formMerchant.trim(),
-					categoryId: formCategoryId || null,
+					categoryId: effectiveCategoryId,
 					transactionDate: formDate,
 					syncStatus: 'QUEUED',
 					createdAt: Date.now()
 				};
 				await localDB.queueTransaction(offlineTx);
-				if (formCategoryId) {
+				if (effectiveCategoryId) {
 					categories = categories.map((c) =>
-						c.id === formCategoryId ? { ...c, remaining: c.remaining + normalizedAmount } : c
+						c.id === effectiveCategoryId ? { ...c, remaining: c.remaining + normalizedAmount } : c
 					);
 					await localDB.cacheCategories(categories);
 				}
@@ -180,7 +198,7 @@
 					accountId: formAccountId,
 					totalAmount: normalizedAmount,
 					merchantRaw: formMerchant.trim(),
-					categoryId: formCategoryId || null,
+					categoryId: effectiveCategoryId,
 					transactionDate: formDate
 				});
 				await loadData();
@@ -260,7 +278,7 @@
 
 	<form
 		onsubmit={handleSubmit}
-		class="bg-slate-900 border border-slate-800 rounded-lg p-4 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end"
+		class="bg-slate-900 border border-slate-800 rounded-lg p-4 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end"
 	>
 		<div>
 			<label class="block text-xs text-slate-400 mb-1" for="tx-account">Account</label>
@@ -277,12 +295,36 @@
 		</div>
 
 		<div>
-			<label class="block text-xs text-slate-400 mb-1" for="tx-merchant">Merchant</label>
+			<span class="block text-xs text-slate-400 mb-1">Type</span>
+			<div class="grid grid-cols-2 rounded-md border border-slate-700 bg-slate-950 p-0.5 text-xs">
+				<button
+					type="button"
+					onclick={() => (formDirection = 'expense')}
+					class="rounded py-1 font-medium transition-colors {formDirection === 'expense'
+						? 'bg-rose-600/80 text-white'
+						: 'text-slate-400 hover:text-slate-200'}"
+				>
+					Expense
+				</button>
+				<button
+					type="button"
+					onclick={() => (formDirection = 'inflow')}
+					class="rounded py-1 font-medium transition-colors {formDirection === 'inflow'
+						? 'bg-emerald-600/80 text-white'
+						: 'text-slate-400 hover:text-slate-200'}"
+				>
+					Inflow
+				</button>
+			</div>
+		</div>
+
+		<div>
+			<label class="block text-xs text-slate-400 mb-1" for="tx-merchant">Merchant / Payee</label>
 			<input
 				id="tx-merchant"
 				type="text"
 				bind:value={formMerchant}
-				placeholder="Grocery Store"
+				placeholder={formDirection === 'inflow' ? 'Paycheck / Payment / Deposit' : 'Grocery Store'}
 				class="w-full bg-slate-950 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-slate-100"
 				required
 			/>
@@ -294,6 +336,7 @@
 				id="tx-amount"
 				type="number"
 				step="0.01"
+				min="0"
 				bind:value={formAmount}
 				placeholder="25.00"
 				class="w-full bg-slate-950 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-slate-100"
@@ -306,9 +349,12 @@
 			<select
 				id="tx-category"
 				bind:value={formCategoryId}
-				class="w-full bg-slate-950 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-slate-100"
+				disabled={isOffBudgetFormAccount}
+				class="w-full bg-slate-950 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-slate-100 disabled:opacity-50"
 			>
-				<option value="">Uncategorized</option>
+				<option value="">
+					{isOffBudgetFormAccount ? 'Off-budget (no category)' : 'Uncategorized'}
+				</option>
 				{#each categories as cat}
 					<option value={cat.id}>{cat.name}</option>
 				{/each}
@@ -320,7 +366,13 @@
 			disabled={submitting || !formAccountId}
 			class="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-1.5 rounded-md transition-colors"
 		>
-			{submitting ? 'Saving...' : isOffline ? 'Queue Offline' : 'Add Expense'}
+			{submitting
+				? 'Saving...'
+				: isOffline
+					? 'Queue Offline'
+					: formDirection === 'inflow'
+						? 'Add Inflow'
+						: 'Add Expense'}
 		</button>
 	</form>
 

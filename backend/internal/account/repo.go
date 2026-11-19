@@ -16,6 +16,7 @@ type AccountType string
 const (
 	Checking   AccountType = "checking"
 	Savings    AccountType = "savings"
+	Cash       AccountType = "cash"
 	CreditCard AccountType = "credit_card"
 	Investment AccountType = "investment"
 	Loan       AccountType = "loan"
@@ -86,7 +87,7 @@ func ValidateAccount(a *Account) error {
 	}
 
 	switch a.Type {
-	case Checking, Savings, CreditCard, Investment, Loan:
+	case Checking, Savings, Cash, CreditCard, Investment, Loan:
 	default:
 		return ErrInvalidAccountType
 	}

@@ -2,9 +2,11 @@ import { getAppConfig } from '$lib/config';
 import { auth } from '$lib/stores/auth.svelte';
 import type {
 	AccountItem,
+	CreateAccountPayload,
 	CreateTransactionPayload,
 	SolvencyReport,
-	TransactionItemModel
+	TransactionItemModel,
+	UpdateAccountPayload
 } from '$lib/types/transaction';
 
 function num(val: unknown): number {
@@ -117,6 +119,22 @@ export async function deleteTransaction(id: string): Promise<void> {
 	}
 }
 
+function mapAccount(a: any): AccountItem {
+	return {
+		id: a.id,
+		name: a.name,
+		type: a.type,
+		currentBalance: num(a.current_balance),
+		isOnBudget: Boolean(a.is_on_budget),
+		cardMode: a.card_mode ?? 'PAY_IN_FULL',
+		aprPercentage: num(a.apr_percentage),
+		externalAccountId: a.external_account_id ?? null,
+		initialDebtBaseline: num(a.initial_debt_baseline),
+		statementDueDay: a.statement_due_day ?? null,
+		debtPayoffCategoryId: a.debt_payoff_category_id ?? null
+	};
+}
+
 export async function fetchAccounts(): Promise<AccountItem[]> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/accounts`, {
@@ -127,15 +145,72 @@ export async function fetchAccounts(): Promise<AccountItem[]> {
 	}
 	const raw = await res.json();
 	if (!Array.isArray(raw)) return [];
-	return raw.map((a: any) => ({
-		id: a.id,
-		name: a.name,
-		type: a.type,
-		currentBalance: num(a.current_balance),
-		isOnBudget: Boolean(a.is_on_budget),
-		cardMode: a.card_mode ?? 'PAY_IN_FULL',
-		aprPercentage: num(a.apr_percentage)
-	}));
+	return raw.map(mapAccount);
+}
+
+export async function createAccount(payload: CreateAccountPayload): Promise<AccountItem> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/accounts`, {
+		method: 'POST',
+		headers: await authHeaders(),
+		body: JSON.stringify({
+			name: payload.name,
+			type: payload.type,
+			current_balance: payload.currentBalance,
+			is_on_budget: payload.isOnBudget,
+			card_mode: payload.cardMode ?? 'PAY_IN_FULL',
+			initial_debt_baseline: payload.initialDebtBaseline ?? 0,
+			apr_percentage: payload.aprPercentage ?? 0,
+			statement_due_day: payload.statementDueDay ?? null,
+			debt_payoff_category_id: payload.debtPayoffCategoryId ?? null
+		})
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to create account (${res.status})`);
+	}
+	return mapAccount(await res.json());
+}
+
+export async function updateAccount(id: string, payload: UpdateAccountPayload): Promise<AccountItem> {
+	const { apiBaseUrl } = getAppConfig();
+	const body: Record<string, unknown> = {};
+	if (payload.name !== undefined) body.name = payload.name;
+	if (payload.type !== undefined) body.type = payload.type;
+	if (payload.currentBalance !== undefined) body.current_balance = payload.currentBalance;
+	if (payload.isOnBudget !== undefined) body.is_on_budget = payload.isOnBudget;
+	if (payload.cardMode !== undefined) body.card_mode = payload.cardMode;
+	if (payload.initialDebtBaseline !== undefined) body.initial_debt_baseline = payload.initialDebtBaseline;
+	if (payload.aprPercentage !== undefined) body.apr_percentage = payload.aprPercentage;
+	if (payload.statementDueDay !== undefined) body.statement_due_day = payload.statementDueDay;
+	if (payload.clearStatementDueDay !== undefined) body.clear_statement_due_day = payload.clearStatementDueDay;
+	if (payload.debtPayoffCategoryId !== undefined) body.debt_payoff_category_id = payload.debtPayoffCategoryId;
+	if (payload.clearDebtPayoffCategory !== undefined) body.clear_debt_payoff_category = payload.clearDebtPayoffCategory;
+	if (payload.unlinkExternal !== undefined) body.unlink_external = payload.unlinkExternal;
+	if (payload.recordBalanceAdjustment !== undefined) body.record_balance_adjustment = payload.recordBalanceAdjustment;
+
+	const res = await fetch(`${apiBaseUrl}/api/v1/accounts/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		headers: await authHeaders(),
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to update account (${res.status})`);
+	}
+	return mapAccount(await res.json());
+}
+
+export async function deleteAccount(id: string): Promise<void> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/accounts/${encodeURIComponent(id)}`, {
+		method: 'DELETE',
+		headers: await authHeaders()
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to delete account (${res.status})`);
+	}
 }
 
 export async function fetchSolvencyReport(): Promise<SolvencyReport> {

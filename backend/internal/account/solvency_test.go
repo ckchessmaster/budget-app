@@ -66,6 +66,7 @@ func TestComputeSolvencyFromAccounts(t *testing.T) {
 				Name:           "Pay-In-Full Card",
 				Type:           CreditCard,
 				CurrentBalance: decimal.NewFromFloat(-400.00),
+				IsOnBudget:     true,
 				CardMode:       PayInFull,
 			},
 			{
@@ -88,6 +89,48 @@ func TestComputeSolvencyFromAccounts(t *testing.T) {
 		}
 		if report.IsFloatingDebt {
 			t.Fatalf("expected IsFloatingDebt = false")
+		}
+	})
+
+	t.Run("includes on-budget cash and excludes off-budget cash and off-budget credit cards", func(t *testing.T) {
+		accounts := []Account{
+			{
+				Name:           "Wallet Cash",
+				Type:           Cash,
+				CurrentBalance: decimal.NewFromFloat(250.00),
+				IsOnBudget:     true,
+			},
+			{
+				Name:           "Off-Budget Safe Cash",
+				Type:           Cash,
+				CurrentBalance: decimal.NewFromFloat(1000.00),
+				IsOnBudget:     false,
+			},
+			{
+				Name:           "Off-Budget Card",
+				Type:           CreditCard,
+				CurrentBalance: decimal.NewFromFloat(-600.00),
+				IsOnBudget:     false,
+				CardMode:       PayInFull,
+			},
+			{
+				Name:           "On-Budget Card",
+				Type:           CreditCard,
+				CurrentBalance: decimal.NewFromFloat(-100.00),
+				IsOnBudget:     true,
+				CardMode:       PayInFull,
+			},
+		}
+
+		report := ComputeSolvencyFromAccounts(accounts)
+		if report.TotalLiquidCash.StringFixed(2) != "250.00" {
+			t.Fatalf("TotalLiquidCash = %s, want 250.00", report.TotalLiquidCash.StringFixed(2))
+		}
+		if report.TotalCreditCardDebt.StringFixed(2) != "100.00" {
+			t.Fatalf("TotalCreditCardDebt = %s, want 100.00", report.TotalCreditCardDebt.StringFixed(2))
+		}
+		if report.SolvencyBuffer.StringFixed(2) != "150.00" {
+			t.Fatalf("SolvencyBuffer = %s, want 150.00", report.SolvencyBuffer.StringFixed(2))
 		}
 	})
 }

@@ -21,10 +21,10 @@ func ComputeSolvencyFromAccounts(accounts []Account) *SolvencyReport {
 	totalCCDebt := decimal.Zero
 
 	for _, a := range accounts {
-		if (a.Type == Checking || a.Type == Savings) && a.IsOnBudget {
+		if (a.Type == Checking || a.Type == Savings || a.Type == Cash) && a.IsOnBudget {
 			totalLiquid = totalLiquid.Add(a.CurrentBalance)
 		}
-		if a.Type == CreditCard && a.CardMode == PayInFull && a.CurrentBalance.IsNegative() {
+		if a.Type == CreditCard && a.IsOnBudget && a.CardMode == PayInFull && a.CurrentBalance.IsNegative() {
 			totalCCDebt = totalCCDebt.Add(a.CurrentBalance.Abs())
 		}
 	}

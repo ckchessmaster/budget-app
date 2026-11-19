@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
@@ -33,17 +34,36 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+var ErrLinkedAccountBalanceReadOnly = errors.New("cannot modify balance on a SimpleFIN-linked account; unlink first")
+
 type CreateAccountRequest struct {
-	ExternalAccountID    *string          `json:"external_account_id"`
-	Name                 string           `json:"name"`
-	Type                 AccountType      `json:"type"`
-	CurrentBalance       decimal.Decimal  `json:"current_balance"`
-	IsOnBudget           *bool            `json:"is_on_budget"`
-	CardMode             CCMode           `json:"card_mode"`
-	InitialDebtBaseline  decimal.Decimal  `json:"initial_debt_baseline"`
-	APRPercentage        decimal.Decimal  `json:"apr_percentage"`
-	StatementDueDay      *int             `json:"statement_due_day"`
-	DebtPayoffCategoryID *uuid.UUID       `json:"debt_payoff_category_id"`
+	ExternalAccountID    *string         `json:"external_account_id"`
+	Name                 string          `json:"name"`
+	Type                 AccountType     `json:"type"`
+	CurrentBalance       decimal.Decimal `json:"current_balance"`
+	IsOnBudget           *bool           `json:"is_on_budget"`
+	CardMode             CCMode          `json:"card_mode"`
+	InitialDebtBaseline  decimal.Decimal `json:"initial_debt_baseline"`
+	APRPercentage        decimal.Decimal `json:"apr_percentage"`
+	StatementDueDay      *int            `json:"statement_due_day"`
+	DebtPayoffCategoryID *uuid.UUID      `json:"debt_payoff_category_id"`
+}
+
+type UpdateAccountRequest struct {
+	Name                    *string          `json:"name"`
+	Type                    *AccountType     `json:"type"`
+	CurrentBalance          *decimal.Decimal `json:"current_balance"`
+	IsOnBudget              *bool            `json:"is_on_budget"`
+	CardMode                *CCMode          `json:"card_mode"`
+	InitialDebtBaseline     *decimal.Decimal `json:"initial_debt_baseline"`
+	APRPercentage           *decimal.Decimal `json:"apr_percentage"`
+	StatementDueDay         *int             `json:"statement_due_day"`
+	ClearStatementDueDay    bool             `json:"clear_statement_due_day"`
+	DebtPayoffCategoryID    *uuid.UUID       `json:"debt_payoff_category_id"`
+	ClearDebtPayoffCategory bool             `json:"clear_debt_payoff_category"`
+	ExternalAccountID       *string          `json:"external_account_id"`
+	UnlinkExternal          bool             `json:"unlink_external"`
+	RecordBalanceAdjustment bool             `json:"record_balance_adjustment"`
 }
 
 func (h *Handler) ListAccounts(w http.ResponseWriter, r *http.Request) {
@@ -82,14 +102,14 @@ func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isOnBudget := true
+	isOnBudget := req.Type != Investment && req.Type != Loan
 	if req.IsOnBudget != nil {
 		isOnBudget = *req.IsOnBudget
 	}
 
 	acct := &Account{
 		ExternalAccountID:    req.ExternalAccountID,
-		Name:                 req.Name,
+		Name:                 strings.TrimSpace(req.Name),
 		Type:                 req.Type,
 		CurrentBalance:       req.CurrentBalance,
 		IsOnBudget:           isOnBudget,
@@ -146,6 +166,71 @@ func (h *Handler) GetAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, acct)
 }
 
+// applyAccountUpdate applies partial patch semantics to existing and returns the balance delta.
+func applyAccountUpdate(existing *Account, req UpdateAccountRequest) (decimal.Decimal, error) {
+	if req.UnlinkExternal {
+		existing.ExternalAccountID = nil
+	} else if req.ExternalAccountID != nil {
+		existing.ExternalAccountID = req.ExternalAccountID
+	}
+
+	if req.Name != nil {
+		existing.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.Type != nil {
+		existing.Type = *req.Type
+	}
+	if req.IsOnBudget != nil {
+		existing.IsOnBudget = *req.IsOnBudget
+	}
+	if req.CardMode != nil {
+		existing.CardMode = *req.CardMode
+	}
+	if req.InitialDebtBaseline != nil {
+		existing.InitialDebtBaseline = req.InitialDebtBaseline.Round(2)
+	}
+	if req.APRPercentage != nil {
+		existing.APRPercentage = req.APRPercentage.Round(2)
+	}
+
+	if req.ClearStatementDueDay {
+		existing.StatementDueDay = nil
+	} else if req.StatementDueDay != nil {
+		existing.StatementDueDay = req.StatementDueDay
+	}
+
+	if req.ClearDebtPayoffCategory {
+		existing.DebtPayoffCategoryID = nil
+	} else if req.DebtPayoffCategoryID != nil {
+		existing.DebtPayoffCategoryID = req.DebtPayoffCategoryID
+	}
+
+	if existing.Type != CreditCard {
+		existing.CardMode = PayInFull
+		existing.DebtPayoffCategoryID = nil
+		existing.StatementDueDay = nil
+		existing.InitialDebtBaseline = decimal.Zero
+	} else if existing.CardMode == PayInFull {
+		existing.DebtPayoffCategoryID = nil
+	}
+
+	delta := decimal.Zero
+	if req.CurrentBalance != nil {
+		oldBal := existing.CurrentBalance.Round(2)
+		newBal := req.CurrentBalance.Round(2)
+		if existing.ExternalAccountID != nil && !newBal.Equal(oldBal) {
+			return decimal.Zero, ErrLinkedAccountBalanceReadOnly
+		}
+		delta = newBal.Sub(oldBal).Round(2)
+		existing.CurrentBalance = newBal
+	}
+
+	if err := ValidateAccount(existing); err != nil {
+		return decimal.Zero, err
+	}
+	return delta, nil
+}
+
 func (h *Handler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
 	if err != nil {
@@ -159,7 +244,7 @@ func (h *Handler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateAccountRequest
+	var req UpdateAccountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_json")
 		return
@@ -171,38 +256,25 @@ func (h *Handler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		if txErr != nil {
 			return txErr
 		}
-		if req.Name != "" {
-			existing.Name = req.Name
-		}
-		if req.Type != "" {
-			existing.Type = req.Type
-		}
-		if req.IsOnBudget != nil {
-			existing.IsOnBudget = *req.IsOnBudget
-		}
-		if req.CardMode != "" {
-			existing.CardMode = req.CardMode
-		}
-		if req.ExternalAccountID != nil {
-			existing.ExternalAccountID = req.ExternalAccountID
-		}
-		if req.StatementDueDay != nil {
-			existing.StatementDueDay = req.StatementDueDay
-		}
-		if req.DebtPayoffCategoryID != nil {
-			existing.DebtPayoffCategoryID = req.DebtPayoffCategoryID
-		}
-		if !req.CurrentBalance.IsZero() {
-			existing.CurrentBalance = req.CurrentBalance
-		}
-		if !req.InitialDebtBaseline.IsZero() {
-			existing.InitialDebtBaseline = req.InitialDebtBaseline
-		}
-		if !req.APRPercentage.IsZero() {
-			existing.APRPercentage = req.APRPercentage
+		delta, txErr := applyAccountUpdate(existing, req)
+		if txErr != nil {
+			return txErr
 		}
 		if txErr := h.svc.UpdateAccount(r.Context(), tx, existing); txErr != nil {
 			return txErr
+		}
+		if req.RecordBalanceAdjustment && !delta.IsZero() && existing.ExternalAccountID == nil {
+			if _, txErr := tx.Exec(r.Context(), `
+				INSERT INTO transactions (
+					id, workspace_id, account_id, origin, status, amount,
+					merchant_raw, merchant_clean, category_id, transaction_date, is_cleared
+				) VALUES (
+					$1, $2, $3, 'MANUAL_OFFLINE', 'POSTED', $4,
+					'Balance Adjustment', 'Balance Adjustment', NULL, CURRENT_DATE, TRUE
+				)
+			`, uuid.New(), existing.WorkspaceID, existing.ID, delta); txErr != nil {
+				return txErr
+			}
 		}
 		acct = existing
 		return nil
@@ -367,5 +439,6 @@ func isValidationErr(err error) bool {
 		errors.Is(err, ErrInvalidCardMode) ||
 		errors.Is(err, ErrDebtPaydownNonCreditCard) ||
 		errors.Is(err, ErrMissingDebtPayoffCat) ||
-		errors.Is(err, ErrInvalidStatementDueDay)
+		errors.Is(err, ErrInvalidStatementDueDay) ||
+		errors.Is(err, ErrLinkedAccountBalanceReadOnly)
 }
