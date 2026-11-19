@@ -66,6 +66,14 @@ func (h *Handler) ListTransactions(w http.ResponseWriter, r *http.Request) {
 	if rawStatus := q.Get("status"); rawStatus != "" {
 		filter.Status = &rawStatus
 	}
+	if rawMonth := q.Get("month"); rawMonth != "" {
+		parsedMonth, err := time.Parse("2006-01", rawMonth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_month")
+			return
+		}
+		filter.Month = &parsedMonth
+	}
 	if rawPage := q.Get("page"); rawPage != "" {
 		if p, err := strconv.Atoi(rawPage); err == nil && p > 0 {
 			filter.Page = p

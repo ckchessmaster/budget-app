@@ -188,3 +188,23 @@ export async function deletePlannedIncome(id: string): Promise<void> {
 		throw new Error(err.error || `Failed to delete planned income (${res.status})`);
 	}
 }
+
+export async function updateMonthlyPlanned(
+	categoryId: string,
+	yearMonth: string,
+	originalPlanned: number
+): Promise<void> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/budget/categories/${encodeURIComponent(categoryId)}`, {
+		method: 'PUT',
+		headers: await authHeaders(),
+		body: JSON.stringify({
+			year_month: yearMonth,
+			original_planned: originalPlanned
+		})
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(err.error || `Failed to update monthly planned budget (${res.status})`);
+	}
+}

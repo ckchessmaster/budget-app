@@ -78,4 +78,57 @@ describe('CategoryRow', () => {
 		expect(onEditClick).toHaveBeenCalledTimes(1);
 		expect(onEditClick).toHaveBeenCalledWith('cat-789');
 	});
+
+	it('supports inline planned amount editing without firing onEditClick', async () => {
+		const onUpdatePlanned = vi.fn().mockResolvedValue(undefined);
+		const onEditClick = vi.fn();
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-inline',
+					name: 'Groceries',
+					originalPlanned: 500,
+					effectiveTarget: 500,
+					spentCleared: 100,
+					spentPending: 0,
+					remaining: 400
+				},
+				onCoverClick: vi.fn(),
+				onEditClick,
+				onUpdatePlanned
+			}
+		});
+
+		const plannedBtn = getByTestId('inline-planned-btn');
+		await fireEvent.click(plannedBtn);
+		expect(onEditClick).not.toHaveBeenCalled();
+
+		const input = getByTestId('inline-planned-input') as HTMLInputElement;
+		await fireEvent.input(input, { target: { value: '625.50' } });
+		await fireEvent.keyDown(input, { key: 'Enter' });
+
+		expect(onUpdatePlanned).toHaveBeenCalledTimes(1);
+		expect(onUpdatePlanned).toHaveBeenCalledWith('cat-inline', 625.5);
+		expect(onEditClick).not.toHaveBeenCalled();
+	});
+
+	it('displays spent amount when displayMode is spent', () => {
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-spent',
+					name: 'Dining Out',
+					originalPlanned: 200,
+					effectiveTarget: 200,
+					spentCleared: 75,
+					spentPending: 25,
+					remaining: 100
+				},
+				displayMode: 'spent',
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(getByTestId('status-badge').textContent?.trim()).toBe('$100.00');
+	});
 });

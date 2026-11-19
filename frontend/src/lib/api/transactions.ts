@@ -6,7 +6,8 @@ import type {
 	CreateTransactionPayload,
 	SolvencyReport,
 	TransactionItemModel,
-	UpdateAccountPayload
+	UpdateAccountPayload,
+	UpdateTransactionPayload
 } from '$lib/types/transaction';
 
 function num(val: unknown): number {
@@ -42,6 +43,7 @@ function mapTransaction(raw: any): TransactionItemModel {
 		transactionDate: String(raw.transaction_date).slice(0, 10),
 		userNotes: raw.user_notes ?? null,
 		isCleared: Boolean(raw.is_cleared),
+		isTransfer: Boolean(raw.is_transfer),
 		splits: Array.isArray(raw.splits)
 			? raw.splits.map((s: any) => ({
 					id: s.id,
@@ -57,6 +59,7 @@ export async function fetchTransactions(params?: {
 	accountId?: string;
 	categoryId?: string;
 	status?: string;
+	month?: string;
 	page?: number;
 	limit?: number;
 }): Promise<{ items: TransactionItemModel[]; total: number }> {
@@ -65,6 +68,7 @@ export async function fetchTransactions(params?: {
 	if (params?.accountId) qs.set('account_id', params.accountId);
 	if (params?.categoryId) qs.set('category_id', params.categoryId);
 	if (params?.status) qs.set('status', params.status);
+	if (params?.month) qs.set('month', params.month);
 	if (params?.page) qs.set('page', String(params.page));
 	if (params?.limit) qs.set('limit', String(params.limit));
 
@@ -104,6 +108,35 @@ export async function createTransaction(payload: CreateTransactionPayload): Prom
 	if (!res.ok) {
 		const errBody = await res.json().catch(() => ({}));
 		throw new Error(errBody.error || `Failed to create transaction (${res.status})`);
+	}
+	return mapTransaction(await res.json());
+}
+
+export async function updateTransaction(
+	id: string,
+	payload: UpdateTransactionPayload
+): Promise<TransactionItemModel> {
+	const { apiBaseUrl } = getAppConfig();
+	const body: Record<string, unknown> = {};
+	if (payload.clearCategory) {
+		body.clear_category = true;
+	} else if (payload.categoryId !== undefined) {
+		body.category_id = payload.categoryId;
+	}
+	if (payload.merchantClean !== undefined) body.merchant_clean = payload.merchantClean;
+	if (payload.userNotes !== undefined) body.user_notes = payload.userNotes;
+	if (payload.status !== undefined) body.status = payload.status;
+	if (payload.isCleared !== undefined) body.is_cleared = payload.isCleared;
+	if (payload.amount !== undefined) body.amount = payload.amount;
+
+	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		headers: await authHeaders(),
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to update transaction (${res.status})`);
 	}
 	return mapTransaction(await res.json());
 }

@@ -2,6 +2,7 @@ package budget
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,7 @@ type BaselineRepo interface {
 	InitializeMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) error
 	GetByMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) ([]MonthlyCategoryBudget, error)
 	GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time) (*MonthlyCategoryBudget, error)
+	UpsertMonthlyPlanned(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time, originalPlanned decimal.Decimal) error
 }
 
 type pgBaselineRepo struct{}
@@ -102,4 +104,27 @@ func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, c
 		return nil, fmt.Errorf("failed to get monthly baseline: %w", err)
 	}
 	return &b, nil
+}
+
+func (r *pgBaselineRepo) UpsertMonthlyPlanned(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time, originalPlanned decimal.Decimal) error {
+	ym := NormalizeYearMonth(yearMonth)
+
+	var wsID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM categories WHERE id = $1`, categoryID).Scan(&wsID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("failed to resolve category workspace: %w", err)
+	}
+
+	_, err := tx.Exec(ctx, `
+		INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned)
+		VALUES ($1, $2, $3::date, $4)
+		ON CONFLICT (workspace_id, category_id, year_month)
+		DO UPDATE SET original_planned = EXCLUDED.original_planned
+	`, wsID, categoryID, ym, originalPlanned.Round(2))
+	if err != nil {
+		return fmt.Errorf("failed to upsert monthly planned budget: %w", err)
+	}
+	return nil
 }

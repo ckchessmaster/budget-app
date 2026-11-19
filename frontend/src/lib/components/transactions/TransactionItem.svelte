@@ -31,7 +31,7 @@
 </script>
 
 <div
-	class="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 transition-colors"
+	class="flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
 	data-testid="transaction-item"
 >
 	<div class="flex items-start gap-3 min-w-0">
@@ -39,15 +39,15 @@
 			<div class="flex items-center gap-2 flex-wrap">
 				<span
 					class="text-sm font-medium truncate {isPending
-						? 'italic text-slate-400'
-						: 'text-slate-100'}"
+						? 'italic text-slate-500 dark:text-slate-400'
+						: 'text-slate-900 dark:text-slate-100'}"
 				>
 					{displayMerchant}
 				</span>
 
 				{#if isPending}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] italic text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] italic text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded"
 						data-testid="badge-pending"
 						title="Pending transaction"
 					>
@@ -61,7 +61,7 @@
 
 				{#if isOfflineQueued}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-sky-300 bg-sky-500/15 border border-sky-500/30 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/30 px-1.5 py-0.5 rounded"
 						data-testid="badge-offline-queued"
 						title="Queued offline for sync"
 					>
@@ -76,7 +76,7 @@
 
 				{#if hasSettledDelta}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/30 px-1.5 py-0.5 rounded"
 						data-testid="badge-settled-delta"
 						title="Settled amount differs from authorization"
 					>
@@ -85,7 +85,7 @@
 				{/if}
 			</div>
 
-			<div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+			<div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
 				<span>{transaction.transactionDate}</span>
 				<span>•</span>
 				<span>{displayCategory}</span>
@@ -100,10 +100,10 @@
 	<div class="text-right shrink-0">
 		<span
 			class="text-sm font-mono font-semibold {isPending
-				? 'italic text-slate-400'
+				? 'italic text-slate-500 dark:text-slate-400'
 				: transaction.amount < 0
-					? 'text-slate-100'
-					: 'text-emerald-400'}"
+					? 'text-slate-900 dark:text-slate-100'
+					: 'text-emerald-600 dark:text-emerald-400'}"
 		>
 			{formatCurrency(transaction.amount)}
 		</span>

@@ -1,16 +1,31 @@
 <script lang="ts">
-	import { createCategory, deleteCategory, updateCategory } from '$lib/api/budget';
+	import {
+		createCategory,
+		deleteCategory,
+		updateCategory,
+		updateMonthlyPlanned
+	} from '$lib/api/budget';
 	import type { CategoryBudget, RolloverMode, TargetCadence } from '$lib/types/budget';
 
 	interface Props {
 		isOpen: boolean;
 		editingCategory: CategoryBudget | null;
 		allCategories: CategoryBudget[];
+		defaultGroupName?: string;
+		yearMonth?: string;
 		onClose: () => void;
 		onSuccess: () => void;
 	}
 
-	let { isOpen, editingCategory, allCategories, onClose, onSuccess }: Props = $props();
+	let {
+		isOpen,
+		editingCategory,
+		allCategories,
+		defaultGroupName = 'Essentials',
+		yearMonth,
+		onClose,
+		onSuccess
+	}: Props = $props();
 
 	let name = $state('');
 	let groupName = $state('');
@@ -32,11 +47,12 @@
 				rolloverMode = editingCategory.rolloverMode;
 				sweepTargetCategoryId = editingCategory.sweepTargetCategoryId ?? '';
 				targetCadence = editingCategory.targetCadence ?? 'NONE';
-				targetAmount = editingCategory.targetAmount != null ? editingCategory.targetAmount.toFixed(2) : '';
+				targetAmount =
+					editingCategory.targetAmount != null ? editingCategory.targetAmount.toFixed(2) : '';
 				targetDate = editingCategory.targetDate ?? '';
 			} else {
 				name = '';
-				groupName = 'Essentials';
+				groupName = defaultGroupName?.trim() || 'Essentials';
 				monthlyBudget = '0.00';
 				rolloverMode = 'SWEEP';
 				sweepTargetCategoryId = '';
@@ -57,10 +73,11 @@
 		isSubmitting = true;
 		errorMsg = '';
 
+		const plannedVal = Number(monthlyBudget) || 0;
 		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
-			monthly_budget: Number(monthlyBudget) || 0,
+			monthly_budget: plannedVal,
 			rollover_mode: rolloverMode,
 			sweep_target_category_id:
 				rolloverMode === 'SWEEP' && sweepTargetCategoryId ? sweepTargetCategoryId : null,
@@ -73,6 +90,9 @@
 		try {
 			if (editingCategory) {
 				await updateCategory(editingCategory.id, payload);
+				if (yearMonth) {
+					await updateMonthlyPlanned(editingCategory.id, yearMonth, plannedVal);
+				}
 			} else {
 				await createCategory(payload);
 			}
@@ -105,22 +125,22 @@
 			type="button"
 			aria-label="Close category modal"
 			onclick={onClose}
-			class="fixed inset-0 bg-black/60 backdrop-blur-xs"
+			class="fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs"
 		></button>
 
 		<div
 			role="dialog"
 			aria-modal="true"
-			class="relative z-10 w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl max-h-[90dvh] overflow-y-auto"
+			class="relative z-10 w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl max-h-[90dvh] overflow-y-auto"
 		>
-			<div class="flex items-center justify-between border-b border-slate-800 pb-3">
-				<h2 class="text-base font-semibold text-white">
+			<div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+				<h2 class="text-base font-semibold text-slate-900 dark:text-white">
 					{editingCategory ? 'Edit Category' : 'New Category'}
 				</h2>
 				<button
 					type="button"
 					onclick={onClose}
-					class="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+					class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-white"
 				>
 					✕
 				</button>
@@ -129,7 +149,7 @@
 			<form onsubmit={handleSubmit} class="mt-4 space-y-3.5">
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label for="cat-name" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-name" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Name
 						</label>
 						<input
@@ -137,11 +157,11 @@
 							type="text"
 							bind:value={name}
 							required
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 					</div>
 					<div>
-						<label for="cat-group" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-group" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Group
 						</label>
 						<input
@@ -149,14 +169,14 @@
 							type="text"
 							bind:value={groupName}
 							required
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 					</div>
 				</div>
 
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label for="cat-budget" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-budget" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Monthly Budget ($)
 						</label>
 						<input
@@ -166,17 +186,17 @@
 							min="0"
 							bind:value={monthlyBudget}
 							required
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 					</div>
 					<div>
-						<label for="cat-rollover" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-rollover" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Rollover Mode
 						</label>
 						<select
 							id="cat-rollover"
 							bind:value={rolloverMode}
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						>
 							<option value="SWEEP">Sweep</option>
 							<option value="ROLLOVER_BALANCE">Rollover Balance</option>
@@ -187,13 +207,13 @@
 
 				{#if rolloverMode === 'SWEEP' && sweepCandidates.length > 0}
 					<div>
-						<label for="cat-sweep-target" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-sweep-target" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Sweep Target Category (optional)
 						</label>
 						<select
 							id="cat-sweep-target"
 							bind:value={sweepTargetCategoryId}
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						>
 							<option value="">None (return to Ready to Assign)</option>
 							{#each sweepCandidates as cand}
@@ -205,13 +225,13 @@
 
 				<div class="grid grid-cols-3 gap-2">
 					<div>
-						<label for="cat-cadence" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-cadence" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Goal Cadence
 						</label>
 						<select
 							id="cat-cadence"
 							bind:value={targetCadence}
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						>
 							<option value="NONE">None</option>
 							<option value="MONTHLY">Monthly</option>
@@ -220,7 +240,7 @@
 						</select>
 					</div>
 					<div>
-						<label for="cat-target-amt" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-target-amt" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Target ($)
 						</label>
 						<input
@@ -230,24 +250,24 @@
 							min="0"
 							bind:value={targetAmount}
 							placeholder="Optional"
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 					</div>
 					<div>
-						<label for="cat-target-date" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="cat-target-date" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Target Date
 						</label>
 						<input
 							id="cat-target-date"
 							type="date"
 							bind:value={targetDate}
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 					</div>
 				</div>
 
 				{#if errorMsg}
-					<p class="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+					<p class="text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg px-3 py-2">
 						{errorMsg}
 					</p>
 				{/if}
@@ -258,7 +278,7 @@
 							type="button"
 							onclick={handleDelete}
 							disabled={isSubmitting}
-							class="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-500/10"
+							class="rounded-lg border border-rose-300 dark:border-rose-500/40 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
 						>
 							Delete
 						</button>
@@ -270,7 +290,7 @@
 						<button
 							type="button"
 							onclick={onClose}
-							class="rounded-lg border border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+							class="rounded-lg border border-slate-300 dark:border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
 						>
 							Cancel
 						</button>

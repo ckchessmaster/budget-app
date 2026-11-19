@@ -352,3 +352,51 @@ func (h *Handler) ReallocateFunds(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reallocated"})
 }
+
+func (h *Handler) UpdateMonthlyPlanned(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	catID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_category_id")
+		return
+	}
+
+	var dto UpdateMonthlyPlannedDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	if err := dto.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ym, err := parseMonthParam(dto.YearMonth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid year_month format")
+		return
+	}
+
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		return h.baselineSvc.SetMonthlyPlanned(r.Context(), tx, catID, ym, dto.OriginalPlanned)
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "category_not_found")
+			return
+		}
+		if errors.Is(err, ErrInvalidAmount) {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "failed_to_update_monthly_planned")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}

@@ -77,6 +77,7 @@ type CreateSplitTransactionRequest struct {
 
 type UpdateTransactionRequest struct {
 	CategoryID    *uuid.UUID       `json:"category_id"`
+	ClearCategory bool             `json:"clear_category"`
 	MerchantClean *string          `json:"merchant_clean"`
 	UserNotes     *string          `json:"user_notes"`
 	Status        *Status          `json:"status"`
@@ -88,6 +89,7 @@ type TransactionFilter struct {
 	AccountID  *uuid.UUID `form:"account_id"`
 	CategoryID *uuid.UUID `form:"category_id"`
 	Status     *string    `form:"status"`
+	Month      *time.Time `form:"month"`
 	Page       int        `form:"page,default=1"`
 	Limit      int        `form:"limit,default=50"`
 }
@@ -244,6 +246,14 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		where = append(where, fmt.Sprintf("status = $%d", argIdx))
 		args = append(args, *filter.Status)
 		argIdx++
+	}
+	if filter.Month != nil {
+		m := filter.Month.UTC()
+		start := time.Date(m.Year(), m.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end := start.AddDate(0, 1, 0)
+		where = append(where, fmt.Sprintf("transaction_date >= $%d AND transaction_date < $%d", argIdx, argIdx+1))
+		args = append(args, start.Format("2006-01-02"), end.Format("2006-01-02"))
+		argIdx += 2
 	}
 
 	whereClause := strings.Join(where, " AND ")
