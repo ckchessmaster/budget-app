@@ -94,3 +94,18 @@ func (r *ReallocateFundsDTO) Validate() error {
 	}
 	return nil
 }
+
+type UpdateMonthlyPlannedDTO struct {
+	YearMonth       string          `json:"year_month"`
+	OriginalPlanned decimal.Decimal `json:"original_planned"`
+}
+
+func (r *UpdateMonthlyPlannedDTO) Validate() error {
+	if strings.TrimSpace(r.YearMonth) == "" {
+		return fmt.Errorf("year_month is required")
+	}
+	if r.OriginalPlanned.LessThan(decimal.Zero) {
+		return fmt.Errorf("original_planned must be >= 0")
+	}
+	return nil
+}

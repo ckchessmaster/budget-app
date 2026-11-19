@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+	color-scheme: light dark;
+	accent-color: #059669;
+}
+
+:root:has(> head > meta[name='color-scheme'][content='dark']) {
+	color-scheme: dark;
+	accent-color: #34d399;
+}
+
+:root:has(> head > meta[name='color-scheme'][content='light']) {
+	color-scheme: light;
+	accent-color: #059669;
+}
+
+.overscroll-contain-scroll {
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+}

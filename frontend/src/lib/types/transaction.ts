@@ -22,9 +22,20 @@ export interface TransactionItemModel {
 	transactionDate: string;
 	userNotes?: string | null;
 	isCleared: boolean;
+	isTransfer?: boolean;
 	syncStatus?: 'QUEUED' | 'SYNCING' | 'FAILED';
 	settledDelta?: number | null;
 	splits?: TransactionSplit[];
+}
+
+export interface UpdateTransactionPayload {
+	categoryId?: string | null;
+	clearCategory?: boolean;
+	merchantClean?: string;
+	userNotes?: string;
+	status?: TransactionStatus;
+	isCleared?: boolean;
+	amount?: number;
 }
 
 export type AccountType = 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment' | 'loan';

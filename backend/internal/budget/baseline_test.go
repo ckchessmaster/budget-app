@@ -2,13 +2,63 @@ package budget
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 )
+
+func TestUpdateMonthlyPlannedValidation(t *testing.T) {
+	t.Run("accepts valid month and zero or positive amount", func(t *testing.T) {
+		dtoZero := UpdateMonthlyPlannedDTO{
+			YearMonth:       "2026-11",
+			OriginalPlanned: decimal.Zero,
+		}
+		if err := dtoZero.Validate(); err != nil {
+			t.Fatalf("expected nil error for zero amount, got %v", err)
+		}
+
+		dtoPos := UpdateMonthlyPlannedDTO{
+			YearMonth:       "2026-11-01",
+			OriginalPlanned: decimal.NewFromFloat(450.25),
+		}
+		if err := dtoPos.Validate(); err != nil {
+			t.Fatalf("expected nil error for positive amount, got %v", err)
+		}
+	})
+
+	t.Run("rejects missing year_month", func(t *testing.T) {
+		dto := UpdateMonthlyPlannedDTO{
+			YearMonth:       "   ",
+			OriginalPlanned: decimal.NewFromFloat(100),
+		}
+		if err := dto.Validate(); err == nil {
+			t.Fatalf("expected error for empty year_month")
+		}
+	})
+
+	t.Run("rejects negative original_planned", func(t *testing.T) {
+		dto := UpdateMonthlyPlannedDTO{
+			YearMonth:       "2026-11",
+			OriginalPlanned: decimal.NewFromFloat(-0.01),
+		}
+		if err := dto.Validate(); err == nil {
+			t.Fatalf("expected error for negative original_planned")
+		}
+	})
+
+	t.Run("SetMonthlyPlanned rejects negative amount", func(t *testing.T) {
+		svc := NewBaselineService(nil)
+		err := svc.SetMonthlyPlanned(context.Background(), nil, uuid.New(), time.Now(), decimal.NewFromFloat(-10))
+		if !errors.Is(err, ErrInvalidAmount) {
+			t.Fatalf("expected ErrInvalidAmount, got %v", err)
+		}
+	})
+}
 
 func TestNormalizeYearMonth(t *testing.T) {
 	loc := time.FixedZone("PST", -8*3600)

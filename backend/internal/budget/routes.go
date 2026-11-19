@@ -26,6 +26,7 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 
 	r.Route("/api/v1/budget", func(r chi.Router) {
 		r.Get("/", h.GetMonthBudget)
+		r.Put("/categories/{id}", h.UpdateMonthlyPlanned)
 		r.Post("/reallocate", h.ReallocateFunds)
 		r.Post("/incomes", h.CreatePlannedIncome)
 		r.Get("/incomes", h.ListPlannedIncomes)

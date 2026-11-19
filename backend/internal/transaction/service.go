@@ -156,7 +156,9 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	}
 
 	oldAmount := existing.Amount
-	if req.CategoryID != nil {
+	if req.ClearCategory {
+		existing.CategoryID = nil
+	} else if req.CategoryID != nil {
 		existing.CategoryID = req.CategoryID
 	}
 	if req.MerchantClean != nil {

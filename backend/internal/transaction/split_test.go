@@ -186,3 +186,60 @@ func TestSplitTransactionIntegration(t *testing.T) {
 		t.Fatalf("integration test failed: %v", err)
 	}
 }
+
+type stubTxRepo struct {
+	tx *Transaction
+}
+
+func (s *stubTxRepo) Create(_ context.Context, _ pgx.Tx, _ *Transaction) error { return nil }
+func (s *stubTxRepo) GetByID(_ context.Context, _ pgx.Tx, id uuid.UUID) (*Transaction, error) {
+	if s.tx == nil || s.tx.ID != id {
+		return nil, ErrTransactionNotFound
+	}
+	copyTx := *s.tx
+	return &copyTx, nil
+}
+func (s *stubTxRepo) List(_ context.Context, _ pgx.Tx, _ TransactionFilter) ([]Transaction, int, error) {
+	return nil, 0, nil
+}
+func (s *stubTxRepo) Update(_ context.Context, _ pgx.Tx, t *Transaction) error {
+	copyTx := *t
+	s.tx = &copyTx
+	return nil
+}
+func (s *stubTxRepo) Delete(_ context.Context, _ pgx.Tx, _ uuid.UUID) error { return nil }
+
+func TestUpdateTransaction_CategoryAndClearCategory(t *testing.T) {
+	txID := uuid.New()
+	catID := uuid.New()
+	repo := &stubTxRepo{
+		tx: &Transaction{
+			ID:          txID,
+			AccountID:   uuid.New(),
+			Amount:      decimal.NewFromFloat(-42.15),
+			MerchantRaw: "Target",
+		},
+	}
+	svc := NewService(repo, nil)
+	ctx := context.Background()
+
+	updated, err := svc.UpdateTransaction(ctx, nil, txID, UpdateTransactionRequest{
+		CategoryID: &catID,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction set category failed: %v", err)
+	}
+	if updated.CategoryID == nil || *updated.CategoryID != catID {
+		t.Fatalf("expected CategoryID %v, got %v", catID, updated.CategoryID)
+	}
+
+	cleared, err := svc.UpdateTransaction(ctx, nil, txID, UpdateTransactionRequest{
+		ClearCategory: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateTransaction clear category failed: %v", err)
+	}
+	if cleared.CategoryID != nil {
+		t.Fatalf("expected CategoryID to be nil after ClearCategory, got %v", cleared.CategoryID)
+	}
+}

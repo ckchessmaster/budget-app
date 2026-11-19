@@ -333,19 +333,19 @@
 	aria-labelledby="account-modal-title"
 	closedby="any"
 	onclose={handleNativeClose}
-	class="m-auto w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-0 text-slate-100 shadow-2xl max-h-[90dvh] overflow-y-auto"
+	class="m-auto w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-0 text-slate-900 dark:text-slate-100 shadow-2xl max-h-[90dvh] overflow-y-auto"
 >
 	<div class="p-6">
-		<div class="flex items-center justify-between border-b border-slate-800 pb-3">
+		<div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
 			<div class="flex items-center gap-2">
-				<h2 id="account-modal-title" class="text-base font-semibold text-white">
+				<h2 id="account-modal-title" class="text-base font-semibold text-slate-900 dark:text-white">
 					{isEditing ? 'Edit Account' : 'Add Manual Account'}
 				</h2>
 				{#if isEditing}
 					<span
 						class="text-[11px] font-medium px-2 py-0.5 rounded-full border {isLinked
-							? 'bg-sky-500/15 text-sky-300 border-sky-500/30'
-							: 'bg-slate-800 text-slate-300 border-slate-700'}"
+							? 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30'
+							: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'}"
 					>
 						{isLinked ? 'SimpleFIN' : 'Manual'}
 					</span>
@@ -355,7 +355,7 @@
 				type="button"
 				aria-label="Close account modal"
 				onclick={() => dialogEl?.close()}
-				class="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+				class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-white"
 			>
 				✕
 			</button>
@@ -364,7 +364,7 @@
 		<form onsubmit={handleSubmit} class="mt-4 space-y-4">
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 				<div>
-					<label for="acct-name" class="block text-xs font-medium text-slate-300 mb-1">
+					<label for="acct-name" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 						Account Name
 					</label>
 					<!-- svelte-ignore a11y_autofocus -->
@@ -375,19 +375,19 @@
 						placeholder="e.g. Wallet Cash"
 						autofocus
 						required
-						class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+						class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 					/>
 				</div>
 
 				<div>
-					<label for="acct-type" class="block text-xs font-medium text-slate-300 mb-1">
+					<label for="acct-type" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 						Account Type
 					</label>
 					<select
 						id="acct-type"
 						bind:value={type}
 						onchange={handleTypeChange}
-						class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+						class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 					>
 						<option value="checking">Checking</option>
 						<option value="savings">Savings</option>
@@ -401,53 +401,53 @@
 
 			<label
 				for="acct-on-budget"
-				class="flex items-start gap-2.5 rounded-lg border border-slate-800 bg-slate-950/60 p-3 cursor-pointer"
+				class="flex items-start gap-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 cursor-pointer"
 			>
 				<input
 					id="acct-on-budget"
 					type="checkbox"
 					bind:checked={isOnBudget}
 					onchange={() => (isOnBudgetDirty = true)}
-					class="mt-0.5 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500"
+					class="mt-0.5 rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-500 focus:ring-emerald-500"
 				/>
 				<div>
-					<span class="block text-xs font-medium text-slate-200">On-Budget Account</span>
-					<span class="block text-[11px] text-slate-400">
+					<span class="block text-xs font-medium text-slate-800 dark:text-slate-200">On-Budget Account</span>
+					<span class="block text-[11px] text-slate-500 dark:text-slate-400">
 						Include in monthly budget spending &amp; solvency buffer. Uncheck for off-budget tracking.
 					</span>
 				</div>
 			</label>
 
 			{#if isLinked && editingAccount}
-				<div class="rounded-lg border border-slate-800 bg-slate-950 p-3.5 space-y-2.5">
+				<div class="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3.5 space-y-2.5">
 					<div class="flex items-center justify-between">
 						<div>
-							<p class="text-xs font-medium text-slate-300">Current Balance</p>
-							<p class="text-[11px] text-slate-400">Synced automatically via SimpleFIN</p>
+							<p class="text-xs font-medium text-slate-700 dark:text-slate-300">Current Balance</p>
+							<p class="text-[11px] text-slate-500 dark:text-slate-400">Synced automatically via SimpleFIN</p>
 						</div>
 						<span
 							class="text-base font-mono font-semibold {editingAccount.currentBalance < 0
-								? 'text-rose-400'
-								: 'text-emerald-400'}"
+								? 'text-rose-600 dark:text-rose-400'
+								: 'text-emerald-600 dark:text-emerald-400'}"
 						>
 							{fmtMoney(editingAccount.currentBalance)}
 						</span>
 					</div>
 
 					{#if !confirmUnlink}
-						<div class="pt-1 border-t border-slate-800/80 flex justify-end">
+						<div class="pt-1 border-t border-slate-200 dark:border-slate-800/80 flex justify-end">
 							<button
 								type="button"
 								onclick={() => (confirmUnlink = true)}
 								disabled={isSubmitting}
-								class="text-xs text-amber-300 hover:text-amber-200 underline"
+								class="text-xs text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:hover:text-amber-200 underline"
 							>
 								Unlink from SimpleFIN
 							</button>
 						</div>
 					{:else}
-						<div class="pt-2 border-t border-slate-800/80 space-y-2">
-							<p class="text-xs text-amber-200">
+						<div class="pt-2 border-t border-slate-200 dark:border-slate-800/80 space-y-2">
+							<p class="text-xs text-amber-800 dark:text-amber-200">
 								Convert to a manual account? SimpleFIN will stop syncing this account's balance and transactions.
 							</p>
 							<div class="flex justify-end gap-2">
@@ -455,7 +455,7 @@
 									type="button"
 									onclick={() => (confirmUnlink = false)}
 									disabled={isSubmitting}
-									class="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
+									class="rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
 								>
 									Cancel
 								</button>
@@ -474,7 +474,7 @@
 			{:else}
 				<div class="space-y-2.5">
 					<div>
-						<label for="acct-balance" class="block text-xs font-medium text-slate-300 mb-1">
+						<label for="acct-balance" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							{#if isDebtAccount}
 								{isCreditOverpaid ? 'Credit Balance ($)' : 'Amount Owed ($)'}
 							{:else}
@@ -488,20 +488,20 @@
 							min={isDebtAccount ? '0' : undefined}
 							bind:value={balanceInput}
 							required
-							class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm font-mono text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 						/>
 						{#if isDebtAccount}
 							<div class="mt-2 flex items-center justify-between gap-2">
-								<label for="acct-credit-overpaid" class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+								<label for="acct-credit-overpaid" class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
 									<input
 										id="acct-credit-overpaid"
 										type="checkbox"
 										bind:checked={isCreditOverpaid}
-										class="rounded border-slate-600 bg-slate-900 text-emerald-500"
+										class="rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-500"
 									/>
 									<span>Account has a positive / credit balance (overpaid)</span>
 								</label>
-								<span class="text-[11px] font-mono text-slate-400">
+								<span class="text-[11px] font-mono text-slate-500 dark:text-slate-400">
 									Stored: {fmtMoney(computedBalance)}
 								</span>
 							</div>
@@ -511,19 +511,19 @@
 					{#if hasBalanceChanged}
 						<label
 							for="acct-record-adj"
-							class="flex items-start gap-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 cursor-pointer"
+							class="flex items-start gap-2.5 rounded-lg border border-emerald-300 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/5 p-3 cursor-pointer"
 						>
 							<input
 								id="acct-record-adj"
 								type="checkbox"
 								bind:checked={recordBalanceAdjustment}
-								class="mt-0.5 rounded border-slate-600 bg-slate-900 text-emerald-500"
+								class="mt-0.5 rounded border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-500"
 							/>
 							<div>
-								<span class="block text-xs font-medium text-emerald-300">
+								<span class="block text-xs font-medium text-emerald-700 dark:text-emerald-300">
 									Record balance adjustment transaction ({fmtSigned(balanceDelta)})
 								</span>
-								<span class="block text-[11px] text-slate-400">
+								<span class="block text-[11px] text-slate-500 dark:text-slate-400">
 									Adds an uncategorized "Balance Adjustment" entry to the transaction ledger.
 								</span>
 							</div>
@@ -533,20 +533,20 @@
 			{/if}
 
 			{#if type === 'credit_card'}
-				<div class="rounded-lg border border-slate-800 bg-slate-950/60 p-3.5 space-y-3">
-					<p class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+				<div class="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3.5 space-y-3">
+					<p class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
 						Credit Card Settings
 					</p>
 
 					<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 						<div>
-							<label for="acct-card-mode" class="block text-xs font-medium text-slate-300 mb-1">
+							<label for="acct-card-mode" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 								Card Mode
 							</label>
 							<select
 								id="acct-card-mode"
 								bind:value={cardMode}
-								class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+								class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 							>
 								<option value="PAY_IN_FULL">Pay in Full</option>
 								<option value="DEBT_PAYDOWN">Debt Paydown</option>
@@ -554,7 +554,7 @@
 						</div>
 
 						<div>
-							<label for="acct-apr" class="block text-xs font-medium text-slate-300 mb-1">
+							<label for="acct-apr" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 								APR (%)
 							</label>
 							<input
@@ -564,12 +564,12 @@
 								min="0"
 								bind:value={aprInput}
 								placeholder="0.00"
-								class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+								class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 							/>
 						</div>
 
 						<div>
-							<label for="acct-due-day" class="block text-xs font-medium text-slate-300 mb-1">
+							<label for="acct-due-day" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 								Due Day (1–31)
 							</label>
 							<input
@@ -580,7 +580,7 @@
 								max="31"
 								bind:value={statementDueDayInput}
 								placeholder="Optional"
-								class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+								class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 							/>
 						</div>
 					</div>
@@ -588,14 +588,14 @@
 					{#if cardMode === 'DEBT_PAYDOWN'}
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
 							<div>
-								<label for="acct-debt-cat" class="block text-xs font-medium text-slate-300 mb-1">
+								<label for="acct-debt-cat" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 									Debt Payoff Category
 								</label>
 								<select
 									id="acct-debt-cat"
 									bind:value={debtPayoffCategoryId}
 									required
-									class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+									class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 								>
 									<option value="">Select category...</option>
 									{#each categories as cat (cat.id)}
@@ -603,14 +603,14 @@
 									{/each}
 								</select>
 								{#if categories.length === 0}
-									<p class="text-[11px] text-amber-300 mt-1">
+									<p class="text-[11px] text-amber-700 dark:text-amber-300 mt-1">
 										No categories found. Create one on the Budget page first.
 									</p>
 								{/if}
 							</div>
 
 							<div>
-								<label for="acct-debt-baseline" class="block text-xs font-medium text-slate-300 mb-1">
+								<label for="acct-debt-baseline" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 									Initial Debt Baseline ($)
 								</label>
 								<input
@@ -620,7 +620,7 @@
 									min="0"
 									bind:value={initialDebtBaselineInput}
 									placeholder="Defaults to owed balance"
-									class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+									class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 								/>
 							</div>
 						</div>
@@ -628,7 +628,7 @@
 				</div>
 			{:else if type === 'loan'}
 				<div>
-					<label for="acct-apr" class="block text-xs font-medium text-slate-300 mb-1">
+					<label for="acct-apr" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 						APR (%)
 					</label>
 					<input
@@ -638,20 +638,20 @@
 						min="0"
 						bind:value={aprInput}
 						placeholder="Optional (e.g. 5.99)"
-						class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+						class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
 					/>
 				</div>
 			{/if}
 
 			{#if errorMsg}
-				<p class="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+				<p class="text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg px-3 py-2">
 					{errorMsg}
 				</p>
 			{/if}
 
 			{#if isEditing && confirmDelete}
-				<div class="rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 space-y-2">
-					<p class="text-xs text-rose-200">
+				<div class="rounded-lg border border-rose-300 dark:border-rose-500/40 bg-rose-50 dark:bg-rose-500/10 p-3 space-y-2">
+					<p class="text-xs text-rose-800 dark:text-rose-200">
 						Delete "{editingAccount?.name}" and all of its transactions? This cannot be undone.
 					</p>
 					<div class="flex items-center justify-end gap-2">
@@ -667,7 +667,7 @@
 							type="button"
 							onclick={() => (confirmDelete = false)}
 							disabled={isSubmitting}
-							class="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
+							class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
 						>
 							Keep Account
 						</button>
@@ -681,7 +681,7 @@
 						type="button"
 						onclick={() => (confirmDelete = true)}
 						disabled={isSubmitting}
-						class="rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-500/10 disabled:opacity-50"
+						class="rounded-lg border border-rose-300 dark:border-rose-500/40 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-50"
 					>
 						Delete
 					</button>
@@ -694,7 +694,7 @@
 						type="button"
 						onclick={() => dialogEl?.close()}
 						disabled={isSubmitting}
-						class="rounded-lg border border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+						class="rounded-lg border border-slate-300 dark:border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
 					>
 						Cancel
 					</button>

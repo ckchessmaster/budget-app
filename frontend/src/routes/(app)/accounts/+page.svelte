@@ -96,28 +96,28 @@
 		tabindex="0"
 		onclick={() => openEditAccount(acct)}
 		onkeydown={(e) => handleCardKeydown(e, acct)}
-		class="group cursor-pointer bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-lg p-4 flex items-center justify-between gap-3 transition-colors"
+		class="group cursor-pointer bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-xl p-4 flex items-center justify-between gap-3 shadow-xs transition-colors"
 	>
 		<div class="min-w-0">
 			<div class="flex flex-wrap items-center gap-2">
-				<h3 class="text-sm font-semibold text-slate-100 group-hover:text-emerald-400 transition-colors truncate">
+				<h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
 					{acct.name}
 				</h3>
-				<span class="text-[11px] uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+				<span class="text-[11px] uppercase px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
 					{acct.type.replace('_', ' ')}
 				</span>
 				<span
 					class="text-[10px] font-medium px-1.5 py-0.5 rounded border {acct.externalAccountId
-						? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
-						: 'bg-slate-800/70 text-slate-400 border-slate-700'}"
+						? 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:border-sky-500/30'
+						: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800/70 dark:text-slate-400 dark:border-slate-700'}"
 				>
 					{acct.externalAccountId ? 'SimpleFIN' : 'Manual'}
 				</span>
-				<span class="text-[11px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
+				<span class="text-[11px] text-slate-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
 					Edit
 				</span>
 			</div>
-			<p class="text-xs text-slate-400 mt-1">
+			<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
 				{acct.isOnBudget ? 'On Budget' : 'Off Budget'}
 				{#if acct.type === 'credit_card'}
 					• {acct.cardMode === 'DEBT_PAYDOWN' ? 'Debt Paydown' : 'Pay In Full'}
@@ -128,7 +128,7 @@
 			</p>
 		</div>
 		<div class="text-right shrink-0">
-			<span class="text-base font-mono font-semibold {acct.currentBalance < 0 ? 'text-rose-400' : 'text-emerald-400'}">
+			<span class="text-base font-mono font-semibold {acct.currentBalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}">
 				{fmtMoney(acct.currentBalance)}
 			</span>
 		</div>
@@ -138,8 +138,10 @@
 <div class="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
 	<div class="flex flex-wrap items-center justify-between gap-4">
 		<div>
-			<h2 class="text-xl font-bold text-slate-100">Accounts</h2>
-			<p class="text-xs text-slate-400">On-budget cash, manual tracking accounts, credit card modes, and SimpleFIN links</p>
+			<h2 class="text-xl font-bold text-slate-900 dark:text-slate-100">Accounts</h2>
+			<p class="text-xs text-slate-500 dark:text-slate-400">
+				On-budget cash, manual tracking accounts, credit card modes, and SimpleFIN links
+			</p>
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
@@ -147,21 +149,21 @@
 				type="button"
 				onclick={handleSyncNow}
 				disabled={syncing}
-				class="text-xs px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+				class="text-xs px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors"
 			>
 				{syncing ? 'Syncing...' : 'Sync Now'}
 			</button>
 			<button
 				type="button"
 				onclick={() => (simplefinModalOpen = true)}
-				class="text-xs px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+				class="text-xs px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors"
 			>
 				Connect SimpleFIN
 			</button>
 			<button
 				type="button"
 				onclick={openAddAccount}
-				class="text-xs px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
+				class="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors"
 			>
 				+ Add Account
 			</button>
@@ -169,24 +171,24 @@
 	</div>
 
 	{#if statusMessage}
-		<div class="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-3 py-2 rounded-md">
+		<div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs px-3 py-2 rounded-lg">
 			{statusMessage}
 		</div>
 	{/if}
 
 	{#if solvency}
 		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-			<div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
-				<p class="text-xs text-slate-400">Total Liquid Cash</p>
-				<p class="text-lg font-mono font-semibold text-emerald-400">{fmtMoney(solvency.totalLiquidCash)}</p>
+			<div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
+				<p class="text-xs text-slate-500 dark:text-slate-400">Total Liquid Cash</p>
+				<p class="text-lg font-mono font-semibold text-emerald-600 dark:text-emerald-400">{fmtMoney(solvency.totalLiquidCash)}</p>
 			</div>
-			<div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
-				<p class="text-xs text-slate-400">Pay-In-Full Card Debt</p>
-				<p class="text-lg font-mono font-semibold text-slate-200">{fmtMoney(solvency.totalCreditCardDebt)}</p>
+			<div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
+				<p class="text-xs text-slate-500 dark:text-slate-400">Pay-In-Full Card Debt</p>
+				<p class="text-lg font-mono font-semibold text-slate-800 dark:text-slate-200">{fmtMoney(solvency.totalCreditCardDebt)}</p>
 			</div>
-			<div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
-				<p class="text-xs text-slate-400">Solvency Buffer</p>
-				<p class="text-lg font-mono font-semibold {solvency.isFloatingDebt ? 'text-rose-400' : 'text-emerald-400'}">
+			<div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
+				<p class="text-xs text-slate-500 dark:text-slate-400">Solvency Buffer</p>
+				<p class="text-lg font-mono font-semibold {solvency.isFloatingDebt ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}">
 					{fmtMoney(solvency.solvencyBuffer)}
 				</p>
 			</div>
@@ -194,9 +196,9 @@
 	{/if}
 
 	{#if loading}
-		<div class="text-sm text-slate-400 py-8 text-center">Loading accounts...</div>
+		<div class="text-sm text-slate-500 dark:text-slate-400 py-8 text-center">Loading accounts...</div>
 	{:else if accounts.length === 0}
-		<div class="text-sm text-slate-400 py-10 text-center border border-dashed border-slate-800 rounded-lg">
+		<div class="text-sm text-slate-500 dark:text-slate-400 py-10 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-xl bg-white/50 dark:bg-transparent">
 			No accounts yet. Click "+ Add Account" to track an account manually or "Connect SimpleFIN" to link your bank.
 		</div>
 	{:else}
@@ -204,10 +206,10 @@
 			{#if onBudgetAccounts.length > 0}
 				<section class="space-y-2.5">
 					<div class="flex items-center justify-between px-1">
-						<h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+						<h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
 							On-Budget Accounts ({onBudgetAccounts.length})
 						</h3>
-						<span class="text-xs font-mono font-medium {onBudgetTotal < 0 ? 'text-rose-400' : 'text-emerald-400'}">
+						<span class="text-xs font-mono font-medium {onBudgetTotal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}">
 							Net: {fmtMoney(onBudgetTotal)}
 						</span>
 					</div>
@@ -222,10 +224,10 @@
 			{#if offBudgetAccounts.length > 0}
 				<section class="space-y-2.5">
 					<div class="flex items-center justify-between px-1">
-						<h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">
+						<h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
 							Off-Budget (Tracking) Accounts ({offBudgetAccounts.length})
 						</h3>
-						<span class="text-xs font-mono font-medium {offBudgetTotal < 0 ? 'text-rose-400' : 'text-slate-300'}">
+						<span class="text-xs font-mono font-medium {offBudgetTotal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}">
 							Net: {fmtMoney(offBudgetTotal)}
 						</span>
 					</div>

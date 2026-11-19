@@ -6,7 +6,7 @@
 	onMount(async () => {
 		await auth.ready();
 		if (auth.isAuthenticated) {
-			goto('/dashboard');
+			goto('/budget');
 		} else {
 			goto('/login');
 		}
