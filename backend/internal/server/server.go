@@ -115,6 +115,7 @@ func (s *Server) setupRoutes() {
 	// Standard Chi middleware
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	r.Use(LogServerErrors(nil))
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 
