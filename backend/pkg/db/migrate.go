@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/migrations"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-//go:embed migrations/*.sql
-var MigrationFS embed.FS
+var MigrationFS embed.FS = migrations.FS
 
 type Migrator interface {
 	Up() error
@@ -52,7 +52,7 @@ func NewMigrator(databaseURL string) (Migrator, error) {
 		dbURL = fmt.Sprintf("%s%slock_timeout=15000", dbURL, sep)
 	}
 
-	sourceDriver, err := iofs.New(MigrationFS, "migrations")
+	sourceDriver, err := iofs.New(MigrationFS, ".")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create migration source driver: %w", err)
 	}
