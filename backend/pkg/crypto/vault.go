@@ -4,10 +4,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"os"
 )
 
 const (
@@ -81,4 +84,18 @@ func (v *aesGCMVault) Decrypt(cipherText string) (string, error) {
 		return "", ErrDecryptionFailed
 	}
 	return string(plain), nil
+}
+
+// LoadVaultFromEnv builds a Vault from VAULT_MASTER_KEY or a deterministic dev key.
+func LoadVaultFromEnv() Vault {
+	if b64 := os.Getenv("VAULT_MASTER_KEY"); b64 != "" {
+		v, err := NewAESGCMVaultFromBase64(b64)
+		if err == nil {
+			return v
+		}
+		log.Printf("warning: invalid VAULT_MASTER_KEY (%v), falling back to derived key", err)
+	}
+	sum := sha256.Sum256([]byte("budget-app-dev-vault-key-change-in-production"))
+	v, _ := NewAESGCMVault(sum[:])
+	return v
 }

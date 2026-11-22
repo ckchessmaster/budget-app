@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,17 +17,6 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
-
-func loadVault() crypto.Vault {
-	if b64 := os.Getenv("VAULT_MASTER_KEY"); b64 != "" {
-		if v, err := crypto.NewAESGCMVaultFromBase64(b64); err == nil {
-			return v
-		}
-	}
-	sum := sha256.Sum256([]byte("budget-app-dev-vault-key-change-in-production"))
-	v, _ := crypto.NewAESGCMVault(sum[:])
-	return v
-}
 
 func dialTemporalWithRetry(ctx context.Context, logger *slog.Logger) (client.Client, error) {
 	for {
@@ -76,7 +64,7 @@ func main() {
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:   pool,
 		Client: simplefin.NewClient(nil),
-		Vault:  loadVault(),
+		Vault:  crypto.LoadVaultFromEnv(),
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)

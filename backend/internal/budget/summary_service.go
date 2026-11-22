@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -81,6 +82,10 @@ func ComputeMonthSummary(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 
 // ComputeMonthDetails returns the full month summary, per-category breakdown, and planned incomes.
 func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*MonthBudgetDetails, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	nextYM := ym.AddDate(0, 1, 0)
 
@@ -103,8 +108,10 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 			       COALESCE(SUM(CASE WHEN r.from_category_id = c.id THEN r.amount ELSE 0 END), 0) AS net_transfer
 			FROM categories c
 			LEFT JOIN budget_reallocations r
-			       ON r.year_month = $1::date
+			       ON r.workspace_id = $3
+			      AND r.year_month = $1::date
 			      AND (r.to_category_id = c.id OR r.from_category_id = c.id)
+			WHERE c.workspace_id = $3
 			GROUP BY c.id
 		),
 		cat_spend AS (
@@ -113,7 +120,9 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 			       COALESCE(SUM(CASE WHEN t.status = 'PENDING' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_pending
 			FROM transactions t
 			INNER JOIN accounts a ON a.id = t.account_id
-			WHERE t.category_id IS NOT NULL
+			WHERE t.workspace_id = $3
+			  AND a.workspace_id = $3
+			  AND t.category_id IS NOT NULL
 			  AND t.is_transfer = FALSE
 			  AND a.is_on_budget = TRUE
 			  AND t.transaction_date >= $1::date
@@ -135,12 +144,14 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 		       COALESCE(cs.spent_pending, 0) AS spent_pending
 		FROM categories c
 		LEFT JOIN monthly_category_budgets mcb
-		       ON mcb.category_id = c.id
+		       ON mcb.workspace_id = $3
+		      AND mcb.category_id = c.id
 		      AND mcb.year_month = $1::date
 		LEFT JOIN cat_realloc cr ON cr.category_id = c.id
 		LEFT JOIN cat_spend cs ON cs.category_id = c.id
+		WHERE c.workspace_id = $3
 		ORDER BY c.sort_order ASC, c.group_name ASC, c.name ASC
-	`, ym, nextYM)
+	`, ym, nextYM, wsID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute month details: %w", err)
 	}

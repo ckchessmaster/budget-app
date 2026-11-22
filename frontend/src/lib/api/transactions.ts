@@ -44,6 +44,7 @@ function mapTransaction(raw: any): TransactionItemModel {
 		userNotes: raw.user_notes ?? null,
 		isCleared: Boolean(raw.is_cleared),
 		isTransfer: Boolean(raw.is_transfer),
+		settledDelta: raw.settled_delta != null ? num(raw.settled_delta) : null,
 		splits: Array.isArray(raw.splits)
 			? raw.splits.map((s: any) => ({
 					id: s.id,

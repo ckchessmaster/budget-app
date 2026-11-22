@@ -110,6 +110,25 @@ class ThemeStore {
 		}
 		syncMeta(this.override);
 	}
+
+	setMode(mode: 'light' | 'dark' | 'system') {
+		if (mode === 'system') {
+			this.override = null;
+			try {
+				window.localStorage.removeItem(STORAGE_KEY);
+			} catch {
+				// Ignore storage failures
+			}
+		} else {
+			this.override = mode;
+			try {
+				window.localStorage.setItem(STORAGE_KEY, mode);
+			} catch {
+				// Ignore storage failures
+			}
+		}
+		syncMeta(this.override);
+	}
 }
 
 export const theme = new ThemeStore();

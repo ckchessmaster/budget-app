@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -35,24 +36,25 @@ var (
 )
 
 type Transaction struct {
-	ID                           uuid.UUID       `json:"id"`
-	WorkspaceID                  uuid.UUID       `json:"workspace_id"`
-	AccountID                    uuid.UUID       `json:"account_id"`
-	ParentTransactionID          *uuid.UUID      `json:"parent_transaction_id"`
-	ExternalTransactionID        *string         `json:"external_transaction_id"`
-	Origin                       Origin          `json:"origin"`
-	Status                       Status          `json:"status"`
-	Amount                       decimal.Decimal `json:"amount"`
-	MerchantRaw                  string          `json:"merchant_raw"`
-	MerchantClean                *string         `json:"merchant_clean"`
-	CategoryID                   *uuid.UUID      `json:"category_id"`
-	TransferLinkedTransactionID  *uuid.UUID      `json:"transfer_linked_transaction_id"`
-	IsTransfer                   bool            `json:"is_transfer"`
-	TransactionDate              time.Time       `json:"transaction_date"`
-	UserNotes                    *string         `json:"user_notes"`
-	IsCleared                    bool            `json:"is_cleared"`
-	CreatedAt                    time.Time       `json:"created_at"`
-	Splits                       []Transaction   `json:"splits,omitempty"`
+	ID                          uuid.UUID        `json:"id"`
+	WorkspaceID                 uuid.UUID        `json:"workspace_id"`
+	AccountID                   uuid.UUID        `json:"account_id"`
+	ParentTransactionID         *uuid.UUID       `json:"parent_transaction_id"`
+	ExternalTransactionID       *string          `json:"external_transaction_id"`
+	Origin                      Origin           `json:"origin"`
+	Status                      Status           `json:"status"`
+	Amount                      decimal.Decimal  `json:"amount"`
+	MerchantRaw                 string           `json:"merchant_raw"`
+	MerchantClean               *string          `json:"merchant_clean"`
+	CategoryID                  *uuid.UUID       `json:"category_id"`
+	TransferLinkedTransactionID *uuid.UUID       `json:"transfer_linked_transaction_id"`
+	IsTransfer                  bool             `json:"is_transfer"`
+	SettledDelta                *decimal.Decimal `json:"settled_delta,omitempty"`
+	TransactionDate             time.Time        `json:"transaction_date"`
+	UserNotes                   *string          `json:"user_notes"`
+	IsCleared                   bool             `json:"is_cleared"`
+	CreatedAt                   time.Time        `json:"created_at"`
+	Splits                      []Transaction    `json:"splits,omitempty"`
 }
 
 type SplitItem struct {
@@ -109,12 +111,7 @@ func NewRepo() Repo {
 }
 
 func resolveWorkspaceID(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
-	var workspaceID uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&workspaceID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to resolve workspace_id: %w", err)
-	}
-	return workspaceID, nil
+	return db.ActiveWorkspaceID(ctx, tx)
 }
 
 func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, t *Transaction) error {
@@ -151,19 +148,23 @@ func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var t Transaction
 	var originStr, statusStr string
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id,
-		       transfer_linked_transaction_id, is_transfer, transaction_date, user_notes,
+		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
-		WHERE id = $1
-	`, id).Scan(
+		WHERE id = $1 AND workspace_id = $2
+	`, id, wsID).Scan(
 		&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
 		&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID,
-		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.TransactionDate, &t.UserNotes,
+		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.TransactionDate, &t.UserNotes,
 		&t.IsCleared, &t.CreatedAt,
 	)
 	if err != nil {
@@ -175,7 +176,7 @@ func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transac
 	t.Origin = Origin(originStr)
 	t.Status = Status(statusStr)
 
-	splits, err := r.listSplitsByParent(ctx, tx, t.ID)
+	splits, err := r.listSplitsByParent(ctx, tx, wsID, t.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -183,16 +184,16 @@ func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transac
 	return &t, nil
 }
 
-func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, parentID uuid.UUID) ([]Transaction, error) {
+func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, wsID, parentID uuid.UUID) ([]Transaction, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id,
-		       transfer_linked_transaction_id, is_transfer, transaction_date, user_notes,
+		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
-		WHERE parent_transaction_id = $1
+		WHERE parent_transaction_id = $1 AND workspace_id = $2
 		ORDER BY created_at ASC
-	`, parentID)
+	`, parentID, wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +206,7 @@ func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, parentID uui
 		if err := rows.Scan(
 			&s.ID, &s.WorkspaceID, &s.AccountID, &s.ParentTransactionID, &s.ExternalTransactionID,
 			&originStr, &statusStr, &s.Amount, &s.MerchantRaw, &s.MerchantClean, &s.CategoryID,
-			&s.TransferLinkedTransactionID, &s.IsTransfer, &s.TransactionDate, &s.UserNotes,
+			&s.TransferLinkedTransactionID, &s.IsTransfer, &s.SettledDelta, &s.TransactionDate, &s.UserNotes,
 			&s.IsCleared, &s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -218,6 +219,10 @@ func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, parentID uui
 }
 
 func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, 0, err
+	}
 	if filter.Page <= 0 {
 		filter.Page = 1
 	}
@@ -228,9 +233,9 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		filter.Limit = 200
 	}
 
-	where := []string{"parent_transaction_id IS NULL"}
-	args := []any{}
-	argIdx := 1
+	where := []string{"workspace_id = $1", "parent_transaction_id IS NULL"}
+	args := []any{wsID}
+	argIdx := 2
 
 	if filter.AccountID != nil {
 		where = append(where, fmt.Sprintf("account_id = $%d", argIdx))
@@ -238,7 +243,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		argIdx++
 	}
 	if filter.CategoryID != nil {
-		where = append(where, fmt.Sprintf("(category_id = $%d OR EXISTS (SELECT 1 FROM transactions c WHERE c.parent_transaction_id = transactions.id AND c.category_id = $%d))", argIdx, argIdx))
+		where = append(where, fmt.Sprintf("(category_id = $%d OR EXISTS (SELECT 1 FROM transactions c WHERE c.parent_transaction_id = transactions.id AND c.workspace_id = $1 AND c.category_id = $%d))", argIdx, argIdx))
 		args = append(args, *filter.CategoryID)
 		argIdx++
 	}
@@ -269,7 +274,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 	listQuery := fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id,
-		       transfer_linked_transaction_id, is_transfer, transaction_date, user_notes,
+		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
 		WHERE %s
@@ -290,7 +295,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		if err := rows.Scan(
 			&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
 			&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID,
-			&t.TransferLinkedTransactionID, &t.IsTransfer, &t.TransactionDate, &t.UserNotes,
+			&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.TransactionDate, &t.UserNotes,
 			&t.IsCleared, &t.CreatedAt,
 		); err != nil {
 			return nil, 0, err
@@ -304,7 +309,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 	}
 
 	for i := range result {
-		splits, err := r.listSplitsByParent(ctx, tx, result[i].ID)
+		splits, err := r.listSplitsByParent(ctx, tx, wsID, result[i].ID)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -315,16 +320,20 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 }
 
 func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE transactions
-		SET category_id = $2,
-		    merchant_clean = $3,
-		    user_notes = $4,
-		    status = $5,
-		    is_cleared = $6,
-		    amount = $7
-		WHERE id = $1
-	`, t.ID, t.CategoryID, t.MerchantClean, t.UserNotes, string(t.Status), t.IsCleared, t.Amount.Round(2))
+		SET category_id = $3,
+		    merchant_clean = $4,
+		    user_notes = $5,
+		    status = $6,
+		    is_cleared = $7,
+		    amount = $8
+		WHERE id = $1 AND workspace_id = $2
+	`, t.ID, wsID, t.CategoryID, t.MerchantClean, t.UserNotes, string(t.Status), t.IsCleared, t.Amount.Round(2))
 	if err != nil {
 		return err
 	}
@@ -335,7 +344,11 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `DELETE FROM transactions WHERE id = $1`, id)
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM transactions WHERE id = $1 AND workspace_id = $2`, id, wsID)
 	if err != nil {
 		return err
 	}

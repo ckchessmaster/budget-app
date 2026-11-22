@@ -2,9 +2,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { demo } from '$lib/stores/demo.svelte';
 	import { fetchCategories } from '$lib/api/budget';
 	import { fetchAccounts, fetchSolvencyReport } from '$lib/api/transactions';
-	import { triggerBankSyncNow } from '$lib/api/simplefin';
 	import AccountModal from '$lib/components/accounts/AccountModal.svelte';
 	import SimpleFINSetupModal from '$lib/components/accounts/SimpleFINSetupModal.svelte';
 	import type { AccountItem, SolvencyReport } from '$lib/types/transaction';
@@ -76,14 +76,32 @@
 		syncing = true;
 		statusMessage = null;
 		try {
-			await triggerBankSyncNow();
-			statusMessage = 'Bank sync workflow triggered.';
+			const res = await demo.triggerSyncAndPoll();
+			if (res?.status === 'FAILED') {
+				statusMessage = res.last_error || 'Bank sync workflow failed.';
+			} else if (demo.syncMessage) {
+				statusMessage = demo.syncMessage;
+			} else {
+				statusMessage = 'Bank sync completed.';
+			}
+			await loadAccounts();
 		} catch (err) {
 			statusMessage = err instanceof Error ? err.message : 'Failed to trigger bank sync';
 		} finally {
 			syncing = false;
 		}
 	}
+
+	let lastDataVersion = $state(-1);
+	$effect(() => {
+		const v = demo.dataVersion;
+		if (v !== lastDataVersion) {
+			lastDataVersion = v;
+			if (v > 0) {
+				void loadAccounts();
+			}
+		}
+	});
 
 	onMount(() => {
 		void loadAccounts();
@@ -148,10 +166,10 @@
 			<button
 				type="button"
 				onclick={handleSyncNow}
-				disabled={syncing}
+				disabled={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 				class="text-xs px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors"
 			>
-				{syncing ? 'Syncing...' : 'Sync Now'}
+				{syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying' ? 'Syncing...' : 'Sync Now'}
 			</button>
 			<button
 				type="button"

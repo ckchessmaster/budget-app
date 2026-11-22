@@ -196,4 +196,15 @@ export class BudgetLocalDB {
 		await done;
 		return all;
 	}
+
+	async clearCaches(): Promise<void> {
+		if (!this.idbFactory) return;
+		const db = await this.open();
+		for (const storeName of [STORE_CACHED_CATEGORIES, STORE_CACHED_ACCOUNTS]) {
+			const idbTx = db.transaction(storeName, 'readwrite');
+			const done = txDone(idbTx);
+			idbTx.objectStore(storeName).clear();
+			await done;
+		}
+	}
 }

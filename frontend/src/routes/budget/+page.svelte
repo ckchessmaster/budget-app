@@ -25,6 +25,7 @@
 		requestBackgroundSync
 	} from '$lib/offline/sync';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { demo } from '$lib/stores/demo.svelte';
 	import type { CategoryBudget, MonthBudgetDetails } from '$lib/types/budget';
 	import type { AccountItem, SolvencyReport, TransactionItemModel } from '$lib/types/transaction';
 	import { getGroupColor, groupSlug } from '$lib/utils/budgetColors';
@@ -197,7 +198,8 @@
 	}
 
 	$effect(() => {
-		void loadWorkspace(currentMonth);
+		const version = demo.dataVersion;
+		void loadWorkspace(currentMonth, version > 0);
 	});
 
 	onMount(() => {
@@ -380,6 +382,9 @@
 		syncing = true;
 		try {
 			await flushOfflineQueue(localDB);
+			if (typeof navigator === 'undefined' || navigator.onLine) {
+				await demo.triggerSyncAndPoll();
+			}
 			await loadWorkspace(currentMonth, true);
 		} catch (err: any) {
 			errorMsg = err?.message || 'Sync failed.';
@@ -486,7 +491,7 @@
 				accountCount={accounts.length}
 				{isOffline}
 				queuedCount={queuedTransactions.length}
-				{syncing}
+				syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 				onSyncNow={handleSyncNow}
 				onMonthChange={handleMonthChange}
 				onOpenNewCategory={() => openNewCategoryInGroup('Essentials')}
@@ -609,7 +614,7 @@
 						{accounts}
 						categories={budgetData?.categories ?? []}
 						{isOffline}
-						{syncing}
+						syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 						{activeCategoryFilterId}
 						onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 						onCreateTransaction={handleCreateTransaction}

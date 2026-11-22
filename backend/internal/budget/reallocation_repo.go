@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -42,16 +43,21 @@ func (r *pgReallocationRepo) Create(ctx context.Context, tx pgx.Tx, workspaceID 
 }
 
 func (r *pgReallocationRepo) GetNetTransferForCategory(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time) (decimal.Decimal, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return decimal.Zero, err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	var netTransfer decimal.Decimal
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT
-			COALESCE(SUM(CASE WHEN to_category_id = $1 THEN amount ELSE 0 END), 0) -
-			COALESCE(SUM(CASE WHEN from_category_id = $1 THEN amount ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN to_category_id = $2 THEN amount ELSE 0 END), 0) -
+			COALESCE(SUM(CASE WHEN from_category_id = $2 THEN amount ELSE 0 END), 0)
 		FROM budget_reallocations
-		WHERE year_month = $2::date
-		  AND (to_category_id = $1 OR from_category_id = $1)
-	`, categoryID, ym).Scan(&netTransfer)
+		WHERE workspace_id = $1
+		  AND year_month = $3::date
+		  AND (to_category_id = $2 OR from_category_id = $2)
+	`, wsID, categoryID, ym).Scan(&netTransfer)
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("failed to compute net reallocation: %w", err)
 	}

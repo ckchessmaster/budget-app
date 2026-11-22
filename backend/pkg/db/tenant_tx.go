@@ -44,3 +44,26 @@ func WithWorkspaceTx(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, 
 
 	return nil
 }
+
+// ActiveWorkspaceID resolves the active workspace ID for the transaction's
+// app.current_user_id setting, matching user_preferences.demo_mode_enabled.
+// Filtering explicitly by workspace_id protects queries even when connected as a DB superuser.
+func ActiveWorkspaceID(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
+	var workspaceID uuid.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT w.id
+		FROM workspaces w
+		JOIN workspace_members wm ON wm.workspace_id = w.id
+		WHERE wm.user_id = current_app_user_id()
+		  AND w.is_demo = COALESCE(
+		      (SELECT up.demo_mode_enabled FROM user_preferences up WHERE up.user_id = current_app_user_id()),
+		      FALSE
+		  )
+		ORDER BY w.created_at ASC
+		LIMIT 1
+	`).Scan(&workspaceID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to resolve active workspace_id: %w", err)
+	}
+	return workspaceID, nil
+}

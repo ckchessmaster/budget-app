@@ -46,6 +46,8 @@ func TestSimpleFINClient(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/ratelimited/accounts":
 			w.Header().Set("Retry-After", "120")
 			w.WriteHeader(http.StatusTooManyRequests)
+		case r.Method == http.MethodGet && r.URL.Path == "/forbidden/accounts":
+			http.Error(w, "token revoked", http.StatusForbidden)
 		default:
 			http.NotFound(w, r)
 		}
@@ -83,6 +85,18 @@ func TestSimpleFINClient(t *testing.T) {
 		}
 		if rlErr.RetryAfter != 120*time.Second {
 			t.Fatalf("RetryAfter = %s, want 120s", rlErr.RetryAfter)
+		}
+	})
+
+	t.Run("returns AuthError on HTTP 403", func(t *testing.T) {
+		accessURL := "http://u:p@" + server.Listener.Addr().String() + "/forbidden"
+		_, err := client.FetchData(ctx, accessURL, time.Time{})
+		var authErr *AuthError
+		if !errors.As(err, &authErr) {
+			t.Fatalf("expected *AuthError, got %v", err)
+		}
+		if authErr.StatusCode != http.StatusForbidden {
+			t.Fatalf("StatusCode = %d, want 403", authErr.StatusCode)
 		}
 	})
 }

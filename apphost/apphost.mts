@@ -42,6 +42,14 @@ export const backend = await builder
   .waitFor(dex)
   .waitFor(temporal);
 
+export const worker = await builder
+  .addGolangApp('worker', '../backend', 'cmd/worker/main.go')
+  .withReference(budgetDb)
+  .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
+  .waitFor(budgetDb)
+  .waitFor(temporal)
+  .waitFor(backend);
+
 export const frontend = await builder
   .addExecutable('frontend', 'npm', '../frontend', ['run', 'dev'])
   .withHttpEndpoint({ port: 5173, targetPort: 5173, isProxied: false })
