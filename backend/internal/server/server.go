@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,23 +20,28 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
+	"github.com/ckchessmaster/budget-app/backend/internal/demo"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/schedules"
+	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
 	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 )
 
 type Config struct {
-	Port         string
-	DatabaseURL  string
-	DBMaxConns   int
-	DexIssuerURL string
+	Port                 string
+	DatabaseURL          string
+	DBMaxConns           int
+	DexIssuerURL         string
+	MockSimpleFINBaseURL string
 }
 
 func LoadConfig() Config {
@@ -64,11 +70,17 @@ func LoadConfig() Config {
 		dexURL = "http://localhost:5556/dex"
 	}
 
+	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
+	if mockBaseURL == "" {
+		mockBaseURL = fmt.Sprintf("http://127.0.0.1:%s", port)
+	}
+
 	return Config{
-		Port:         port,
-		DatabaseURL:  databaseURL,
-		DBMaxConns:   maxConns,
-		DexIssuerURL: dexURL,
+		Port:                 port,
+		DatabaseURL:          databaseURL,
+		DBMaxConns:           maxConns,
+		DexIssuerURL:         dexURL,
+		MockSimpleFINBaseURL: mockBaseURL,
 	}
 }
 
@@ -124,6 +136,9 @@ func (s *Server) setupRoutes() {
 	r.Get("/livez", LivenessHandler())
 	r.Get("/healthz", HealthHandler(s.pool))
 
+	// Built-in fake SimpleFIN Bridge HTTP server (uses Basic Auth per demo workspace)
+	demo.RegisterMockBridgeRoutes(r, s.pool)
+
 	// Protected routes
 	if s.verifier != nil {
 		r.Group(func(protected chi.Router) {
@@ -143,6 +158,10 @@ func (s *Server) setupRoutes() {
 			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
 			simplefin.RegisterRoutes(protected, s.pool)
 			protected.Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
+			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleBankSyncStatus)
+
+			// Settings & Demo Mode simulator routes
+			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner)
 		})
 	}
 }
@@ -174,7 +193,9 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 
 	var wsID uuid.UUID
 	err = db.WithWorkspaceTx(r.Context(), s.pool, userID, func(tx pgx.Tx) error {
-		return tx.QueryRow(r.Context(), `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&wsID)
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		return txErr
 	})
 	if err != nil {
 		http.Error(w, `{"error": "workspace_not_found"}`, http.StatusNotFound)
@@ -201,6 +222,105 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 		"workflow_id": workflowID,
 		"status":      "accepted",
 	})
+}
+
+func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	workflowID := strings.TrimSpace(chi.URLParam(r, "workflow_id"))
+	if workflowID == "" {
+		http.Error(w, `{"error": "workflow_id_required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var wsID uuid.UUID
+	err = db.WithWorkspaceTx(r.Context(), s.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		return txErr
+	})
+	if err != nil {
+		http.Error(w, `{"error": "workspace_not_found"}`, http.StatusNotFound)
+		return
+	}
+	if !strings.Contains(workflowID, wsID.String()) {
+		http.Error(w, `{"error": "workflow_not_found"}`, http.StatusNotFound)
+		return
+	}
+
+	tc, err := temporalinternal.NewClient(slog.Default())
+	if err != nil {
+		http.Error(w, `{"error": "temporal_unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	defer tc.Close()
+
+	desc, err := tc.DescribeWorkflowExecution(r.Context(), workflowID, "")
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			http.Error(w, `{"error": "workflow_not_found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error": "failed_to_describe_workflow"}`, http.StatusInternalServerError)
+		return
+	}
+
+	type syncStatusResp struct {
+		WorkflowID string                    `json:"workflow_id"`
+		Status     string                    `json:"status"`
+		Attempt    int32                     `json:"attempt,omitempty"`
+		LastError  string                    `json:"last_error,omitempty"`
+		Result     *workflows.BankSyncResult `json:"result,omitempty"`
+	}
+
+	resp := syncStatusResp{
+		WorkflowID: workflowID,
+		Status:     "RUNNING",
+	}
+
+	wfStatus := desc.GetWorkflowExecutionInfo().GetStatus()
+	switch wfStatus {
+	case enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING:
+		for _, pa := range desc.GetPendingActivities() {
+			if pa.GetAttempt() > 1 || pa.GetLastFailure() != nil {
+				resp.Status = "RETRYING"
+				resp.Attempt = pa.GetAttempt()
+				if pa.GetLastFailure() != nil {
+					resp.LastError = pa.GetLastFailure().GetMessage()
+				}
+				break
+			}
+		}
+	case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED:
+		resp.Status = "COMPLETED"
+		getCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var result workflows.BankSyncResult
+		if err := tc.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, &result); err == nil {
+			resp.Result = &result
+		}
+	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
+		enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT,
+		enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+		enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED:
+		resp.Status = "FAILED"
+		getCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := tc.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, nil); err != nil {
+			resp.LastError = err.Error()
+		} else {
+			resp.LastError = wfStatus.String()
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) Run() error {

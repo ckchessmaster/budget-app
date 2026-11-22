@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -166,5 +168,95 @@ func TestRLSIsolation(t *testing.T) {
 
 	if len(returnedIncomes) != 1 || returnedIncomes[0] != i1 {
 		t.Fatalf("expected only income I1 (%s), got: %v", i1, returnedIncomes)
+	}
+}
+
+func TestRLSDemoWorkspaceIsolation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	adminPool, err := pgxpool.New(ctx, getAdminDatabaseURL())
+	if err != nil {
+		t.Fatalf("failed to connect to admin database: %v", err)
+	}
+	defer adminPool.Close()
+
+	appPool, err := pgxpool.New(ctx, getTestDatabaseURL())
+	if err != nil {
+		t.Fatalf("failed to connect to app database: %v", err)
+	}
+	defer appPool.Close()
+
+	u1 := uuid.New()
+	realWS := uuid.New()
+	demoWS := uuid.New()
+
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name, is_demo) VALUES ($1, 'Real WS', FALSE), ($2, 'Demo WS', TRUE)", realWS, demoWS); err != nil {
+		t.Fatalf("failed to setup workspaces: %v", err)
+	}
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $3, 'owner'), ($2, $3, 'owner')", realWS, demoWS, u1); err != nil {
+		t.Fatalf("failed to setup memberships: %v", err)
+	}
+	defer func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM user_preferences WHERE user_id = $1", u1)
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id IN ($1, $2)", realWS, demoWS)
+	}()
+
+	realCat := uuid.New()
+	demoCat := uuid.New()
+	if _, err := adminPool.Exec(ctx, `
+		INSERT INTO categories (id, workspace_id, name, group_name, monthly_budget, rollover_mode)
+		VALUES ($1, $2, 'Real Cat', 'Essentials', 100.00, 'SWEEP'),
+		       ($3, $4, 'Demo Cat', 'Essentials', 200.00, 'SWEEP')
+	`, realCat, realWS, demoCat, demoWS); err != nil {
+		t.Fatalf("failed to insert categories: %v", err)
+	}
+
+	// Demo mode disabled -> sees only Real WS
+	err = db.WithWorkspaceTx(ctx, appPool, u1, func(tx pgx.Tx) error {
+		activeID, err := db.ActiveWorkspaceID(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if activeID != realWS {
+			t.Fatalf("ActiveWorkspaceID = %s, want realWS %s", activeID, realWS)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM categories WHERE id = $1", demoCat).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			t.Fatalf("expected demo category hidden when demo mode off, got count=%d", count)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("real mode check failed: %v", err)
+	}
+
+	// Enable demo mode -> sees only Demo WS
+	if _, err := adminPool.Exec(ctx, "INSERT INTO user_preferences (user_id, demo_mode_enabled) VALUES ($1, TRUE)", u1); err != nil {
+		t.Fatalf("failed to enable demo mode preference: %v", err)
+	}
+
+	err = db.WithWorkspaceTx(ctx, appPool, u1, func(tx pgx.Tx) error {
+		activeID, err := db.ActiveWorkspaceID(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if activeID != demoWS {
+			t.Fatalf("ActiveWorkspaceID = %s, want demoWS %s", activeID, demoWS)
+		}
+		var count int
+		if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM categories WHERE id = $1", realCat).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			t.Fatalf("expected real category hidden when demo mode on, got count=%d", count)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("demo mode check failed: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -24,12 +25,7 @@ func NewCategoryRepo() CategoryRepo {
 }
 
 func resolveWorkspaceID(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
-	var workspaceID uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&workspaceID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to resolve workspace_id: %w", err)
-	}
-	return workspaceID, nil
+	return db.ActiveWorkspaceID(ctx, tx)
 }
 
 func sanitizeCategory(c *Category) error {
@@ -79,15 +75,19 @@ func (r *pgCategoryRepo) Create(ctx context.Context, tx pgx.Tx, c *Category) err
 }
 
 func (r *pgCategoryRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Category, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var c Category
 	var rolloverMode string
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id, workspace_id, name, group_name, monthly_budget,
 		       rollover_mode, sweep_target_category_id, target_amount,
 		       target_date, target_cadence, sort_order
 		FROM categories
-		WHERE id = $1
-	`, id).Scan(
+		WHERE id = $1 AND workspace_id = $2
+	`, id, wsID).Scan(
 		&c.ID, &c.WorkspaceID, &c.Name, &c.GroupName, &c.MonthlyBudget,
 		&rolloverMode, &c.SweepTargetCategoryID, &c.TargetAmount,
 		&c.TargetDate, &c.TargetCadence, &c.SortOrder,
@@ -103,13 +103,18 @@ func (r *pgCategoryRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (
 }
 
 func (r *pgCategoryRepo) ListByWorkspace(ctx context.Context, tx pgx.Tx) ([]Category, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, name, group_name, monthly_budget,
 		       rollover_mode, sweep_target_category_id, target_amount,
 		       target_date, target_cadence, sort_order
 		FROM categories
+		WHERE workspace_id = $1
 		ORDER BY sort_order ASC, group_name ASC, name ASC
-	`)
+	`, wsID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list categories: %w", err)
 	}
@@ -139,21 +144,25 @@ func (r *pgCategoryRepo) Update(ctx context.Context, tx pgx.Tx, c *Category) err
 	if err := sanitizeCategory(c); err != nil {
 		return err
 	}
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE categories
-		SET name = $2,
-		    group_name = $3,
-		    monthly_budget = $4,
-		    rollover_mode = $5,
-		    sweep_target_category_id = $6,
-		    target_amount = $7,
-		    target_date = $8,
-		    target_cadence = $9,
-		    sort_order = $10
-		WHERE id = $1
+		SET name = $3,
+		    group_name = $4,
+		    monthly_budget = $5,
+		    rollover_mode = $6,
+		    sweep_target_category_id = $7,
+		    target_amount = $8,
+		    target_date = $9,
+		    target_cadence = $10,
+		    sort_order = $11
+		WHERE id = $1 AND workspace_id = $2
 	`,
-		c.ID, c.Name, c.GroupName, c.MonthlyBudget,
+		c.ID, wsID, c.Name, c.GroupName, c.MonthlyBudget,
 		string(c.RolloverMode), c.SweepTargetCategoryID, c.TargetAmount,
 		c.TargetDate, c.TargetCadence, c.SortOrder,
 	)
@@ -167,7 +176,11 @@ func (r *pgCategoryRepo) Update(ctx context.Context, tx pgx.Tx, c *Category) err
 }
 
 func (r *pgCategoryRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `DELETE FROM categories WHERE id = $1`, id)
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM categories WHERE id = $1 AND workspace_id = $2`, id, wsID)
 	if err != nil {
 		return fmt.Errorf("failed to delete category: %w", err)
 	}

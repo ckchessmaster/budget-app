@@ -3,9 +3,9 @@ package account
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -72,12 +72,7 @@ func NewRepo() Repo {
 }
 
 func resolveWorkspaceID(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
-	var workspaceID uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&workspaceID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to resolve workspace_id: %w", err)
-	}
-	return workspaceID, nil
+	return db.ActiveWorkspaceID(ctx, tx)
 }
 
 // ValidateAccount enforces domain invariants for accounts and credit card modes.
@@ -150,15 +145,19 @@ func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, a *Account) error {
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Account, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	var a Account
 	var accType, cardMode string
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id, workspace_id, external_account_id, name, type, current_balance,
 		       is_on_budget, card_mode, initial_debt_baseline, apr_percentage,
 		       statement_due_day, debt_payoff_category_id, created_at, updated_at
 		FROM accounts
-		WHERE id = $1
-	`, id).Scan(
+		WHERE id = $1 AND workspace_id = $2
+	`, id, wsID).Scan(
 		&a.ID, &a.WorkspaceID, &a.ExternalAccountID, &a.Name, &accType, &a.CurrentBalance,
 		&a.IsOnBudget, &cardMode, &a.InitialDebtBaseline, &a.APRPercentage,
 		&a.StatementDueDay, &a.DebtPayoffCategoryID, &a.CreatedAt, &a.UpdatedAt,
@@ -175,13 +174,18 @@ func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Account
 }
 
 func (r *pgRepo) ListByWorkspace(ctx context.Context, tx pgx.Tx) ([]Account, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, external_account_id, name, type, current_balance,
 		       is_on_budget, card_mode, initial_debt_baseline, apr_percentage,
 		       statement_due_day, debt_payoff_category_id, created_at, updated_at
 		FROM accounts
+		WHERE workspace_id = $1
 		ORDER BY type ASC, name ASC
-	`)
+	`, wsID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,23 +213,27 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, a *Account) error {
 	if err := ValidateAccount(a); err != nil {
 		return err
 	}
-	err := tx.QueryRow(ctx, `
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRow(ctx, `
 		UPDATE accounts
-		SET external_account_id = $2,
-		    name = $3,
-		    type = $4,
-		    current_balance = $5,
-		    is_on_budget = $6,
-		    card_mode = $7,
-		    initial_debt_baseline = $8,
-		    apr_percentage = $9,
-		    statement_due_day = $10,
-		    debt_payoff_category_id = $11,
+		SET external_account_id = $3,
+		    name = $4,
+		    type = $5,
+		    current_balance = $6,
+		    is_on_budget = $7,
+		    card_mode = $8,
+		    initial_debt_baseline = $9,
+		    apr_percentage = $10,
+		    statement_due_day = $11,
+		    debt_payoff_category_id = $12,
 		    updated_at = NOW()
-		WHERE id = $1
+		WHERE id = $1 AND workspace_id = $2
 		RETURNING updated_at
 	`,
-		a.ID, a.ExternalAccountID, a.Name, string(a.Type), a.CurrentBalance.Round(2),
+		a.ID, wsID, a.ExternalAccountID, a.Name, string(a.Type), a.CurrentBalance.Round(2),
 		a.IsOnBudget, string(a.CardMode), a.InitialDebtBaseline.Round(2), a.APRPercentage.Round(2),
 		a.StatementDueDay, a.DebtPayoffCategoryID,
 	).Scan(&a.UpdatedAt)
@@ -239,7 +247,11 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, a *Account) error {
 }
 
 func (r *pgRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = $1`, id)
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM accounts WHERE id = $1 AND workspace_id = $2`, id, wsID)
 	if err != nil {
 		return err
 	}
@@ -250,12 +262,16 @@ func (r *pgRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 }
 
 func (r *pgRepo) AdjustBalance(ctx context.Context, tx pgx.Tx, id uuid.UUID, delta decimal.Decimal) error {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE accounts
-		SET current_balance = current_balance + $2,
+		SET current_balance = current_balance + $3,
 		    updated_at = NOW()
-		WHERE id = $1
-	`, id, delta.Round(2))
+		WHERE id = $1 AND workspace_id = $2
+	`, id, wsID, delta.Round(2))
 	if err != nil {
 		return err
 	}

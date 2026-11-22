@@ -98,11 +98,11 @@ func (h *Handler) ClaimToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-		var wsID uuid.UUID
-		if err := tx.QueryRow(r.Context(), `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&wsID); err != nil {
+		wsID, err := db.ActiveWorkspaceID(r.Context(), tx)
+		if err != nil {
 			return err
 		}
-		_, err := tx.Exec(r.Context(), `
+		_, err = tx.Exec(r.Context(), `
 			INSERT INTO simplefin_connections (workspace_id, encrypted_claim_token, encrypted_access_url)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (workspace_id) DO UPDATE
@@ -142,8 +142,8 @@ func (h *Handler) LinkAccounts(w http.ResponseWriter, r *http.Request) {
 
 	var linked []account.Account
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-		var wsID uuid.UUID
-		if err := tx.QueryRow(r.Context(), `SELECT workspace_id FROM workspace_members LIMIT 1`).Scan(&wsID); err != nil {
+		wsID, err := db.ActiveWorkspaceID(r.Context(), tx)
+		if err != nil {
 			return err
 		}
 
@@ -242,4 +242,40 @@ func (h *Handler) LinkAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": linked})
+}
+
+func (h *Handler) Disconnect(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	unlinkAccounts := r.URL.Query().Get("unlink_accounts") == "true"
+
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		wsID, err := db.ActiveWorkspaceID(r.Context(), tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(r.Context(), `
+			DELETE FROM simplefin_connections WHERE workspace_id = $1
+		`, wsID); err != nil {
+			return err
+		}
+		if unlinkAccounts {
+			if _, err := tx.Exec(r.Context(), `
+				UPDATE accounts SET external_account_id = NULL, updated_at = NOW() WHERE workspace_id = $1
+			`, wsID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed_to_disconnect_simplefin")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

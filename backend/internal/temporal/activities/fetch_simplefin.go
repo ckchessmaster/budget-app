@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.temporal.io/sdk/temporal"
 )
 
 type BankActivities struct {
@@ -40,13 +41,21 @@ func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, workspa
 
 	accessURL, err := a.Vault.Decrypt(encryptedAccessURL)
 	if err != nil {
-		return nil, err
+		return nil, temporal.NewNonRetryableApplicationError(err.Error(), "SimpleFINDecryptError", err)
 	}
 
 	since := time.Now().UTC().AddDate(0, 0, -30)
 	if lastSyncedAt != nil {
-		since = lastSyncedAt.Add(-24 * time.Hour)
+		since = lastSyncedAt.Add(-7 * 24 * time.Hour)
 	}
 
-	return a.Client.FetchData(ctx, accessURL, since)
+	data, err := a.Client.FetchData(ctx, accessURL, since)
+	if err != nil {
+		var authErr *simplefin.AuthError
+		if errors.As(err, &authErr) || errors.Is(err, simplefin.ErrInvalidAccessURL) {
+			return nil, temporal.NewNonRetryableApplicationError(err.Error(), "SimpleFINAuthError", err)
+		}
+		return nil, err
+	}
+	return data, nil
 }
