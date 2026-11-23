@@ -88,3 +88,50 @@ func TestNewCORSPolicyDropsInvalidOrigins(t *testing.T) {
 		}
 	}
 }
+
+func TestMockBridgeBaseURLFor(t *testing.T) {
+	tests := map[string]struct {
+		listenAddr string
+		want       string
+	}{
+		"loopback default":   {listenAddr: "127.0.0.1:8090", want: "http://127.0.0.1:8090"},
+		"wildcard ipv4":      {listenAddr: "0.0.0.0:8090", want: "http://127.0.0.1:8090"},
+		"wildcard ipv6":      {listenAddr: "[::]:8090", want: "http://127.0.0.1:8090"},
+		"host no port":       {listenAddr: ":8090", want: "http://127.0.0.1:8090"},
+		"specific address":   {listenAddr: "10.0.2.15:8090", want: "http://10.0.2.15:8090"},
+		"garbage falls back": {listenAddr: "not-an-address", want: "http://127.0.0.1:8090"},
+		"empty falls back":   {listenAddr: "", want: "http://127.0.0.1:8090"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := mockBridgeBaseURLFor(tc.listenAddr); got != tc.want {
+				t.Fatalf("mockBridgeBaseURLFor(%q) = %q, want %q", tc.listenAddr, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBridgeListenScope(t *testing.T) {
+	tests := map[string]struct {
+		addr string
+		want string
+	}{
+		"loopback ipv4":   {"127.0.0.1:8090", "loopback only"},
+		"ipv6 loopback":   {"[::1]:8090", "loopback only"},
+		"wildcard ipv4":   {"0.0.0.0:8090", "all interfaces"},
+		"wildcard ipv6":   {"[::]:8090", "all interfaces"},
+		"bare port":       {":8090", "all interfaces"},
+		"routable pod ip": {"10.0.8.230:8090", "routable address"},
+		"unparseable":     {"not-an-address", "unknown"},
+		"missing port":    {"127.0.0.1", "unknown"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := bridgeListenScope(tc.addr); got != tc.want {
+				t.Fatalf("bridgeListenScope(%q) = %q, want %q", tc.addr, got, tc.want)
+			}
+		})
+	}
+}

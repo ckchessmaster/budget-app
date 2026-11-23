@@ -38,7 +38,7 @@ func monthSafeDate(now time.Time, daysAgo int) time.Time {
 func buildMockAccessURL(baseURL string, wsID uuid.UUID, username, password string) (string, error) {
 	trimmed := strings.TrimSpace(baseURL)
 	if trimmed == "" {
-		trimmed = "http://127.0.0.1:8080"
+		trimmed = DefaultMockBridgeBaseURL
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
