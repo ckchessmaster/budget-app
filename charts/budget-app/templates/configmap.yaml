@@ -8,6 +8,12 @@ data:
   OIDC_ISSUER_URL: {{ .Values.oidc.issuerUrl | quote }}
   OIDC_AUTHORITY: {{ .Values.oidc.authority | quote }}
   OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  # Audience ("aud") verification. Disable only to work around an identity provider
+  # that issues this client a token with a different audience.
+  OIDC_ENFORCE_AUDIENCE: {{ .Values.oidc.enforceAudience | quote }}
+  # Comma-separated browser origins permitted for cross-site API calls. Derived from
+  # the ingress hosts unless backend.corsAllowedOrigins sets it explicitly.
+  CORS_ALLOWED_ORIGINS: {{ include "budget-app.corsAllowedOrigins" . | quote }}
   API_BASE_URL: {{ .Values.frontend.apiBaseUrl | quote }}
   PORT: {{ .Values.backend.port | quote }}
   DB_MAX_CONNS: {{ .Values.backend.dbMaxConns | quote }}
