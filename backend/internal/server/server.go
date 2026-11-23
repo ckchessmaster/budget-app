@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -37,14 +38,17 @@ import (
 )
 
 type Config struct {
-	Port                 string
-	DatabaseURL          string
-	DBMaxConns           int
-	OIDCIssuerURL        string
-	OIDCClientID         string
-	OIDCEnforceAudience  bool
-	CORSAllowedOrigins   []string
-	MockSimpleFINBaseURL string
+	Port                string
+	DatabaseURL         string
+	DBMaxConns          int
+	OIDCIssuerURL       string
+	OIDCClientID        string
+	OIDCEnforceAudience bool
+	CORSAllowedOrigins  []string
+	// MockSimpleFINListenAddr binds the built-in fake SimpleFIN bridge. It defaults
+	// to loopback so no other pod can reach it.
+	MockSimpleFINListenAddr string
+	MockSimpleFINBaseURL    string
 }
 
 func LoadConfig() Config {
@@ -87,32 +91,39 @@ func LoadConfig() Config {
 		}
 	}
 	if enforceAudience && clientID == "" {
-		slog.Warn("OIDC_CLIENT_ID is unset; audience (aud) cannot be verified for this deployment")
+		slog.Error("audience enforcement is on but OIDC_CLIENT_ID is unset, so the aud claim cannot be verified; set OIDC_CLIENT_ID or disable enforcement explicitly")
 	}
 
-	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
+	bridgeListenAddr := strings.TrimSpace(os.Getenv("MOCK_SIMPLEFIN_LISTEN_ADDR"))
+	if bridgeListenAddr == "" {
+		bridgeListenAddr = demo.DefaultMockBridgeListenAddr
+	}
+
+	mockBaseURL := strings.TrimSpace(os.Getenv("MOCK_SIMPLEFIN_BASE_URL"))
 	if mockBaseURL == "" {
-		mockBaseURL = fmt.Sprintf("http://127.0.0.1:%s", port)
+		mockBaseURL = mockBridgeBaseURLFor(bridgeListenAddr)
 	}
 
 	return Config{
-		Port:                 port,
-		DatabaseURL:          databaseURL,
-		DBMaxConns:           maxConns,
-		OIDCIssuerURL:        issuerURL,
-		OIDCClientID:         clientID,
-		OIDCEnforceAudience:  enforceAudience,
-		CORSAllowedOrigins:   parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
-		MockSimpleFINBaseURL: mockBaseURL,
+		Port:                    port,
+		DatabaseURL:             databaseURL,
+		DBMaxConns:              maxConns,
+		OIDCIssuerURL:           issuerURL,
+		OIDCClientID:            clientID,
+		OIDCEnforceAudience:     enforceAudience,
+		CORSAllowedOrigins:      parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		MockSimpleFINListenAddr: bridgeListenAddr,
+		MockSimpleFINBaseURL:    mockBaseURL,
 	}
 }
 
 type Server struct {
-	cfg         Config
-	pool        *pgxpool.Pool
-	router      chi.Router
-	provisioner workspace.Provisioner
-	verifier    middleware.OIDCVerifier
+	cfg          Config
+	pool         *pgxpool.Pool
+	router       chi.Router
+	bridgeRouter chi.Router
+	provisioner  workspace.Provisioner
+	verifier     middleware.OIDCVerifier
 }
 
 func NewServer(cfg Config, pool *pgxpool.Pool, verifier middleware.OIDCVerifier) *Server {
@@ -123,6 +134,7 @@ func NewServer(cfg Config, pool *pgxpool.Pool, verifier middleware.OIDCVerifier)
 		provisioner: workspace.NewProvisioner(),
 		verifier:    verifier,
 	}
+	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
 	s.setupRoutes()
 	return s
@@ -130,6 +142,12 @@ func NewServer(cfg Config, pool *pgxpool.Pool, verifier middleware.OIDCVerifier)
 
 func (s *Server) Router() chi.Router {
 	return s.router
+}
+
+// BridgeRouter is the fake SimpleFIN bridge. It is served on its own loopback-only
+// listener rather than on the public router.
+func (s *Server) BridgeRouter() chi.Router {
+	return s.bridgeRouter
 }
 
 func (s *Server) setupRoutes() {
@@ -149,9 +167,6 @@ func (s *Server) setupRoutes() {
 	// Health check endpoints
 	r.Get("/livez", LivenessHandler())
 	r.Get("/healthz", HealthHandler(s.pool))
-
-	// Built-in fake SimpleFIN Bridge HTTP server (uses Basic Auth per demo workspace)
-	demo.RegisterMockBridgeRoutes(r, s.pool)
 
 	// Protected routes
 	if s.verifier != nil {
@@ -340,35 +355,105 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%s", s.cfg.Port)
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: s.router,
+		Addr:              addr,
+		Handler:           s.router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	bridgeServer := &http.Server{
+		Addr:              s.cfg.MockSimpleFINListenAddr,
+		Handler:           s.bridgeRouter,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	serverCtx, serverStopCtx := context.WithCancel(context.Background())
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sig
-		log.Println("Received termination signal, shutting down gracefully...")
-
-		shutdownCtx, shutdownCancel := context.WithTimeout(serverCtx, 10*time.Second)
+	shutdownAll := func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("HTTP server graceful shutdown failed: %v", err)
 		}
-		serverStopCtx()
-	}()
-
-	log.Printf("Starting Budget App API server on %s", addr)
-	err := httpServer.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("server error: %w", err)
+		if err := bridgeServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("simplefin bridge server graceful shutdown failed: %v", err)
+		}
 	}
 
-	<-serverCtx.Done()
-	log.Println("Server exited cleanly.")
-	return nil
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sig)
+
+	// The bridge listener is demo-only infrastructure: a bind failure must not take
+	// the API down with it. It reports through its own channel, the loop below logs
+	// it, and the API keeps serving while demo bank sync surfaces its own errors.
+	bridgeErr := make(chan error, 1)
+	go func() {
+		slog.Info("serving demo SimpleFIN bridge",
+			"addr", s.cfg.MockSimpleFINListenAddr,
+			"scope", bridgeListenScope(s.cfg.MockSimpleFINListenAddr))
+		if err := bridgeServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			bridgeErr <- err
+		}
+	}()
+
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Printf("Starting Budget App API server on %s", addr)
+		serveErr <- httpServer.ListenAndServe()
+	}()
+
+	// One loop owns every exit path. Returning from here always follows a shutdown
+	// that both listeners have observed, so a signal never leaves Run blocked.
+	for {
+		select {
+		case err := <-bridgeErr:
+			slog.Error("demo simplefin bridge listener stopped; demo bank sync will fail",
+				"addr", s.cfg.MockSimpleFINListenAddr, "err", err)
+		case err := <-serveErr:
+			shutdownAll()
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("server error: %w", err)
+			}
+			log.Println("Server exited cleanly.")
+			return nil
+		case received := <-sig:
+			log.Printf("Received %v, shutting down gracefully...", received)
+			shutdownAll()
+			log.Println("Server exited cleanly.")
+			return nil
+		}
+	}
+}
+
+// bridgeListenScope describes who can reach a bridge bind address, so a routable
+// override is visible in the logs instead of being mislabelled as loopback-only.
+func bridgeListenScope(listenAddr string) string {
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return "unknown"
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "*" {
+		return "all interfaces"
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return "loopback only"
+	}
+	return "routable address"
+}
+
+// mockBridgeBaseURLFor turns a bind address into the URL an in-process caller dials.
+// A wildcard bind is still dialled over loopback, because that is where the API
+// process itself can always reach it.
+func mockBridgeBaseURLFor(listenAddr string) string {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return demo.DefaultMockBridgeBaseURL
+	}
+
+	dialHost := strings.TrimSpace(host)
+	switch dialHost {
+	case "", "0.0.0.0", "::", "*", "[::]":
+		dialHost = "127.0.0.1"
+	}
+
+	return "http://" + net.JoinHostPort(dialHost, port)
 }

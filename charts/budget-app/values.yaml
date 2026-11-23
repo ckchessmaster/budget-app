@@ -11,6 +11,11 @@ backend:
   # the ingress hosts below. The frontend proxies /api same-origin, so this is only
   # needed when the API is served from a different origin than the app.
   corsAllowedOrigins: []
+  # The built-in demo SimpleFIN bridge binds loopback by default (127.0.0.1:8090) so
+  # no other pod can reach it. Set these only if the Temporal sync worker runs in a
+  # separate pod: bind a routable address and point the worker's base URL at it.
+  mockSimplefinListenAddr: ""
+  mockSimplefinBaseUrl: ""
   resources:
     requests:
       cpu: 50m
