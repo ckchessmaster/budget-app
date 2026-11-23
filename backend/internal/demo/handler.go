@@ -288,12 +288,27 @@ func (h *Handler) ToggleDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.pool.Begin(r.Context())
+	tx, err := db.BeginWorkspaceTx(r.Context(), h.pool, userID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed_to_begin_transaction")
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	// Record the preference before seeding. The workspace policies hide any workspace whose
+	// is_demo does not match this user's demo_mode_enabled, so a demo workspace would be
+	// invisible to its own seed inserts until the preference is switched on, which the
+	// transaction commits or rolls back as one unit.
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO user_preferences (user_id, demo_mode_enabled, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET demo_mode_enabled = EXCLUDED.demo_mode_enabled,
+		    updated_at = NOW()
+	`, userID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed_to_update_demo_preference")
+		return
+	}
 
 	if body.Enabled {
 		var existingDemoID uuid.UUID
@@ -314,17 +329,6 @@ func (h *Handler) ToggleDemo(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "failed_to_check_demo_workspace")
 			return
 		}
-	}
-
-	if _, err := tx.Exec(r.Context(), `
-		INSERT INTO user_preferences (user_id, demo_mode_enabled, updated_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (user_id) DO UPDATE
-		SET demo_mode_enabled = EXCLUDED.demo_mode_enabled,
-		    updated_at = NOW()
-	`, userID, body.Enabled); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_update_demo_preference")
-		return
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
@@ -352,12 +356,26 @@ func (h *Handler) ResetDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.pool.Begin(r.Context())
+	tx, err := db.BeginWorkspaceTx(r.Context(), h.pool, userID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed_to_begin_transaction")
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	// Switch the preference on before replacing the sandbox: the workspace policies hide a
+	// demo workspace until demo_mode_enabled is true, and the delete below has to be able to
+	// see the existing sandbox in order to remove it.
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO user_preferences (user_id, demo_mode_enabled, updated_at)
+		VALUES ($1, TRUE, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET demo_mode_enabled = TRUE,
+		    updated_at = NOW()
+	`, userID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed_to_update_demo_preference")
+		return
+	}
 
 	if _, err := tx.Exec(r.Context(), `
 		DELETE FROM workspaces
@@ -374,17 +392,6 @@ func (h *Handler) ResetDemo(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := SeedDemoWorkspaceTx(r.Context(), tx, userID, h.mockBaseURL, h.vault); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed_to_seed_demo_workspace")
-		return
-	}
-
-	if _, err := tx.Exec(r.Context(), `
-		INSERT INTO user_preferences (user_id, demo_mode_enabled, updated_at)
-		VALUES ($1, TRUE, NOW())
-		ON CONFLICT (user_id) DO UPDATE
-		SET demo_mode_enabled = TRUE,
-		    updated_at = NOW()
-	`, userID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_update_demo_preference")
 		return
 	}
 

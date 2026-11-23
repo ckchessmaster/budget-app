@@ -11,13 +11,37 @@ import (
 
 type TxFunc func(tx pgx.Tx) error
 
+// BeginWorkspaceTx starts a transaction scoped with Row-Level Security by injecting the
+// authenticated user's ID into app.current_user_id.
+//
+// Callers that manage commit and rollback by hand must use this instead of pool.Begin.
+// Tenant tables carry FORCE ROW LEVEL SECURITY, so an unscoped transaction sees no tenant
+// rows at all and every write is rejected by the policies' WITH CHECK clauses, which
+// surface as "new row violates row-level security policy" rather than as an auth error.
+//
+// The caller owns the returned transaction and must commit or roll it back.
+func BeginWorkspaceTx(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID) (pgx.Tx, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	// Inject RLS context parameter for tenant isolation (transaction-local)
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID.String()); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to set RLS context for user %s: %w", userID, err)
+	}
+
+	return tx, nil
+}
+
 // WithWorkspaceTx executes fn inside a database transaction scoped with Row-Level Security
 // by injecting the authenticated user's ID into app.current_user_id.
 // It rolls back automatically if fn returns an error or panics.
 func WithWorkspaceTx(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, fn TxFunc) (err error) {
-	tx, err := pool.Begin(ctx)
+	tx, err := BeginWorkspaceTx(ctx, pool, userID)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return err
 	}
 
 	defer func() {
@@ -28,11 +52,6 @@ func WithWorkspaceTx(ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, 
 			_ = tx.Rollback(ctx)
 		}
 	}()
-
-	// Inject RLS context parameter for tenant isolation (transaction-local)
-	if _, err = tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID.String()); err != nil {
-		return fmt.Errorf("failed to set RLS context for user %s: %w", userID, err)
-	}
 
 	if err = fn(tx); err != nil {
 		return err
