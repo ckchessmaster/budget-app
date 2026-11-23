@@ -40,7 +40,10 @@ type Config struct {
 	Port                 string
 	DatabaseURL          string
 	DBMaxConns           int
-	DexIssuerURL         string
+	OIDCIssuerURL        string
+	OIDCClientID         string
+	OIDCEnforceAudience  bool
+	CORSAllowedOrigins   []string
 	MockSimpleFINBaseURL string
 }
 
@@ -62,12 +65,29 @@ func LoadConfig() Config {
 		}
 	}
 
-	dexURL := os.Getenv("DEX_ISSUER_URL")
-	if dexURL == "" {
-		dexURL = os.Getenv("OIDC_ISSUER_URL")
+	issuerURL := os.Getenv("OIDC_ISSUER_URL")
+	if issuerURL == "" {
+		issuerURL = os.Getenv("DEX_ISSUER_URL")
 	}
-	if dexURL == "" {
-		dexURL = "http://localhost:5556/dex"
+	if issuerURL == "" {
+		issuerURL = "http://localhost:5556/dex"
+	}
+
+	clientID := strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID"))
+
+	// Audience enforcement can be turned off without a rebuild if an identity
+	// provider ever issues tokens for this client with a different audience.
+	enforceAudience := true
+	if raw := strings.TrimSpace(os.Getenv("OIDC_ENFORCE_AUDIENCE")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			slog.Warn("ignoring invalid OIDC_ENFORCE_AUDIENCE; keeping audience enforcement on", "value", raw)
+		} else {
+			enforceAudience = parsed
+		}
+	}
+	if enforceAudience && clientID == "" {
+		slog.Warn("OIDC_CLIENT_ID is unset; audience (aud) cannot be verified for this deployment")
 	}
 
 	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
@@ -79,7 +99,10 @@ func LoadConfig() Config {
 		Port:                 port,
 		DatabaseURL:          databaseURL,
 		DBMaxConns:           maxConns,
-		DexIssuerURL:         dexURL,
+		OIDCIssuerURL:        issuerURL,
+		OIDCClientID:         clientID,
+		OIDCEnforceAudience:  enforceAudience,
+		CORSAllowedOrigins:   parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		MockSimpleFINBaseURL: mockBaseURL,
 	}
 }
@@ -119,19 +142,9 @@ func (s *Server) setupRoutes() {
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 
-	// Basic CORS for development
-	r.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	})
+	// Cross-origin requests are only honoured for explicitly configured origins.
+	// With no CORS_ALLOWED_ORIGINS set, no CORS grant is issued at all.
+	r.Use(CORSMiddleware(NewCORSPolicy(s.cfg.CORSAllowedOrigins)))
 
 	// Health check endpoints
 	r.Get("/livez", LivenessHandler())

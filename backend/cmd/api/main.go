@@ -36,7 +36,14 @@ func main() {
 		fmt.Println("Connected to PostgreSQL successfully.")
 	}
 
-	verifier := middleware.NewJWTVerifier(cfg.DexIssuerURL)
+	verifier := middleware.NewJWTVerifier(middleware.JWTVerifierConfig{
+		IssuerURL:       cfg.OIDCIssuerURL,
+		ClientID:        cfg.OIDCClientID,
+		EnforceAudience: cfg.OIDCEnforceAudience,
+	})
+	if err := verifier.Warm(ctx); err != nil {
+		log.Printf("warning: oidc verifier not ready yet: %v", err)
+	}
 	srv := server.NewServer(cfg, pool, verifier)
 
 	if err := srv.Run(); err != nil {

@@ -7,6 +7,10 @@ backend:
   port: 8080
   dbMaxConns: 25
   runMigrations: true
+  # Browser origins allowed to call the API cross-site. Empty derives the list from
+  # the ingress hosts below. The frontend proxies /api same-origin, so this is only
+  # needed when the API is served from a different origin than the app.
+  corsAllowedOrigins: []
   resources:
     requests:
       cpu: 50m
@@ -35,6 +39,9 @@ oidc:
   issuerUrl: "https://auth.example.com/application/o/budget-app/"
   authority: "https://auth.example.com/application/o/budget-app/"
   clientId: "budget-app-client"
+  # Require the token's aud claim to contain clientId. Set to false only as an
+  # emergency escape hatch; signature, issuer and expiry are always verified.
+  enforceAudience: true
 
 database:
   # Name of an existing Secret containing DATABASE_URL (recommended)
