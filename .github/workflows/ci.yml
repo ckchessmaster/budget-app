@@ -136,4 +136,55 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: Lint Helm chart
-        run: helm lint charts/budget-app
+        run: helm lint charts/budget-app --strict
+
+      - name: Render chart and check value types
+        run: |
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set ingress.className=nginx \
+            --set ingress.hosts[0].host=budget.example.com \
+            --set ingress.tls[0].secretName=budget-app-tls \
+            --set ingress.tls[0].hosts[0]=budget.example.com \
+            > /tmp/rendered.yaml
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            python3 -m pip install --quiet pyyaml
+          fi
+          python3 - <<'PY'
+          import sys, yaml
+
+          # A trimmed action ({{- ... }}) can silently turn a mapping into a scalar,
+          # e.g. "checksum/config: <hash>" with no space after the colon. That renders
+          # fine and even passes client-side dry-runs, then fails the upgrade when the
+          # API server deserialises the object, so catch it here instead.
+          problems = []
+
+          def check(kind, name, path, value):
+              if value is not None and not isinstance(value, dict):
+                  problems.append(
+                      f"{kind} {name}: {path} rendered as {type(value).__name__} "
+                      f"({str(value)[:60]!r}), expected a mapping"
+                  )
+
+          for doc in yaml.safe_load_all(open("/tmp/rendered.yaml")):
+              if not doc:
+                  continue
+              kind = doc.get("kind", "?")
+              name = (doc.get("metadata") or {}).get("name", "?") if isinstance(doc.get("metadata"), dict) else "?"
+              check(kind, name, "metadata", doc.get("metadata"))
+              spec = doc.get("spec")
+              if isinstance(spec, dict):
+                  check(kind, name, "spec.template.metadata", (spec.get("template") or {}).get("metadata") if isinstance(spec.get("template"), dict) else None)
+                  template = spec.get("template")
+                  if isinstance(template, dict):
+                      meta = template.get("metadata")
+                      if isinstance(meta, dict):
+                          check(kind, name, "spec.template.metadata.annotations", meta.get("annotations"))
+                          check(kind, name, "spec.template.metadata.labels", meta.get("labels"))
+
+          if problems:
+              print("::error::chart rendered invalid value types")
+              print("\n".join(problems))
+              sys.exit(1)
+          print(f"chart structure ok ({sum(1 for d in yaml.safe_load_all(open('/tmp/rendered.yaml')) if d)} objects)")
+          PY
