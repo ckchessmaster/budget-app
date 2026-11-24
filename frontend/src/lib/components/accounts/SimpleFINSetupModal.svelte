@@ -75,23 +75,23 @@
 </script>
 
 {#if open}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70 p-4" role="dialog" aria-modal="true">
-		<div class="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-5 space-y-4">
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+		<div class="w-full max-w-lg bg-surface border border-border text-ink-primary rounded-xl shadow-2xl p-5 space-y-4">
 			<div class="flex items-center justify-between">
-				<h3 class="text-base font-semibold text-slate-900 dark:text-slate-100">
+				<h3 class="text-base font-semibold text-ink-primary">
 					{step === 1 ? 'Connect SimpleFIN Bridge' : 'Map Discovered Accounts'}
 				</h3>
 				<button
 					type="button"
 					onclick={handleClose}
-					class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-sm px-2 py-1 rounded"
+					class="text-ink-muted hover:text-ink-primary hover:bg-surface-hover text-sm px-2 py-1 rounded-lg transition-colors"
 				>
 					✕
 				</button>
 			</div>
 
 			{#if errorMsg}
-				<div class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs px-3 py-2 rounded-md">
+				<div class="bg-status-danger-bg border border-status-danger/30 text-status-danger text-xs px-3 py-2 rounded-md">
 					{errorMsg}
 				</div>
 			{/if}
@@ -99,7 +99,7 @@
 			{#if step === 1}
 				<form onsubmit={handleClaim} class="space-y-4">
 					<div>
-						<label for="sf-token" class="block text-xs text-slate-700 dark:text-slate-300 mb-1.5">
+						<label for="sf-token" class="block text-xs text-ink-secondary mb-1.5">
 							SimpleFIN Setup Token
 						</label>
 						<textarea
@@ -107,10 +107,10 @@
 							bind:value={setupToken}
 							rows="3"
 							placeholder="Paste your base64 SimpleFIN setup token..."
-							class="w-full bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100"
+							class="w-full bg-canvas border border-border rounded-md px-3 py-2 text-xs font-mono text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 							required
 						></textarea>
-						<p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+						<p class="text-[11px] text-ink-muted mt-1">
 							Your access URL is encrypted with AES-256-GCM before storage.
 						</p>
 					</div>
@@ -119,14 +119,14 @@
 						<button
 							type="button"
 							onclick={handleClose}
-							class="px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+							class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
 						>
 							Cancel
 						</button>
 						<button
 							type="submit"
 							disabled={loading || !setupToken.trim()}
-							class="px-4 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-md"
+							class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text rounded-md transition-opacity"
 						>
 							{loading ? 'Claiming...' : 'Claim & Discover Accounts'}
 						</button>
@@ -135,21 +135,21 @@
 			{:else}
 				<div class="space-y-3 max-h-80 overflow-y-auto">
 					{#each mappings as mapping, idx (mapping.external_account_id)}
-						<div class="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-3 space-y-2">
+						<div class="bg-subtle border border-border rounded-lg p-3 space-y-2">
 							<div class="flex items-center justify-between">
-								<span class="text-sm font-medium text-slate-900 dark:text-slate-100">{mapping.name}</span>
-								<span class="text-xs font-mono text-slate-500 dark:text-slate-400">${discovered[idx]?.balance ?? '0.00'}</span>
+								<span class="text-sm font-medium text-ink-primary">{mapping.name}</span>
+								<span class="text-xs font-mono text-ink-secondary">${discovered[idx]?.balance ?? '0.00'}</span>
 							</div>
 
 							<div class="grid grid-cols-2 gap-2">
 								<div>
-									<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-1" for={`type-${idx}`}>
+									<label class="block text-[11px] text-ink-secondary mb-1" for={`type-${idx}`}>
 										Account Type
 									</label>
 									<select
 										id={`type-${idx}`}
 										bind:value={mapping.type}
-										class="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+										class="w-full bg-canvas border border-border rounded px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 									>
 										<option value="checking">Checking</option>
 										<option value="savings">Savings</option>
@@ -162,13 +162,13 @@
 
 								{#if mapping.type === 'credit_card'}
 									<div>
-										<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-1" for={`mode-${idx}`}>
+										<label class="block text-[11px] text-ink-secondary mb-1" for={`mode-${idx}`}>
 											Card Mode
 										</label>
 										<select
 											id={`mode-${idx}`}
 											bind:value={mapping.card_mode}
-											class="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+											class="w-full bg-canvas border border-border rounded px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 										>
 											<option value="PAY_IN_FULL">Pay In Full</option>
 											<option value="DEBT_PAYDOWN">Debt Paydown</option>
@@ -184,7 +184,7 @@
 					<button
 						type="button"
 						onclick={() => (step = 1)}
-						class="px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+						class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
 					>
 						Back
 					</button>
@@ -192,7 +192,7 @@
 						type="button"
 						onclick={handleConfirmLink}
 						disabled={loading || mappings.length === 0}
-						class="px-4 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-md"
+						class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text rounded-md transition-opacity"
 					>
 						{loading ? 'Linking...' : 'Confirm & Link Accounts'}
 					</button>
