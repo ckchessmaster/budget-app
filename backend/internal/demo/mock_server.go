@@ -61,6 +61,20 @@ func (s *pgMockBridgeStore) LoadBridgeData(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// The demo_simplefin_* policies isolate rows by workspace visibility, which needs
+	// app.current_user_id, and this caller has none: the bridge authenticates with the
+	// credentials SimpleFIN carries in the access URL, not with an OIDC subject. These
+	// transaction-local settings are the credential arm those policies match against.
+	// is_local is what makes this safe on a pooled connection -- the values disappear at
+	// commit or rollback instead of leaking into whoever checks the connection out next.
+	if _, err := tx.Exec(ctx, `
+		SELECT set_config('app.demo_bridge_workspace_id', $1, true),
+		       set_config('app.demo_bridge_username', $2, true),
+		       set_config('app.demo_bridge_password', $3, true)
+	`, workspaceID.String(), username, password); err != nil {
+		return nil, err
+	}
+
 	var expectedUser, expectedPass, faultMode, faultMessage string
 	var faultPersistent bool
 	var retryAfter int
@@ -78,6 +92,9 @@ func (s *pgMockBridgeStore) LoadBridgeData(
 		return nil, err
 	}
 
+	// Reaching this point already means the credential arm matched, since the row is
+	// invisible otherwise. The comparison stays as a second layer so the store cannot
+	// serve data if a policy is ever widened.
 	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) == 1
 	passOK := subtle.ConstantTimeCompare([]byte(password), []byte(expectedPass)) == 1
 	if !userOK || !passOK {
