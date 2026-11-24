@@ -1,5 +1,9 @@
 # Developer Onboarding & Implementation Workflow
 
+> Automated agents: read [`AGENTS.md`](../AGENTS.md) first. It records the commands that actually
+> work and the invariants that fail silently — notably around Temporal, row level security, and
+> the required configuration that has no fallbacks.
+
 Welcome to the **Budget App** engineering team! This document outlines our development lifecycle, repository conventions, task execution standards, and PR workflows to ensure smooth, zero-ambiguity implementation for both human software engineers and autonomous AI coding agents.
 
 ---
