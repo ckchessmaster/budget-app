@@ -75,3 +75,12 @@ export interface CreateIncomePayload {
 	name: string;
 	amount: number;
 }
+
+export interface InlineActivityItem {
+	id: string;
+	date: string; // YYYY-MM-DD
+	merchant: string;
+	accountName: string;
+	amount: number;
+	status?: 'PENDING' | 'POSTED';
+}

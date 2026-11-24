@@ -5,11 +5,19 @@
 		transaction: TransactionItemModel;
 		categoryName?: string;
 		accountName?: string;
+		isOnBudget?: boolean;
 	}
 
-	let { transaction, categoryName, accountName }: Props = $props();
+	let { transaction, categoryName, accountName, isOnBudget = true }: Props = $props();
 
 	let isPending = $derived(transaction.status === 'PENDING');
+	let isNew = $derived(
+		!isPending &&
+			transaction.categoryId === null &&
+			!transaction.isTransfer &&
+			!(transaction.splits && transaction.splits.length > 0) &&
+			isOnBudget
+	);
 	let isOfflineQueued = $derived(
 		transaction.origin === 'MANUAL_OFFLINE' && transaction.syncStatus === 'QUEUED'
 	);
@@ -31,7 +39,7 @@
 </script>
 
 <div
-	class="flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+	class="flex items-center justify-between gap-3 px-4 py-3 bg-surface border border-border rounded-lg hover:bg-surface-hover/50 transition-colors"
 	data-testid="transaction-item"
 >
 	<div class="flex items-start gap-3 min-w-0">
@@ -39,33 +47,41 @@
 			<div class="flex items-center gap-2 flex-wrap">
 				<span
 					class="text-sm font-medium truncate {isPending
-						? 'italic text-slate-500 dark:text-slate-400'
-						: 'text-slate-900 dark:text-slate-100'}"
+						? 'italic text-ink-secondary'
+						: 'text-ink-primary'}"
 				>
 					{displayMerchant}
 				</span>
 
 				{#if isPending}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] italic text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
 						data-testid="badge-pending"
 						title="Pending transaction"
 					>
-						<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 							<circle cx="12" cy="12" r="10" />
 							<polyline points="12 6 12 12 16 14" />
 						</svg>
 						Pending
 					</span>
+				{:else if isNew}
+					<span
+						class="inline-flex items-center text-[11px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
+						data-testid="badge-new"
+						title="Needs categorization"
+					>
+						New
+					</span>
 				{/if}
 
 				{#if isOfflineQueued}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/30 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
 						data-testid="badge-offline-queued"
 						title="Queued offline for sync"
 					>
-						<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
 							<path d="M12 16V8" />
 							<path d="m9 11 3-3 3 3" />
 							<path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25" />
@@ -76,7 +92,7 @@
 
 				{#if hasSettledDelta}
 					<span
-						class="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/30 px-1.5 py-0.5 rounded"
+						class="inline-flex items-center gap-1 text-[11px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1.5 py-0.5 rounded"
 						data-testid="badge-settled-delta"
 						title="Settled amount differs from authorization"
 					>
@@ -85,7 +101,7 @@
 				{/if}
 			</div>
 
-			<div class="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+			<div class="flex items-center gap-2 text-xs text-ink-secondary mt-0.5">
 				<span>{transaction.transactionDate}</span>
 				<span>•</span>
 				<span>{displayCategory}</span>
@@ -100,10 +116,10 @@
 	<div class="text-right shrink-0">
 		<span
 			class="text-sm font-mono font-semibold {isPending
-				? 'italic text-slate-500 dark:text-slate-400'
-				: transaction.amount < 0
-					? 'text-slate-900 dark:text-slate-100'
-					: 'text-emerald-600 dark:text-emerald-400'}"
+				? 'italic text-ink-secondary'
+				: transaction.amount > 0
+					? 'text-status-good'
+					: 'text-ink-primary'}"
 		>
 			{formatCurrency(transaction.amount)}
 		</span>

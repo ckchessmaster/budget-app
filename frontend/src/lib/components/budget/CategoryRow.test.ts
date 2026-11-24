@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import CategoryRow from './CategoryRow.svelte';
 
 describe('CategoryRow', () => {
-	it('renders red overspent badge (-$20.00) and fires onCoverClick when clicked', async () => {
+	it('renders red overspent badge (-$20.00), inline pending badge, and fires onCoverClick without expanding drawer', async () => {
 		const onCoverClick = vi.fn();
-		const { getByTestId, getByText } = render(CategoryRow, {
+		const { getByTestId, getByText, queryByTestId } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-123',
 					name: 'Groceries',
+					groupName: 'Essentials',
 					originalPlanned: 500,
 					effectiveTarget: 500,
 					spentCleared: 480,
@@ -21,21 +22,26 @@ describe('CategoryRow', () => {
 		});
 
 		expect(getByText('Groceries')).toBeTruthy();
+		const pendingBadge = getByTestId('pending-badge');
+		expect(pendingBadge.textContent?.trim()).toBe('+$40.00 pend');
+
 		const badge = getByTestId('overspent-badge');
 		expect(badge.textContent).toContain('-$20.00');
-		expect(badge.className).toContain('text-rose-400');
+		expect(badge.className).toContain('text-status-danger');
 
 		await fireEvent.click(badge);
 		expect(onCoverClick).toHaveBeenCalledTimes(1);
 		expect(onCoverClick).toHaveBeenCalledWith('cat-123');
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 	});
 
-	it('renders original planned tick mark when effectiveTarget differs from originalPlanned', () => {
+	it('renders slim variable progress bar with striped pending layer and original planned tick mark', () => {
 		const { getByTestId } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-456',
-					name: 'Dining',
+					name: 'Dining Out',
+					groupName: 'Lifestyle',
 					originalPlanned: 300,
 					effectiveTarget: 250,
 					spentCleared: 100,
@@ -46,43 +52,128 @@ describe('CategoryRow', () => {
 			}
 		});
 
+		expect(getByTestId('variable-progress-bar')).toBeTruthy();
 		expect(getByTestId('bar-cleared')).toBeTruthy();
-		expect(getByTestId('bar-pending')).toBeTruthy();
+		const pendingBar = getByTestId('bar-pending');
+		expect(pendingBar).toBeTruthy();
+		expect(pendingBar.className).toContain('bg-pending-stripe');
 		expect(getByTestId('bar-original-tick')).toBeTruthy();
+		expect(getByTestId('pending-badge').textContent?.trim()).toBe('+$25.00 pend');
 	});
 
-	it('fires onEditClick when clicking the row and stops propagation on overspent badge', async () => {
+	it('renders Paid or Upcoming badge instead of progress bar for fixed categories', () => {
+		const { getByTestId, queryByTestId, unmount } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-rent',
+					name: 'Rent/Mortgage',
+					groupName: 'Essentials',
+					originalPlanned: 2000,
+					effectiveTarget: 2000,
+					spentCleared: 2000,
+					spentPending: 0,
+					remaining: 0
+				},
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(getByTestId('fixed-status-badge').textContent?.trim()).toBe('Paid');
+		expect(queryByTestId('variable-progress-bar')).toBeNull();
+		unmount();
+
+		const upcoming = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-util',
+					name: 'Utilities',
+					groupName: 'Essentials',
+					originalPlanned: 180,
+					effectiveTarget: 180,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 180
+				},
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(upcoming.getByTestId('fixed-status-badge').textContent?.trim()).toBe('Upcoming');
+		expect(upcoming.queryByTestId('variable-progress-bar')).toBeNull();
+	});
+
+	it('expands and collapses inline activity drawer when clicking the row, while Edit button fires onEditClick cleanly', async () => {
 		const onCoverClick = vi.fn();
 		const onEditClick = vi.fn();
-		const { getByTestId } = render(CategoryRow, {
+		const { getByTestId, queryByTestId, getByText } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-789',
-					name: 'Utilities',
-					originalPlanned: 100,
-					effectiveTarget: 100,
-					spentCleared: 120,
+					name: 'Groceries',
+					groupName: 'Essentials',
+					originalPlanned: 400,
+					effectiveTarget: 400,
+					spentCleared: 72.5,
 					spentPending: 0,
-					remaining: -20
+					remaining: 327.5
 				},
+				transactions: [
+					{
+						id: 'tx-1',
+						date: '2026-11-12',
+						merchant: "Trader Joe's",
+						accountName: 'Sapphire',
+						amount: -72.5,
+						status: 'POSTED'
+					}
+				],
 				onCoverClick,
 				onEditClick
 			}
 		});
 
-		await fireEvent.click(getByTestId('overspent-badge'));
-		expect(onCoverClick).toHaveBeenCalledTimes(1);
-		expect(onEditClick).not.toHaveBeenCalled();
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 
-		await fireEvent.click(getByTestId('category-row'));
+		await fireEvent.click(getByTestId('edit-category-btn'));
 		expect(onEditClick).toHaveBeenCalledTimes(1);
 		expect(onEditClick).toHaveBeenCalledWith('cat-789');
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
+
+		await fireEvent.click(getByTestId('category-row'));
+		expect(getByTestId('inline-activity-drawer')).toBeTruthy();
+		expect(getByText(/Nov 12 · Trader Joe's/)).toBeTruthy();
+		expect(getByText('(Sapphire)')).toBeTruthy();
+		expect(getByText('-$72.50')).toBeTruthy();
+
+		await fireEvent.click(getByTestId('category-row'));
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 	});
 
-	it('supports inline planned amount editing without firing onEditClick', async () => {
+	it('shows empty state inside expanded inline activity drawer when no transactions exist', async () => {
+		const { getByTestId, getByText } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-empty',
+					name: 'Personal Care',
+					originalPlanned: 100,
+					effectiveTarget: 100,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 100
+				},
+				onCoverClick: vi.fn()
+			}
+		});
+
+		await fireEvent.click(getByTestId('category-row'));
+		expect(getByTestId('inline-activity-drawer')).toBeTruthy();
+		expect(getByText('No tracked transactions yet.')).toBeTruthy();
+	});
+
+	it('supports inline planned amount editing without firing onEditClick or expanding drawer', async () => {
 		const onUpdatePlanned = vi.fn().mockResolvedValue(undefined);
 		const onEditClick = vi.fn();
-		const { getByTestId } = render(CategoryRow, {
+		const { getByTestId, queryByTestId } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-inline',
@@ -102,6 +193,7 @@ describe('CategoryRow', () => {
 		const plannedBtn = getByTestId('inline-planned-btn');
 		await fireEvent.click(plannedBtn);
 		expect(onEditClick).not.toHaveBeenCalled();
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 
 		const input = getByTestId('inline-planned-input') as HTMLInputElement;
 		await fireEvent.input(input, { target: { value: '625.50' } });

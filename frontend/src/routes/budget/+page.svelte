@@ -12,11 +12,16 @@
 		updateTransaction
 	} from '$lib/api/transactions';
 	import BudgetHeader from '$lib/components/budget/BudgetHeader.svelte';
+	import CategoryFocusPills, {
+		FOCUS_ALL,
+		FOCUS_INCOME
+	} from '$lib/components/budget/CategoryFocusPills.svelte';
 	import CategoryGroupCard from '$lib/components/budget/CategoryGroupCard.svelte';
 	import CategoryModal from '$lib/components/budget/CategoryModal.svelte';
+	import CatchUpModal, { type CatchUpMode } from '$lib/components/budget/CatchUpModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
 	import IncomeCard from '$lib/components/budget/IncomeCard.svelte';
-	import SummaryPanel from '$lib/components/budget/SummaryPanel.svelte';
+	import TransactionsDrawer from '$lib/components/budget/TransactionsDrawer.svelte';
 	import TransactionsPanel from '$lib/components/budget/TransactionsPanel.svelte';
 	import { BudgetLocalDB, type OfflineTransaction } from '$lib/offline/db';
 	import {
@@ -26,9 +31,24 @@
 	} from '$lib/offline/sync';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
-	import type { CategoryBudget, MonthBudgetDetails } from '$lib/types/budget';
-	import type { AccountItem, SolvencyReport, TransactionItemModel } from '$lib/types/transaction';
-	import { getGroupColor, groupSlug } from '$lib/utils/budgetColors';
+	import type {
+		CategoryBudget,
+		InlineActivityItem,
+		MonthBudgetDetails
+	} from '$lib/types/budget';
+	import type {
+		AccountItem,
+		SolvencyReport,
+		TransactionItemModel,
+		UpdateTransactionPayload
+	} from '$lib/types/transaction';
+	import { getGroupColor } from '$lib/utils/budgetColors';
+	import {
+		isCatchUpTransaction,
+		isCategorizableTransaction,
+		isToReviewTransaction,
+		mapOfflineQueuedToTransactions
+	} from '$lib/utils/transactionReview';
 
 	function defaultMonth(): string {
 		const now = new Date();
@@ -56,29 +76,28 @@
 	let isOffline = $state(typeof navigator !== 'undefined' ? !navigator.onLine : false);
 
 	// Layout & panel state
-	let inspectorTab = $state<'summary' | 'transactions'>('summary');
-	let mobileView = $state<'budget' | 'summary' | 'transactions'>('budget');
+	let isMobileDrawerOpen = $state(false);
 	let lastUrlPanel = $state<string | null>(null);
 
 	let displayMode = $state<'remaining' | 'spent'>('remaining');
-	let highlightedGroup = $state<string | null>(null);
 	let activeCategoryFilterId = $state<string | null>(null);
+	let activeFocusGroup = $state<string>(FOCUS_ALL);
 
 	// Modals & Drawers
 	let coverCategoryId = $state<string | null>(null);
 	let isCategoryModalOpen = $state(false);
 	let editingCategory = $state<CategoryBudget | null>(null);
 	let modalDefaultGroup = $state('Essentials');
+	let isCatchUpModalOpen = $state(false);
+	let catchUpModalMode = $state<CatchUpMode>('intro');
+	let hasAutoPromptedCatchUp = $state(false);
 
 	$effect(() => {
 		const panelParam = page.url.searchParams.get('panel');
 		if (panelParam !== lastUrlPanel) {
 			lastUrlPanel = panelParam;
 			if (panelParam === 'transactions') {
-				inspectorTab = 'transactions';
-				mobileView = 'transactions';
-			} else if (panelParam === 'summary') {
-				inspectorTab = 'summary';
+				isMobileDrawerOpen = true;
 			}
 		}
 	});
@@ -167,6 +186,15 @@
 			accounts = acctsRes;
 			solvency = solvRes;
 
+			if (!hasAutoPromptedCatchUp && !silent) {
+				hasAutoPromptedCatchUp = true;
+				const loadedAccountById = new Map(acctsRes.map((a) => [a.id, a]));
+				if (txRes.items.some((tx) => isCatchUpTransaction(tx, loadedAccountById))) {
+					catchUpModalMode = 'intro';
+					isCatchUpModalOpen = true;
+				}
+			}
+
 			await Promise.all([
 				localDB.cacheAccounts(
 					acctsRes.map((a) => ({
@@ -232,6 +260,109 @@
 		}));
 	});
 
+	let focusGroupNames = $derived(groupedCategories.map((g) => g.groupName));
+
+	let effectiveFocusGroup = $derived(
+		activeFocusGroup === FOCUS_ALL ||
+			activeFocusGroup === FOCUS_INCOME ||
+			focusGroupNames.includes(activeFocusGroup)
+			? activeFocusGroup
+			: FOCUS_ALL
+	);
+
+	let visibleGroupedCategories = $derived.by(() => {
+		if (effectiveFocusGroup === FOCUS_ALL) return groupedCategories;
+		if (effectiveFocusGroup === FOCUS_INCOME) return [];
+		return groupedCategories.filter((g) => g.groupName === effectiveFocusGroup);
+	});
+
+	let transactionsByCategory = $derived.by(() => {
+		const map = new Map<string, InlineActivityItem[]>();
+		const pushItem = (catId: string, item: InlineActivityItem) => {
+			const list = map.get(catId) ?? [];
+			list.push(item);
+			map.set(catId, list);
+		};
+
+		for (const tx of transactions) {
+			if (tx.isTransfer) continue;
+			const acct = accountById.get(tx.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			const merchant = tx.merchantClean?.trim() || tx.merchantRaw;
+			const accountName = tx.accountName || acct?.name || 'Account';
+
+			if (tx.splits && tx.splits.length > 0) {
+				for (const split of tx.splits) {
+					if (!split.categoryId) continue;
+					pushItem(split.categoryId, {
+						id: `${tx.id}:${split.id}`,
+						date: tx.transactionDate,
+						merchant,
+						accountName,
+						amount: split.amount,
+						status: tx.status
+					});
+				}
+			} else if (tx.categoryId) {
+				pushItem(tx.categoryId, {
+					id: tx.id,
+					date: tx.transactionDate,
+					merchant,
+					accountName,
+					amount: tx.amount,
+					status: tx.status
+				});
+			}
+		}
+
+		for (const q of queuedTransactions) {
+			if (!q.transactionDate.startsWith(currentMonth) || !q.categoryId) continue;
+			const acct = accountById.get(q.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			pushItem(q.categoryId, {
+				id: q.localId,
+				date: q.transactionDate,
+				merchant: q.merchantRaw,
+				accountName: acct?.name || 'Offline',
+				amount: q.amount,
+				status: 'PENDING'
+			});
+		}
+
+		return map;
+	});
+
+	let inflowTransactions = $derived.by(() => {
+		const items: InlineActivityItem[] = [];
+		for (const tx of transactions) {
+			if (tx.amount <= 0 || tx.isTransfer) continue;
+			const acct = accountById.get(tx.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			items.push({
+				id: tx.id,
+				date: tx.transactionDate,
+				merchant: tx.merchantClean?.trim() || tx.merchantRaw,
+				accountName: tx.accountName || acct?.name || 'Account',
+				amount: tx.amount,
+				status: tx.status
+			});
+		}
+		for (const q of queuedTransactions) {
+			if (!q.transactionDate.startsWith(currentMonth) || q.amount <= 0) continue;
+			const acct = accountById.get(q.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			items.push({
+				id: q.localId,
+				date: q.transactionDate,
+				merchant: q.merchantRaw,
+				accountName: acct?.name || 'Offline',
+				amount: q.amount,
+				status: 'PENDING'
+			});
+		}
+		return items;
+	});
+
 	let overspentCategory = $derived.by(() => {
 		if (!coverCategoryId || !budgetData) return null;
 		const found = budgetData.categories.find((c) => c.id === coverCategoryId);
@@ -267,28 +398,40 @@
 		return total;
 	});
 
-	let newUncategorizedCount = $derived.by(() => {
+	let toReviewCount = $derived.by(() => {
+		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
 		let count = 0;
-		for (const tx of transactions) {
-			if (tx.categoryId !== null || tx.isTransfer || (tx.splits && tx.splits.length > 0)) {
-				continue;
+		for (const tx of [...offlineMapped, ...transactions]) {
+			if (isToReviewTransaction(tx, accountById)) {
+				count++;
 			}
-			const acct = accountById.get(tx.accountId);
-			if (acct && !acct.isOnBudget) continue;
-			count++;
-		}
-		for (const q of queuedTransactions) {
-			if (!q.transactionDate.startsWith(currentMonth) || q.categoryId !== null) continue;
-			const acct = accountById.get(q.accountId);
-			if (acct && !acct.isOnBudget) continue;
-			count++;
 		}
 		return count;
 	});
 
+	let catchUpItems = $derived(
+		transactions.filter((tx) => isCatchUpTransaction(tx, accountById))
+	);
+
+	let modalCatchUpItems = $derived.by(() =>
+		catchUpItems.length > 0
+			? catchUpItems
+			: transactions.filter(
+					(tx) =>
+						isToReviewTransaction(tx, accountById) &&
+						isCategorizableTransaction(tx, accountById)
+				)
+	);
+
+	function fmtMoney(n: number): string {
+		return Math.abs(n).toLocaleString('en-US', {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2
+		});
+	}
+
 	function handleMonthChange(nextMonth: string) {
-		const panelQuery = inspectorTab === 'transactions' ? '&panel=transactions' : '';
-		void goto(`/budget?month=${nextMonth}${panelQuery}`, {
+		void goto(`/budget?month=${nextMonth}`, {
 			replaceState: false,
 			keepFocus: true,
 			noScroll: true
@@ -318,6 +461,11 @@
 			txId,
 			categoryId ? { categoryId } : { clearCategory: true }
 		);
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleUpdateTransaction(txId: string, payload: UpdateTransactionPayload) {
+		await updateTransaction(txId, payload);
 		await loadWorkspace(currentMonth, true);
 	}
 
@@ -393,240 +541,199 @@
 		}
 	}
 
-	function handleSelectSummaryGroup(groupName: string | null) {
-		highlightedGroup = groupName;
-		if (groupName) {
-			if (mobileView !== 'budget') {
-				mobileView = 'budget';
-			}
-			queueMicrotask(() => {
-				const el = document.getElementById(groupSlug(groupName));
-				el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-			});
+	function handleFilterCategoryTransactions(catId: string) {
+		activeCategoryFilterId = catId;
+		if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+			isMobileDrawerOpen = true;
 		}
 	}
 
-	function handleFilterCategoryTransactions(catId: string) {
-		activeCategoryFilterId = catId;
-		inspectorTab = 'transactions';
-		mobileView = 'transactions';
-	}
-
-	function switchInspectorTab(tab: 'summary' | 'transactions') {
-		inspectorTab = tab;
-		if (mobileView !== 'budget') {
-			mobileView = tab;
+	function openCatchUpStack() {
+		if (modalCatchUpItems.length > 0) {
+			catchUpModalMode = 'stack';
+			isCatchUpModalOpen = true;
+		} else {
+			isMobileDrawerOpen = true;
 		}
 	}
 </script>
 
-<div class="max-w-[1360px] mx-auto p-4 sm:p-6">
-	<!-- Mobile/Tablet Switcher (< lg) -->
-	<div class="lg:hidden mb-4">
-		<div
-			role="tablist"
-			aria-label="Workspace sections"
-			class="grid grid-cols-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 shadow-xs"
-		>
-			<button
-				type="button"
-				role="tab"
-				aria-selected={mobileView === 'budget'}
-				onclick={() => (mobileView = 'budget')}
-				class="rounded-lg py-2 text-xs font-semibold transition-colors {mobileView === 'budget'
-					? 'bg-emerald-600 text-white shadow-xs'
-					: 'text-slate-600 dark:text-slate-300'}"
-			>
-				Budget
-			</button>
-			<button
-				type="button"
-				role="tab"
-				aria-selected={mobileView === 'summary'}
-				onclick={() => {
-					mobileView = 'summary';
-					inspectorTab = 'summary';
-				}}
-				class="rounded-lg py-2 text-xs font-semibold transition-colors {mobileView === 'summary'
-					? 'bg-emerald-600 text-white shadow-xs'
-					: 'text-slate-600 dark:text-slate-300'}"
-			>
-				Summary
-			</button>
-			<button
-				type="button"
-				role="tab"
-				aria-selected={mobileView === 'transactions'}
-				onclick={() => {
-					mobileView = 'transactions';
-					inspectorTab = 'transactions';
-				}}
-				class="rounded-lg py-2 text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1.5 {mobileView ===
-				'transactions'
-					? 'bg-emerald-600 text-white shadow-xs'
-					: 'text-slate-600 dark:text-slate-300'}"
-			>
-				{#if newUncategorizedCount > 0}
-					<span
-						class="px-1.5 py-0.2 rounded-full text-[10px] font-bold {mobileView === 'transactions'
-							? 'bg-white text-emerald-700'
-							: 'bg-sky-600 text-white'}"
-					>
-						{newUncategorizedCount}
-					</span>
-				{/if}
-				<span>Transactions</span>
-			</button>
-		</div>
-	</div>
+<BudgetHeader
+	{currentMonth}
+	summary={budgetData?.summary ?? null}
+	{solvency}
+	accountCount={accounts.length}
+	{toReviewCount}
+	{isOffline}
+	queuedCount={queuedTransactions.length}
+	syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
+	isDrawerOpen={isMobileDrawerOpen}
+	onSyncNow={handleSyncNow}
+	onMonthChange={handleMonthChange}
+	onOpenCatchUp={openCatchUpStack}
+	onToggleTransactionsDrawer={() => (isMobileDrawerOpen = !isMobileDrawerOpen)}
+	onSignOut={() => {
+		demo.resetOnLogout();
+		void auth.logout();
+	}}
+/>
 
-	<!-- Unified 2-Column Workspace Grid -->
-	<div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_410px] gap-6 items-start">
-		<!-- Left Column: Budget Canvas -->
-		<div class="space-y-5 min-w-0 {mobileView === 'budget' ? 'block' : 'hidden lg:block'}">
-			<BudgetHeader
-				{currentMonth}
-				summary={budgetData?.summary ?? null}
-				{solvency}
-				accountCount={accounts.length}
-				{isOffline}
-				queuedCount={queuedTransactions.length}
-				syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
-				onSyncNow={handleSyncNow}
-				onMonthChange={handleMonthChange}
-				onOpenNewCategory={() => openNewCategoryInGroup('Essentials')}
-			/>
+<div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5">
+	<!-- Hybrid 12-Column Split Grid: 8 cols Budget | 4 cols Sticky Transactions (lg+) -->
+	<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+		<!-- Left/Main Column: Budget Canvas -->
+		<div class="lg:col-span-8 space-y-5 min-w-0">
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="flex flex-wrap items-center gap-3 text-xs text-ink-secondary">
+					{#if budgetData?.summary}
+						<span>
+							Planned:
+							<strong class="font-mono text-ink-primary">
+								${fmtMoney(budgetData.summary.totalAllocated)}
+							</strong>
+						</span>
+						<span>
+							Spent:
+							<strong class="font-mono text-ink-primary">
+								${fmtMoney(budgetData.summary.totalSpentCleared + budgetData.summary.totalSpentPending)}
+							</strong>
+						</span>
+						{#if budgetData.summary.isUnbalanced}
+							<span class="rounded-full bg-status-danger-bg text-status-danger px-2 py-0.5 text-[11px] font-semibold">
+								Overspent Categories
+							</span>
+						{/if}
+					{/if}
+				</div>
+
+				<button
+					type="button"
+					onclick={() => openNewCategoryInGroup('Essentials')}
+					class="rounded-lg bg-accent-primary text-accent-primary-text px-3 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
+				>
+					+ Category
+				</button>
+			</div>
 
 			{#if errorMsg}
-				<div class="rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 p-4 text-xs text-rose-700 dark:text-rose-300">
+				<div class="rounded-xl border border-status-danger bg-status-danger-bg p-4 text-xs text-status-danger">
 					{errorMsg}
 				</div>
 			{/if}
 
 			{#if isLoading && !budgetData}
-				<div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+				<div class="rounded-2xl border border-border bg-surface p-8 text-center text-sm text-ink-secondary">
 					Loading {currentMonth} budget...
 				</div>
 			{:else}
-				<IncomeCard
-					yearMonth={`${currentMonth}-01`}
-					incomes={budgetData?.incomes ?? []}
-					receivedAmount={receivedInflows}
-					onChanged={() => void loadWorkspace(currentMonth, true)}
+				<CategoryFocusPills
+					groups={focusGroupNames}
+					selected={effectiveFocusGroup}
+					onSelect={(value) => (activeFocusGroup = value)}
 				/>
 
-				{#if groupedCategories.length === 0}
-					<div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center space-y-3">
-						<p class="text-sm font-medium text-slate-800 dark:text-slate-200">No categories yet</p>
-						<p class="text-xs text-slate-500 dark:text-slate-400">
-							Add your first budget category or planned income to start assigning every dollar.
-						</p>
-					</div>
-				{:else}
-					<div class="space-y-5">
-						{#each groupedCategories as group (group.groupName)}
-							<CategoryGroupCard
-								groupName={group.groupName}
-								color={group.color}
-								categories={group.cats}
-								{displayMode}
-								highlighted={highlightedGroup === group.groupName}
-								onToggleDisplayMode={() =>
-									(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
-								onCoverClick={(id) => (coverCategoryId = id)}
-								onEditClick={openEditCategory}
-								onUpdatePlanned={handleUpdatePlanned}
-								onFilterTransactions={handleFilterCategoryTransactions}
-								onAddCategoryInGroup={openNewCategoryInGroup}
-							/>
-						{/each}
-					</div>
+				{#if effectiveFocusGroup === FOCUS_ALL || effectiveFocusGroup === FOCUS_INCOME}
+					<IncomeCard
+						yearMonth={`${currentMonth}-01`}
+						incomes={budgetData?.incomes ?? []}
+						receivedAmount={receivedInflows}
+						{inflowTransactions}
+						onChanged={() => void loadWorkspace(currentMonth, true)}
+					/>
+				{/if}
+
+				{#if effectiveFocusGroup !== FOCUS_INCOME}
+					{#if groupedCategories.length === 0}
+						<div class="rounded-2xl border border-border bg-surface p-8 text-center space-y-3">
+							<p class="text-sm font-medium text-ink-primary">No categories yet</p>
+							<p class="text-xs text-ink-secondary">
+								Add your first budget category or planned income to start assigning every dollar.
+							</p>
+						</div>
+					{:else}
+						<div class="space-y-5">
+							{#each visibleGroupedCategories as group (group.groupName)}
+								<CategoryGroupCard
+									groupName={group.groupName}
+									color={group.color}
+									categories={group.cats}
+									{displayMode}
+									{transactionsByCategory}
+									onToggleDisplayMode={() =>
+										(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
+									onCoverClick={(id) => (coverCategoryId = id)}
+									onEditClick={openEditCategory}
+									onUpdatePlanned={handleUpdatePlanned}
+									onFilterTransactions={handleFilterCategoryTransactions}
+									onAddCategoryInGroup={openNewCategoryInGroup}
+								/>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			{/if}
 		</div>
 
-		<!-- Right Column: Sticky Inspector Panel (Summary | Transactions) -->
+		<!-- Right Column (Desktop lg+): Dedicated Sticky Transactions Panel -->
 		<aside
-			aria-label="Budget summary and transactions"
-			class="lg:sticky lg:top-6 flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden min-h-[500px] lg:h-[calc(100dvh-6.5rem)] {mobileView ===
-			'budget'
-				? 'hidden lg:flex'
-				: 'flex'}"
+			aria-label="Transactions"
+			data-testid="desktop-transactions-panel"
+			class="hidden lg:flex lg:col-span-4 lg:sticky lg:top-[4.75rem] flex-col rounded-2xl border border-border bg-surface shadow-sm overflow-hidden lg:h-[calc(100dvh-6rem)]"
 		>
-			<!-- Segmented Switcher: Summary | Transactions -->
-			<div
-				role="tablist"
-				aria-label="Inspector view"
-				class="grid grid-cols-2 p-1.5 gap-1 bg-slate-100/80 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 shrink-0"
-			>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={inspectorTab === 'summary'}
-					onclick={() => switchInspectorTab('summary')}
-					class="relative flex items-center justify-center gap-2 rounded-xl py-2 px-3 text-xs font-semibold transition-all {inspectorTab ===
-					'summary'
-						? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs ring-1 ring-slate-200/80 dark:ring-slate-700'
-						: 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'}"
-				>
-					<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-						<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-						<path d="M22 12A10 10 0 0 0 12 2v10z" />
-					</svg>
-					<span>Summary</span>
-				</button>
-
-				<button
-					type="button"
-					role="tab"
-					aria-selected={inspectorTab === 'transactions'}
-					onclick={() => switchInspectorTab('transactions')}
-					class="relative flex items-center justify-center gap-2 rounded-xl py-2 px-3 text-xs font-semibold transition-all {inspectorTab ===
-					'transactions'
-						? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs ring-1 ring-slate-200/80 dark:ring-slate-700'
-						: 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'}"
-				>
-					{#if newUncategorizedCount > 0}
-						<span
-							class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold bg-sky-600 text-white"
-						>
-							{newUncategorizedCount}
-						</span>
-					{/if}
-					<span>Transactions</span>
-				</button>
+			<div class="px-4 py-3 border-b border-border bg-subtle flex items-center justify-between shrink-0">
+				<h2 class="text-xs font-bold uppercase tracking-wider text-ink-primary">Transactions</h2>
+				{#if toReviewCount > 0}
+					<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold bg-accent-pop text-accent-primary-text">
+						{toReviewCount}
+					</span>
+				{/if}
 			</div>
 
-			<!-- Active Panel Body -->
 			<div class="flex-1 min-h-0 flex flex-col">
-				{#if inspectorTab === 'summary'}
-					<SummaryPanel
-						categories={budgetData?.categories ?? []}
-						summary={budgetData?.summary ?? null}
-						selectedGroup={highlightedGroup}
-						onSelectGroup={handleSelectSummaryGroup}
-					/>
-				{:else}
-					<TransactionsPanel
-						{currentMonth}
-						{transactions}
-						{queuedTransactions}
-						{accounts}
-						categories={budgetData?.categories ?? []}
-						{isOffline}
-						syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
-						{activeCategoryFilterId}
-						onClearCategoryFilter={() => (activeCategoryFilterId = null)}
-						onCreateTransaction={handleCreateTransaction}
-						onCategorizeTransaction={handleCategorizeTransaction}
-						onDeleteTransaction={handleDeleteTransaction}
-						onSyncNow={handleSyncNow}
-					/>
-				{/if}
+				<TransactionsPanel
+					{currentMonth}
+					{transactions}
+					{queuedTransactions}
+					{accounts}
+					categories={budgetData?.categories ?? []}
+					{isOffline}
+					syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
+					{activeCategoryFilterId}
+					onClearCategoryFilter={() => (activeCategoryFilterId = null)}
+					onCreateTransaction={handleCreateTransaction}
+					onCategorizeTransaction={handleCategorizeTransaction}
+					onUpdateTransaction={handleUpdateTransaction}
+					onDeleteTransaction={handleDeleteTransaction}
+					onSyncNow={handleSyncNow}
+				/>
 			</div>
 		</aside>
 	</div>
 </div>
+
+<TransactionsDrawer
+	isOpen={isMobileDrawerOpen}
+	title="Transactions"
+	badgeCount={toReviewCount}
+	onClose={() => (isMobileDrawerOpen = false)}
+>
+	<TransactionsPanel
+		{currentMonth}
+		{transactions}
+		{queuedTransactions}
+		{accounts}
+		categories={budgetData?.categories ?? []}
+		{isOffline}
+		syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
+		{activeCategoryFilterId}
+		onClearCategoryFilter={() => (activeCategoryFilterId = null)}
+		onCreateTransaction={handleCreateTransaction}
+		onCategorizeTransaction={handleCategorizeTransaction}
+		onUpdateTransaction={handleUpdateTransaction}
+		onDeleteTransaction={handleDeleteTransaction}
+		onSyncNow={handleSyncNow}
+	/>
+</TransactionsDrawer>
 
 <CoverDrawer
 	isOpen={coverCategoryId !== null}
@@ -651,4 +758,15 @@
 		isCategoryModalOpen = false;
 		void loadWorkspace(currentMonth, true);
 	}}
+/>
+
+<CatchUpModal
+	isOpen={isCatchUpModalOpen}
+	initialMode={catchUpModalMode}
+	items={modalCatchUpItems}
+	allTransactions={transactions}
+	{accounts}
+	categories={budgetData?.categories ?? []}
+	onCategorizeTransaction={handleCategorizeTransaction}
+	onClose={() => (isCatchUpModalOpen = false)}
 />

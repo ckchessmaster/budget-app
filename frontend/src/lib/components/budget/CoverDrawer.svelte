@@ -77,29 +77,29 @@
 			type="button"
 			aria-label="Close cover drawer"
 			onclick={onClose}
-			class="fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs transition-opacity"
+			class="fixed inset-0 bg-black/50 backdrop-blur-xs transition-opacity"
 		></button>
 
 		<div
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="cover-drawer-title"
-			class="relative z-10 w-full sm:max-w-md bg-white dark:bg-slate-900 border-t sm:border-t-0 sm:border-l border-slate-200 dark:border-slate-800 rounded-t-2xl sm:rounded-none sm:rounded-l-2xl p-6 shadow-2xl flex flex-col justify-between max-h-[90dvh] sm:max-h-full overflow-y-auto"
+			class="relative z-10 w-full sm:max-w-md bg-surface text-ink-primary border-t sm:border-t-0 sm:border-l border-border rounded-t-2xl sm:rounded-none sm:rounded-l-2xl p-6 shadow-2xl flex flex-col justify-between max-h-[90dvh] sm:max-h-full overflow-y-auto"
 		>
 			<div>
-				<div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+				<div class="flex items-center justify-between border-b border-border pb-4">
 					<div>
-						<h2 id="cover-drawer-title" class="text-lg font-semibold text-slate-900 dark:text-white">
+						<h2 id="cover-drawer-title" class="text-lg font-semibold text-ink-primary">
 							Cover Overspending
 						</h2>
-						<p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-							Move funds into <span class="text-rose-600 dark:text-rose-400 font-medium">{overspentCategory.name}</span>
+						<p class="text-xs text-ink-secondary mt-0.5">
+							Move funds into <span class="text-status-danger font-medium">{overspentCategory.name}</span>
 						</p>
 					</div>
 					<button
 						type="button"
 						onclick={onClose}
-						class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-white transition-colors"
+						class="rounded-lg p-1.5 text-ink-muted hover:bg-surface-hover hover:text-ink-primary transition-colors"
 					>
 						✕
 					</button>
@@ -107,18 +107,18 @@
 
 				<form onsubmit={handleSubmit} class="mt-5 space-y-4">
 					<div>
-						<label for="donor-select" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+						<label for="donor-select" class="block text-xs font-medium text-ink-secondary mb-1.5">
 							Move Money From
 						</label>
 						{#if selectableDonors.length === 0}
-							<p class="rounded-lg border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-300">
+							<p class="rounded-lg border border-status-warn/30 bg-status-warn-bg p-3 text-xs text-status-warn">
 								No categories currently have a positive available balance to donate from.
 							</p>
 						{:else}
 							<select
 								id="donor-select"
 								bind:value={selectedDonorId}
-								class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
 							>
 								{#each selectableDonors as donor}
 									<option value={donor.id}>
@@ -130,7 +130,7 @@
 					</div>
 
 					<div>
-						<label for="cover-amount" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+						<label for="cover-amount" class="block text-xs font-medium text-ink-secondary mb-1.5">
 							Amount ($)
 						</label>
 						<input
@@ -140,12 +140,12 @@
 							min="0.01"
 							bind:value={amountInput}
 							required
-							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
 
 					<div>
-						<label for="cover-reason" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+						<label for="cover-reason" class="block text-xs font-medium text-ink-secondary mb-1.5">
 							Reason (optional)
 						</label>
 						<input
@@ -153,12 +153,12 @@
 							type="text"
 							placeholder="e.g., Extra groceries for guests"
 							bind:value={reasonInput}
-							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-emerald-500 focus:outline-none"
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
 
 					{#if errorMsg}
-						<p class="text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-lg px-3 py-2">
+						<p class="text-xs text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-lg px-3 py-2">
 							{errorMsg}
 						</p>
 					{/if}
@@ -167,14 +167,14 @@
 						<button
 							type="button"
 							onclick={onClose}
-							class="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+							class="rounded-lg border border-border bg-subtle px-4 py-2 text-xs font-medium text-ink-secondary hover:bg-surface-hover hover:text-ink-primary transition-colors"
 						>
 							Cancel
 						</button>
 						<button
 							type="submit"
 							disabled={isSubmitting || selectableDonors.length === 0}
-							class="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+							class="rounded-lg bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-primary-text hover:opacity-90 disabled:opacity-50 transition-opacity"
 						>
 							{isSubmitting ? 'Transferring...' : 'Cover Overspend'}
 						</button>
