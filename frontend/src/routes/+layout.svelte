@@ -3,7 +3,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import DemoSimulatorDrawer from '$lib/components/demo/DemoSimulatorDrawer.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { demo } from '$lib/stores/demo.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
 
 	let { children } = $props();
@@ -14,6 +16,8 @@
 	let isBudgetRoute = $derived(currentPath === '/budget' || currentPath.startsWith('/budget/'));
 	let isBudgetActive = $derived(currentPath === '/' || currentPath.startsWith('/budget'));
 	let isAccountsActive = $derived(currentPath.startsWith('/accounts'));
+	let isSettingsActive = $derived(currentPath.startsWith('/settings'));
+	let isSyncing = $derived(demo.syncStatus === 'running' || demo.syncStatus === 'retrying');
 
 	onMount(() => {
 		theme.init();
@@ -26,7 +30,10 @@
 		}
 		void auth.ready().then(() => {
 			if (!auth.isAuthenticated) {
+				demo.resetOnLogout();
 				void goto('/login');
+			} else if (!demo.loaded && !demo.loading) {
+				void demo.load().catch(() => {});
 			}
 		});
 	});
@@ -71,6 +78,24 @@
 			</div>
 
 			<div class="flex items-center gap-2 sm:gap-3">
+				{#if auth.isAuthenticated}
+					<a
+						href="/settings"
+						aria-label="Settings"
+						title="Settings"
+						aria-current={isSettingsActive ? 'page' : undefined}
+						data-testid="settings-nav-link"
+						class="p-2 rounded-lg border transition-colors {isSettingsActive
+							? 'border-accent-pop/60 bg-accent-tint text-accent-pop'
+							: 'border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary'}"
+					>
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<circle cx="12" cy="12" r="3" />
+							<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+						</svg>
+					</a>
+				{/if}
+
 				<button
 					type="button"
 					onclick={() => theme.toggle()}
@@ -99,7 +124,10 @@
 					</span>
 					<button
 						type="button"
-						onclick={() => auth.logout()}
+						onclick={() => {
+							demo.resetOnLogout();
+							void auth.logout();
+						}}
 						class="text-xs text-ink-secondary hover:text-ink-primary px-2.5 py-1.5 rounded-md hover:bg-surface-hover transition-colors"
 					>
 						Sign Out
@@ -116,7 +144,71 @@
 		</header>
 	{/if}
 
+	{#if auth.isAuthenticated && demo.isDemo}
+		<div
+			data-testid="demo-mode-banner"
+			class="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800/70 text-xs shrink-0"
+		>
+			<div class="flex flex-wrap items-center gap-2 min-w-0">
+				<span class="font-bold tracking-wide text-amber-900 dark:text-amber-200">
+					DEMO MODE · Isolated Sandbox
+				</span>
+				{#if demo.unsyncedCount > 0}
+					<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-200/80 text-amber-950 dark:bg-amber-500/30 dark:text-amber-100">
+						{demo.unsyncedCount} staged
+					</span>
+				{/if}
+				{#if demo.syncStatus !== 'idle'}
+					<span
+						class="px-2 py-0.5 rounded-full text-[11px] font-medium {demo.syncStatus === 'failed'
+							? 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200'
+							: demo.syncStatus === 'retrying'
+								? 'bg-amber-200 text-amber-950 dark:bg-amber-500/30 dark:text-amber-100'
+								: demo.syncStatus === 'completed'
+									? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200'
+									: 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200'}"
+					>
+						{demo.syncMessage}
+					</span>
+				{/if}
+			</div>
+
+			<div class="flex items-center gap-1.5 shrink-0">
+				<button
+					type="button"
+					onclick={() => demo.openDrawer()}
+					data-testid="banner-open-simulator-btn"
+					class="px-2.5 py-1 rounded-md font-semibold bg-amber-900 text-white hover:bg-amber-800 dark:bg-amber-500 dark:text-slate-950 dark:hover:bg-amber-400 transition-colors"
+				>
+					Open Simulator
+				</button>
+				<button
+					type="button"
+					disabled={isSyncing}
+					onclick={() => void demo.triggerSyncAndPoll()}
+					data-testid="banner-sync-now-btn"
+					class="px-2.5 py-1 rounded-md font-semibold border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50 transition-colors"
+				>
+					{isSyncing ? 'Syncing...' : 'Sync Now'}
+				</button>
+				<button
+					type="button"
+					disabled={demo.loading}
+					onclick={() => void demo.toggleDemo(false)}
+					data-testid="banner-exit-demo-btn"
+					class="px-2.5 py-1 rounded-md font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-800/40 transition-colors"
+				>
+					Exit Demo
+				</button>
+			</div>
+		</div>
+	{/if}
+
 	<main class="flex-1 overflow-y-auto overscroll-contain-scroll">
 		{@render children()}
 	</main>
+
+	{#if auth.isAuthenticated && demo.isDemo}
+		<DemoSimulatorDrawer />
+	{/if}
 </div>

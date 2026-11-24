@@ -89,6 +89,25 @@ describe('theme store', () => {
 		expect(window.localStorage.getItem('color-scheme')).toBeNull();
 		expect(metaEl.content).toBe('light dark');
 	});
+
+	it('supports explicit setMode(light | dark | system)', () => {
+		theme.setMode('dark');
+		expect(theme.override).toBe('dark');
+		expect(theme.effective).toBe('dark');
+		expect(window.localStorage.getItem('color-scheme')).toBe('dark');
+		expect(metaEl.content).toBe('dark');
+
+		theme.setMode('light');
+		expect(theme.override).toBe('light');
+		expect(theme.effective).toBe('light');
+		expect(window.localStorage.getItem('color-scheme')).toBe('light');
+		expect(metaEl.content).toBe('light');
+
+		theme.setMode('system');
+		expect(theme.override).toBeNull();
+		expect(window.localStorage.getItem('color-scheme')).toBeNull();
+		expect(metaEl.content).toBe('light dark');
+	});
 });
 
 describe('Mono Cobalt & Obsidian CSS theme tokens', () => {

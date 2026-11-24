@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -50,13 +51,17 @@ func (r *pgPlannedIncomeRepo) Create(ctx context.Context, tx pgx.Tx, inc *Monthl
 }
 
 func (r *pgPlannedIncomeRepo) ListByMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) ([]MonthlyPlannedIncome, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, year_month, name, amount, created_at
 		FROM monthly_planned_incomes
-		WHERE year_month = $1::date
+		WHERE workspace_id = $1 AND year_month = $2::date
 		ORDER BY created_at ASC, name ASC
-	`, ym)
+	`, wsID, ym)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list planned incomes: %w", err)
 	}
@@ -77,7 +82,11 @@ func (r *pgPlannedIncomeRepo) ListByMonth(ctx context.Context, tx pgx.Tx, yearMo
 }
 
 func (r *pgPlannedIncomeRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `DELETE FROM monthly_planned_incomes WHERE id = $1`, id)
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM monthly_planned_incomes WHERE id = $1 AND workspace_id = $2`, id, wsID)
 	if err != nil {
 		return fmt.Errorf("failed to delete planned income: %w", err)
 	}

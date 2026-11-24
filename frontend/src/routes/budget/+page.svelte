@@ -30,6 +30,7 @@
 		requestBackgroundSync
 	} from '$lib/offline/sync';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { demo } from '$lib/stores/demo.svelte';
 	import type {
 		CategoryBudget,
 		InlineActivityItem,
@@ -225,7 +226,8 @@
 	}
 
 	$effect(() => {
-		void loadWorkspace(currentMonth);
+		const version = demo.dataVersion;
+		void loadWorkspace(currentMonth, version > 0);
 	});
 
 	onMount(() => {
@@ -528,6 +530,9 @@
 		syncing = true;
 		try {
 			await flushOfflineQueue(localDB);
+			if (typeof navigator === 'undefined' || navigator.onLine) {
+				await demo.triggerSyncAndPoll();
+			}
 			await loadWorkspace(currentMonth, true);
 		} catch (err: any) {
 			errorMsg = err?.message || 'Sync failed.';
@@ -561,13 +566,16 @@
 	{toReviewCount}
 	{isOffline}
 	queuedCount={queuedTransactions.length}
-	{syncing}
+	syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 	isDrawerOpen={isMobileDrawerOpen}
 	onSyncNow={handleSyncNow}
 	onMonthChange={handleMonthChange}
 	onOpenCatchUp={openCatchUpStack}
 	onToggleTransactionsDrawer={() => (isMobileDrawerOpen = !isMobileDrawerOpen)}
-	onSignOut={() => void auth.logout()}
+	onSignOut={() => {
+		demo.resetOnLogout();
+		void auth.logout();
+	}}
 />
 
 <div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5">
@@ -689,7 +697,7 @@
 					{accounts}
 					categories={budgetData?.categories ?? []}
 					{isOffline}
-					{syncing}
+					syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 					{activeCategoryFilterId}
 					onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 					onCreateTransaction={handleCreateTransaction}
@@ -716,7 +724,7 @@
 		{accounts}
 		categories={budgetData?.categories ?? []}
 		{isOffline}
-		{syncing}
+		syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 		{activeCategoryFilterId}
 		onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 		onCreateTransaction={handleCreateTransaction}

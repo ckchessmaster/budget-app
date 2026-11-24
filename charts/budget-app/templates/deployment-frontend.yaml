@@ -13,6 +13,10 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      # Roll pods when OIDC or CORS configuration changes: envFrom alone does not
+      # restart containers, so a security-relevant config edit could sit unapplied.
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app: budget-frontend
         app.kubernetes.io/instance: {{ .Release.Name }}

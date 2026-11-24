@@ -38,9 +38,20 @@ export const backend = await builder
   .addGolangApp('backend', '../backend', 'cmd/api/main.go')
   .withReference(budgetDb)
   .withEnvironment('DEX_ISSUER_URL', 'http://localhost:5556/dex')
+  // The Vite dev server runs on 5173 and calls the API on 8080, which is a
+  // different origin, so it has to be allowlisted explicitly.
+  .withEnvironment('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
   .waitFor(budgetDb)
   .waitFor(dex)
   .waitFor(temporal);
+
+export const worker = await builder
+  .addGolangApp('worker', '../backend', 'cmd/worker/main.go')
+  .withReference(budgetDb)
+  .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
+  .waitFor(budgetDb)
+  .waitFor(temporal)
+  .waitFor(backend);
 
 export const frontend = await builder
   .addExecutable('frontend', 'npm', '../frontend', ['run', 'dev'])

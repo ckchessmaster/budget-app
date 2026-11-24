@@ -27,6 +27,18 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("simplefin rate limited; retry after %s", e.RetryAfter)
 }
 
+type AuthError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *AuthError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("simplefin auth error (%d): %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("simplefin auth error (%d)", e.StatusCode)
+}
+
 var ErrRateLimited = &RateLimitError{RetryAfter: 60 * time.Second}
 
 type Client interface {
@@ -70,6 +82,10 @@ func (c *httpClient) ClaimSetupToken(ctx context.Context, setupToken string) (st
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return "", parseRateLimitError(resp)
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", &AuthError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -121,6 +137,10 @@ func (c *httpClient) FetchData(ctx context.Context, accessURL string, startDate 
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, parseRateLimitError(resp)
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, &AuthError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

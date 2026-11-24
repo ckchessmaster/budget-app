@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
@@ -25,10 +26,14 @@ func NewBaselineRepo() BaselineRepo {
 }
 
 func (r *pgBaselineRepo) InitializeMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) error {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	prevYM := ym.AddDate(0, -1, 0)
 
-	_, err := tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned)
 		SELECT c.workspace_id,
 		       c.id,
@@ -39,8 +44,9 @@ func (r *pgBaselineRepo) InitializeMonth(ctx context.Context, tx pgx.Tx, yearMon
 		       ON prev.workspace_id = c.workspace_id
 		      AND prev.category_id = c.id
 		      AND prev.year_month = $2::date
+		WHERE c.workspace_id = $3
 		ON CONFLICT (workspace_id, category_id, year_month) DO NOTHING
-	`, ym, prevYM)
+	`, ym, prevYM, wsID)
 	if err != nil {
 		return fmt.Errorf("failed to initialize month baselines: %w", err)
 	}
@@ -48,13 +54,17 @@ func (r *pgBaselineRepo) InitializeMonth(ctx context.Context, tx pgx.Tx, yearMon
 }
 
 func (r *pgBaselineRepo) GetByMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) ([]MonthlyCategoryBudget, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, category_id, year_month, original_planned
 		FROM monthly_category_budgets
-		WHERE year_month = $1::date
+		WHERE workspace_id = $1 AND year_month = $2::date
 		ORDER BY category_id ASC
-	`, ym)
+	`, wsID, ym)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get monthly baselines: %w", err)
 	}
@@ -75,19 +85,23 @@ func (r *pgBaselineRepo) GetByMonth(ctx context.Context, tx pgx.Tx, yearMonth ti
 }
 
 func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time) (*MonthlyCategoryBudget, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 	var b MonthlyCategoryBudget
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id, workspace_id, category_id, year_month, original_planned
 		FROM monthly_category_budgets
-		WHERE category_id = $1 AND year_month = $2::date
-	`, categoryID, ym).Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned)
+		WHERE workspace_id = $1 AND category_id = $2 AND year_month = $3::date
+	`, wsID, categoryID, ym).Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// Fallback to category's default monthly_budget if baseline not yet frozen
-			var wsID uuid.UUID
+			var catWSID uuid.UUID
 			var defBudget decimal.Decimal
-			err2 := tx.QueryRow(ctx, `SELECT workspace_id, monthly_budget FROM categories WHERE id = $1`, categoryID).Scan(&wsID, &defBudget)
+			err2 := tx.QueryRow(ctx, `SELECT workspace_id, monthly_budget FROM categories WHERE id = $1 AND workspace_id = $2`, categoryID, wsID).Scan(&catWSID, &defBudget)
 			if err2 != nil {
 				if err2 == pgx.ErrNoRows {
 					return nil, ErrNotFound
@@ -95,7 +109,7 @@ func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, c
 				return nil, fmt.Errorf("failed to get category fallback budget: %w", err2)
 			}
 			return &MonthlyCategoryBudget{
-				WorkspaceID:     wsID,
+				WorkspaceID:     catWSID,
 				CategoryID:      categoryID,
 				YearMonth:       ym,
 				OriginalPlanned: defBudget,
@@ -107,22 +121,26 @@ func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, c
 }
 
 func (r *pgBaselineRepo) UpsertMonthlyPlanned(ctx context.Context, tx pgx.Tx, categoryID uuid.UUID, yearMonth time.Time, originalPlanned decimal.Decimal) error {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return err
+	}
 	ym := NormalizeYearMonth(yearMonth)
 
-	var wsID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM categories WHERE id = $1`, categoryID).Scan(&wsID); err != nil {
+	var catWSID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM categories WHERE id = $1 AND workspace_id = $2`, categoryID, wsID).Scan(&catWSID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("failed to resolve category workspace: %w", err)
 	}
 
-	_, err := tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned)
 		VALUES ($1, $2, $3::date, $4)
 		ON CONFLICT (workspace_id, category_id, year_month)
 		DO UPDATE SET original_planned = EXCLUDED.original_planned
-	`, wsID, categoryID, ym, originalPlanned.Round(2))
+	`, catWSID, categoryID, ym, originalPlanned.Round(2))
 	if err != nil {
 		return fmt.Errorf("failed to upsert monthly planned budget: %w", err)
 	}

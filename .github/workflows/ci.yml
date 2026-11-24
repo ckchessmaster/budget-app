@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: budgetdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Files not formatted with gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet and build binaries
+        run: |
+          GOWORK=off go vet ./...
+          GOWORK=off go build ./cmd/api ./cmd/worker ./cmd/migrate
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/budgetdb?sslmode=disable
+        run: GOWORK=off go run ./cmd/migrate up
+
+      - name: Provision RLS test role
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/budgetdb?sslmode=disable
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y postgresql-client
+          fi
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'budget_app_user') THEN
+              CREATE ROLE budget_app_user WITH LOGIN PASSWORD 'budgetpass';
+            END IF;
+          END
+          $$;
+          GRANT USAGE ON SCHEMA public TO budget_app_user;
+          GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO budget_app_user;
+          GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO budget_app_user;
+          SQL
+
+      - name: Run Go tests (unit + Postgres RLS)
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/budgetdb?sslmode=disable
+          TEST_DATABASE_URL: postgres://budget_app_user:budgetpass@127.0.0.1:5432/budgetdb?sslmode=disable
+        run: GOWORK=off go test -race -count=1 ./...
+
+  frontend:
+    name: Frontend (SvelteKit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync SvelteKit types
+        run: npx svelte-kit sync
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Run svelte-check
+        run: npm run check
+
+      - name: Build production bundle
+        run: npm run build
+
+  helm:
+    name: Helm Chart
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint charts/budget-app --strict
+
+      - name: Render chart and check value types
+        run: |
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set ingress.className=nginx \
+            --set ingress.hosts[0].host=budget.example.com \
+            --set ingress.tls[0].secretName=budget-app-tls \
+            --set ingress.tls[0].hosts[0]=budget.example.com \
+            > /tmp/rendered.yaml
+          if ! python3 -c "import yaml" >/dev/null 2>&1; then
+            python3 -m pip install --quiet pyyaml
+          fi
+          python3 - <<'PY'
+          import sys, yaml
+
+          # A trimmed action ({{- ... }}) can silently turn a mapping into a scalar,
+          # e.g. "checksum/config: <hash>" with no space after the colon. That renders
+          # fine and even passes client-side dry-runs, then fails the upgrade when the
+          # API server deserialises the object, so catch it here instead.
+          problems = []
+
+          def check(kind, name, path, value):
+              if value is not None and not isinstance(value, dict):
+                  problems.append(
+                      f"{kind} {name}: {path} rendered as {type(value).__name__} "
+                      f"({str(value)[:60]!r}), expected a mapping"
+                  )
+
+          for doc in yaml.safe_load_all(open("/tmp/rendered.yaml")):
+              if not doc:
+                  continue
+              kind = doc.get("kind", "?")
+              name = (doc.get("metadata") or {}).get("name", "?") if isinstance(doc.get("metadata"), dict) else "?"
+              check(kind, name, "metadata", doc.get("metadata"))
+              spec = doc.get("spec")
+              if isinstance(spec, dict):
+                  check(kind, name, "spec.template.metadata", (spec.get("template") or {}).get("metadata") if isinstance(spec.get("template"), dict) else None)
+                  template = spec.get("template")
+                  if isinstance(template, dict):
+                      meta = template.get("metadata")
+                      if isinstance(meta, dict):
+                          check(kind, name, "spec.template.metadata.annotations", meta.get("annotations"))
+                          check(kind, name, "spec.template.metadata.labels", meta.get("labels"))
+
+          if problems:
+              print("::error::chart rendered invalid value types")
+              print("\n".join(problems))
+              sys.exit(1)
+          print(f"chart structure ok ({sum(1 for d in yaml.safe_load_all(open('/tmp/rendered.yaml')) if d)} objects)")
+          PY
