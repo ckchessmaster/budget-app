@@ -10,17 +10,17 @@ Welcome to the **Budget App** engineering team! This document outlines our devel
 
 ## 1. Project Organization & Milestones
 
-All work in this repository is tracked across 7 sequential Milestones, broken down into 19 functional Epics and 62 granular Tasks:
+All work in this repository is tracked across 7 Milestones (Milestones 1–5 and 7 for MVP; Milestone 6 deferred to Post-MVP), broken down into 20 functional Epics and 66 granular Tasks:
 
-| Milestone | Focus Area | Epics | Tasks |
-| :--- | :--- | :--- | :--- |
-| **Milestone 1** | **Local Foundation & Core Scaffold** | M1.1 – M1.4 | TASK-1.1.1 – 1.4.3 (14 tasks) |
-| **Milestone 2** | **Zero-Based Budget Engine & Ledger** | M2.1 – M2.3 | TASK-2.1.1 – 2.3.3 (10 tasks) |
-| **Milestone 3** | **Transactions, Accounts, & Offline Client** | M3.1 – M3.3 | TASK-3.1.1 – 3.3.3 (9 tasks) |
-| **Milestone 4** | **Banking Rails & Ingestion (SimpleFIN + Temporal)** | M4.1 – M4.2 | TASK-4.1.1 – 4.2.7 (10 tasks) |
-| **Milestone 5** | **Month-End Rollover & Automated Transitions** | M5.1 | TASK-5.1.1 – 5.1.4 (4 tasks) |
-| **Milestone 6** | **Receipt Ingestion, Parsing, & Multi-Package Matching** | M6.1 – M6.3 | TASK-6.1.1 – 6.3.3 (8 tasks) |
-| **Milestone 7** | **Push Notifications, Backup Pipeline, & Hardening** | M7.1 – M7.3 | TASK-7.1.1 – 7.3.2 (7 tasks) |
+| Milestone | Focus Area | Epics | Tasks | Scope |
+| :--- | :--- | :--- | :--- | :--- |
+| **Milestone 1** | **Local Foundation & Core Scaffold** | M1.1 – M1.4 | TASK-1.1.1 – 1.4.3 (14 tasks) | MVP (Done) |
+| **Milestone 2** | **Zero-Based Budget Engine & Ledger** | M2.1 – M2.3 | TASK-2.1.1 – 2.3.3 (10 tasks) | MVP (Done) |
+| **Milestone 3** | **Transactions, Accounts, & Offline Client** | M3.1 – M3.3 | TASK-3.1.1 – 3.3.3 (9 tasks) | MVP (Done) |
+| **Milestone 4** | **Banking Rails & Ingestion (SimpleFIN + Temporal)** | M4.1 – M4.2 | TASK-4.1.1 – 4.2.7 (10 tasks) | MVP (Done) |
+| **Milestone 5** | **Month-End Rollover & Automated Transitions** | M5.1 – M5.2 | TASK-5.1.1 – 5.2.4 (8 tasks) | MVP (Next) |
+| **Milestone 6** | **Receipt Ingestion, Parsing, & Multi-Package Matching** | M6.1 – M6.3 | TASK-6.1.1 – 6.3.3 (8 tasks) | Post-MVP |
+| **Milestone 7** | **Push Notifications, Backup Pipeline, & Hardening** | M7.1 – M7.3 | TASK-7.1.1 – 7.3.2 (7 tasks) | MVP (M7.3 covered by Dockerfiles & Helm) |
 
 For complete code contracts, SQL DDL schemas, mock fixtures, and mathematical formulas for every task, refer directly to [`docs/detailed_task_specifications.md`](detailed_task_specifications.md).
 
