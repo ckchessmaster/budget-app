@@ -4,13 +4,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
+	"strings"
 )
 
 const (
@@ -20,6 +19,7 @@ const (
 
 var (
 	ErrInvalidKeySize   = errors.New("vault key must be exactly 32 bytes for AES-256-GCM")
+	ErrMissingVaultKey  = errors.New("VAULT_MASTER_KEY is required: set it to the base64 of exactly 32 random bytes (openssl rand -base64 32)")
 	ErrInvalidCipher    = errors.New("invalid or corrupted ciphertext")
 	ErrDecryptionFailed = errors.New("ciphertext authentication failed")
 )
@@ -86,16 +86,23 @@ func (v *aesGCMVault) Decrypt(cipherText string) (string, error) {
 	return string(plain), nil
 }
 
-// LoadVaultFromEnv builds a Vault from VAULT_MASTER_KEY or a deterministic dev key.
-func LoadVaultFromEnv() Vault {
-	if b64 := os.Getenv("VAULT_MASTER_KEY"); b64 != "" {
-		v, err := NewAESGCMVaultFromBase64(b64)
-		if err == nil {
-			return v
-		}
-		log.Printf("warning: invalid VAULT_MASTER_KEY (%v), falling back to derived key", err)
+// LoadVaultFromEnv builds a Vault from VAULT_MASTER_KEY, which must be the base64
+// encoding of exactly 32 random bytes.
+//
+// There is deliberately no fallback key. Deriving one from a literal in this
+// repository would seal stored bank credentials with a key anyone who can read the
+// source can reproduce, and a missing key would look like a working deployment right
+// up to the moment a real SimpleFIN connection has to be decrypted. Callers must
+// treat an error here as fatal at boot.
+func LoadVaultFromEnv() (Vault, error) {
+	b64 := strings.TrimSpace(os.Getenv("VAULT_MASTER_KEY"))
+	if b64 == "" {
+		return nil, ErrMissingVaultKey
 	}
-	sum := sha256.Sum256([]byte("budget-app-dev-vault-key-change-in-production"))
-	v, _ := NewAESGCMVault(sum[:])
-	return v
+
+	vault, err := NewAESGCMVaultFromBase64(b64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VAULT_MASTER_KEY: %w", err)
+	}
+	return vault, nil
 }

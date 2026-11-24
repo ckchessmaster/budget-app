@@ -4,14 +4,14 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/activities"
-	"github.com/google/uuid"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
 type BankSyncInput struct {
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	temporalinternal.SyncScope
 }
 
 type BankSyncResult struct {
@@ -41,25 +41,25 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 	var bankActivities *activities.BankActivities
 
 	var data *simplefin.DataResponse
-	if err := workflow.ExecuteActivity(ctx, bankActivities.FetchSimpleFINDataActivity, input.WorkspaceID).Get(ctx, &data); err != nil {
+	if err := workflow.ExecuteActivity(ctx, bankActivities.FetchSimpleFINDataActivity, input.SyncScope).Get(ctx, &data); err != nil {
 		return nil, err
 	}
 
 	var persistRes activities.PersistTransactionsResult
 	if err := workflow.ExecuteActivity(ctx, bankActivities.PersistTransactionsActivity, activities.PersistTransactionsInput{
-		WorkspaceID: input.WorkspaceID,
-		Data:        data,
+		SyncScope: input.SyncScope,
+		Data:      data,
 	}).Get(ctx, &persistRes); err != nil {
 		return nil, err
 	}
 
 	var linked int
-	if err := workflow.ExecuteActivity(ctx, bankActivities.DetectAndLinkTransfersActivity, input.WorkspaceID).Get(ctx, &linked); err != nil {
+	if err := workflow.ExecuteActivity(ctx, bankActivities.DetectAndLinkTransfersActivity, input.SyncScope).Get(ctx, &linked); err != nil {
 		return nil, err
 	}
 
 	var normalized int
-	if err := workflow.ExecuteActivity(ctx, bankActivities.NormalizeMerchantsActivity, input.WorkspaceID).Get(ctx, &normalized); err != nil {
+	if err := workflow.ExecuteActivity(ctx, bankActivities.NormalizeMerchantsActivity, input.SyncScope).Get(ctx, &normalized); err != nil {
 		return nil, err
 	}
 

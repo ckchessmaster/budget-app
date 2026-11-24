@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
-	"github.com/google/uuid"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/temporal"
@@ -19,19 +20,25 @@ type BankActivities struct {
 	Vault  crypto.Vault
 }
 
-func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, workspaceID uuid.UUID) (*simplefin.DataResponse, error) {
+func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, scope temporalinternal.SyncScope) (*simplefin.DataResponse, error) {
 	var encryptedAccessURL string
 	var lastSyncedAt *time.Time
 
-	err := a.Pool.QueryRow(ctx, `
-		SELECT encrypted_access_url, last_synced_at
-		FROM simplefin_connections
-		WHERE workspace_id = $1
-	`, workspaceID).Scan(&encryptedAccessURL, &lastSyncedAt)
-	if err != nil {
+	// Tenant scoping is mandatory here, not an optimisation: simplefin_connections
+	// carries FORCE ROW LEVEL SECURITY, so an unscoped connection reads zero rows and
+	// the workflow would finish "successfully" having fetched nothing. The fetch itself
+	// stays outside the transaction so a slow bank never holds a pooled connection open.
+	if err := db.WithWorkspaceTx(ctx, a.Pool, scope.UserID, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+			SELECT encrypted_access_url, last_synced_at
+			FROM simplefin_connections
+			WHERE workspace_id = $1
+		`, scope.WorkspaceID).Scan(&encryptedAccessURL, &lastSyncedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return &simplefin.DataResponse{}, nil
+			return nil
 		}
+		return err
+	}); err != nil {
 		return nil, err
 	}
 

@@ -12,8 +12,10 @@ backend:
   # needed when the API is served from a different origin than the app.
   corsAllowedOrigins: []
   # The built-in demo SimpleFIN bridge binds loopback by default (127.0.0.1:8090) so
-  # no other pod can reach it. Set these only if the Temporal sync worker runs in a
-  # separate pod: bind a routable address and point the worker's base URL at it.
+  # no other pod can reach it. The sync worker runs as a sidecar in this pod precisely
+  # because of that: containers in one pod share a network namespace. Override these
+  # only if the worker is genuinely moved to its own Deployment, which also means
+  # re-exposing the bridge on a Service and putting authentication back in front of it.
   mockSimplefinListenAddr: ""
   mockSimplefinBaseUrl: ""
   resources:
@@ -39,6 +41,42 @@ frontend:
     limits:
       cpu: 200m
       memory: 128Mi
+
+temporal:
+  # Bank sync is a Temporal workflow, and the API treats Temporal as required: it exits
+  # at boot if the server is unreachable and reports unready if the namespace stops
+  # resolving, so a dead sync takes the pod out of rotation instead of failing silently.
+  # Set this to the Temporal frontend gRPC endpoint, as host:port.
+  address: ""
+  # budget-app's own namespace. Never "default": that namespace is shared by anything
+  # else that forgot to name one, and workflow history for banking data should not sit
+  # where another workload's visibility queries can reach it. The API registers it at
+  # boot when it is missing, so pointing this at a new name is enough to adopt it.
+  namespace: budget-app
+  # How long completed workflow history stays queryable in that namespace.
+  retention: 72h
+  worker:
+    # Polls budget-sync-queue. Disabling this leaves every sync accepted by the API
+    # sitting in the queue forever, so it is on by default.
+    enabled: true
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+vault:
+  # Base64 of exactly 32 random bytes: openssl rand -base64 32
+  #
+  # Required. It seals stored SimpleFIN credentials, and there is no longer a fallback
+  # key derived from a source literal, because that would let anyone reading this
+  # repository decrypt every stored bank credential. Rotating it invalidates existing
+  # stored values: clear simplefin_connections and have each workspace re-claim.
+  masterKey: ""
+  existingSecret: ""
+  secretKey: VAULT_MASTER_KEY
 
 oidc:
   issuerUrl: "https://auth.example.com/application/o/budget-app/"

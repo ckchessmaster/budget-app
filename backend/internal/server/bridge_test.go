@@ -20,7 +20,7 @@ import (
 func TestMockBridgeIsNotOnPublicRouter(t *testing.T) {
 	verifier := &stubVerifier{err: errors.New("bad signature")}
 	cfg := server.Config{Port: "8080", OIDCIssuerURL: "https://auth.example.com/"}
-	router := server.NewServer(cfg, nil, verifier).Router()
+	router := server.NewServer(cfg, nil, verifier, nil, nil).Router()
 
 	path := "/mock-simplefin/" + uuid.NewString() + "/accounts"
 
@@ -63,7 +63,7 @@ func TestBridgeRouterServesTheMockBridge(t *testing.T) {
 		Port:                    "8080",
 		MockSimpleFINListenAddr: demo.DefaultMockBridgeListenAddr,
 		MockSimpleFINBaseURL:    demo.DefaultMockBridgeBaseURL,
-	}, nil, nil)
+	}, nil, nil, nil, nil)
 
 	bridge := srv.BridgeRouter()
 	if bridge == nil {

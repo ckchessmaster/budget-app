@@ -43,3 +43,34 @@ access is granted at all.
 {{- end -}}
 {{- join "," $origins -}}
 {{- end -}}
+
+{{/*
+Secret holding VAULT_MASTER_KEY. Defaults to the database Secret so a deployment keeps
+one secret for both, which also guarantees the API and the sync worker resolve the same
+key: they have to decrypt the same simplefin_connections rows.
+*/}}
+{{- define "budget-app.vaultSecretName" -}}
+{{- if .Values.vault.existingSecret -}}
+{{- .Values.vault.existingSecret -}}
+{{- else if .Values.database.existingSecret -}}
+{{- .Values.database.existingSecret -}}
+{{- else -}}
+{{- include "budget-app.secretName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Credentials shared by the API and the Temporal sync worker.
+*/}}
+{{- define "budget-app.syncEnv" -}}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.secretName" . }}
+      key: {{ .Values.database.secretKey }}
+- name: VAULT_MASTER_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.vaultSecretName" . }}
+      key: {{ .Values.vault.secretKey }}
+{{- end -}}
