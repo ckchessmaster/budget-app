@@ -31,6 +31,9 @@ var rlsProtectedTables = []string{
 	"demo_simplefin_state",
 	"demo_simplefin_accounts",
 	"demo_simplefin_transactions",
+	"month_end_rollover_runs",
+	"credit_card_debt_interlocks",
+	"monthly_rollover_adjustments",
 }
 
 // TestRLSPoliciesTerminateWithoutRecursion guards the row-security policy chain: scanning
