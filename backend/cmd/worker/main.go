@@ -11,6 +11,7 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/activities"
+	"github.com/ckchessmaster/budget-app/backend/internal/temporal/schedules"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,11 +62,19 @@ func main() {
 
 	w := worker.New(c, temporalinternal.TaskQueue, worker.Options{})
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
+	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:   pool,
 		Client: simplefin.NewClient(nil),
 		Vault:  crypto.LoadVaultFromEnv(),
 	})
+	w.RegisterActivity(&activities.RolloverActivities{
+		Pool: pool,
+	})
+
+	if err := schedules.EnsureMonthEndRolloverSchedule(ctx, c); err != nil {
+		logger.Warn("failed to ensure month-end rollover Temporal schedule", "error", err)
+	}
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {
