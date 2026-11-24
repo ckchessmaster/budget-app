@@ -4,17 +4,85 @@
 
 :root {
 	color-scheme: light dark;
-	accent-color: #059669;
+	--bg-canvas: #FAFAFA;
+	--bg-surface: #FFFFFF;
+	--bg-subtle: #F4F4F5;
+	--bg-hover: #E4E4E7;
+	--border-default: #E4E4E7;
+	--text-primary: #09090B;
+	--text-secondary: #52525B;
+	--text-muted: #A1A1AA;
+	--accent-primary: #09090B;
+	--accent-primary-text: #FFFFFF;
+	--accent-pop: #2563EB;
+	--accent-tint: #EFF6FF;
+	--status-good: #16A34A;
+	--status-good-bg: #DCFCE7;
+	--status-warn: #D97706;
+	--status-warn-bg: #FEF3C7;
+	--status-danger: #DC2626;
+	--status-danger-bg: #FEE2E2;
+	accent-color: var(--accent-pop);
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not(:has(> head > meta[name='color-scheme'][content='light'])) {
+		--bg-canvas: #0B0D12;
+		--bg-surface: #13161F;
+		--bg-subtle: #1B202E;
+		--bg-hover: #252C3F;
+		--border-default: #232838;
+		--text-primary: #F1F5F9;
+		--text-secondary: #94A3B8;
+		--text-muted: #64748B;
+		--accent-primary: #60A5FA;
+		--accent-primary-text: #0B0D12;
+		--accent-pop: #60A5FA;
+		--accent-tint: rgba(96, 165, 250, 0.15);
+		--status-good: #34D399;
+		--status-good-bg: rgba(52, 211, 153, 0.14);
+		--status-warn: #FBBF24;
+		--status-warn-bg: rgba(251, 191, 36, 0.14);
+		--status-danger: #FB7185;
+		--status-danger-bg: rgba(251, 113, 133, 0.15);
+	}
 }
 
 :root:has(> head > meta[name='color-scheme'][content='dark']) {
 	color-scheme: dark;
-	accent-color: #34d399;
+	--bg-canvas: #0B0D12;
+	--bg-surface: #13161F;
+	--bg-subtle: #1B202E;
+	--bg-hover: #252C3F;
+	--border-default: #232838;
+	--text-primary: #F1F5F9;
+	--text-secondary: #94A3B8;
+	--text-muted: #64748B;
+	--accent-primary: #60A5FA;
+	--accent-primary-text: #0B0D12;
+	--accent-pop: #60A5FA;
+	--accent-tint: rgba(96, 165, 250, 0.15);
+	--status-good: #34D399;
+	--status-good-bg: rgba(52, 211, 153, 0.14);
+	--status-warn: #FBBF24;
+	--status-warn-bg: rgba(251, 191, 36, 0.14);
+	--status-danger: #FB7185;
+	--status-danger-bg: rgba(251, 113, 133, 0.15);
 }
 
 :root:has(> head > meta[name='color-scheme'][content='light']) {
 	color-scheme: light;
-	accent-color: #059669;
+}
+
+.bg-pending-stripe {
+	background-color: var(--status-warn);
+	background-image: repeating-linear-gradient(
+		-45deg,
+		transparent,
+		transparent 4px,
+		rgba(255, 255, 255, 0.25) 4px,
+		rgba(255, 255, 255, 0.25) 8px
+	);
 }
 
 .overscroll-contain-scroll {
