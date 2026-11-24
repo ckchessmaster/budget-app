@@ -26,17 +26,17 @@
 </script>
 
 <div class="min-h-full flex items-center justify-center p-4">
-	<div class="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-xl dark:shadow-2xl">
+	<div class="w-full max-w-sm bg-surface border border-border rounded-xl p-6 shadow-xl">
 		<div class="text-center mb-6">
-			<div class="inline-flex w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 items-center justify-center font-bold text-2xl border border-emerald-500/20 mb-3">
+			<div class="inline-flex w-12 h-12 rounded-xl bg-accent-primary text-accent-primary-text items-center justify-center font-bold text-2xl mb-3">
 				$
 			</div>
-			<h2 class="text-xl font-bold text-slate-900 dark:text-white">Welcome Back</h2>
-			<p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Authenticate via your local Dex OIDC provider</p>
+			<h2 class="text-xl font-bold text-ink-primary">Welcome Back</h2>
+			<p class="text-xs text-ink-secondary mt-1">Authenticate via your local Dex OIDC provider</p>
 		</div>
 
 		{#if errorMsg}
-			<div class="mb-4 p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs">
+			<div class="mb-4 p-3 rounded-lg bg-status-danger-bg border border-status-danger/30 text-status-danger text-xs">
 				{errorMsg}
 			</div>
 		{/if}
@@ -44,20 +44,20 @@
 		<button
 			onclick={handleLogin}
 			disabled={isSubmitting}
-			class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg text-sm transition shadow-sm dark:shadow-lg dark:shadow-emerald-950 flex items-center justify-center gap-2"
+			class="w-full py-2.5 px-4 bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text font-medium rounded-lg text-sm transition-opacity shadow-sm flex items-center justify-center gap-2"
 		>
 			{#if isSubmitting}
-				<div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+				<div class="w-4 h-4 border-2 border-accent-primary-text/30 border-t-accent-primary-text rounded-full animate-spin"></div>
 				<span>Redirecting to Dex...</span>
 			{:else}
 				<span>Sign In with Dex OIDC</span>
 			{/if}
 		</button>
 
-		<div class="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-1">
-			<p class="font-medium text-slate-700 dark:text-slate-300">Local Dev Credentials:</p>
-			<p>Email: <code class="text-emerald-700 dark:text-emerald-400 bg-slate-100 dark:bg-slate-950 px-1 py-0.5 rounded">admin@dev.local</code></p>
-			<p>Password: <code class="text-emerald-700 dark:text-emerald-400 bg-slate-100 dark:bg-slate-950 px-1 py-0.5 rounded">password</code></p>
+		<div class="mt-6 pt-4 border-t border-border text-xs text-ink-secondary space-y-1">
+			<p class="font-medium text-ink-primary">Local Dev Credentials:</p>
+			<p>Email: <code class="text-accent-pop bg-subtle px-1 py-0.5 rounded font-mono">admin@dev.local</code></p>
+			<p>Password: <code class="text-accent-pop bg-subtle px-1 py-0.5 rounded font-mono">password</code></p>
 		</div>
 	</div>
 </div>

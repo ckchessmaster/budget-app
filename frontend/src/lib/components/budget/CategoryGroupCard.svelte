@@ -1,7 +1,7 @@
 <script lang="ts">
 	import CategoryRow from './CategoryRow.svelte';
 	import { groupSlug, type GroupColor } from '$lib/utils/budgetColors';
-	import type { CategoryBudget } from '$lib/types/budget';
+	import type { CategoryBudget, InlineActivityItem } from '$lib/types/budget';
 
 	interface Props {
 		groupName: string;
@@ -9,6 +9,7 @@
 		categories: CategoryBudget[];
 		displayMode: 'remaining' | 'spent';
 		highlighted?: boolean;
+		transactionsByCategory?: Map<string, InlineActivityItem[]>;
 		onToggleDisplayMode: () => void;
 		onCoverClick: (id: string) => void;
 		onEditClick: (id: string) => void;
@@ -23,6 +24,7 @@
 		categories,
 		displayMode,
 		highlighted = false,
+		transactionsByCategory,
 		onToggleDisplayMode,
 		onCoverClick,
 		onEditClick,
@@ -50,36 +52,36 @@
 	id={groupSlug(groupName)}
 	aria-label={groupName}
 	data-testid="category-group-card"
-	class="rounded-2xl border bg-white dark:bg-slate-900 shadow-xs overflow-hidden transition-shadow {highlighted
-		? `border-sky-400 dark:border-sky-500 ring-2 ${color.ringClass}`
-		: 'border-slate-200 dark:border-slate-800'}"
+	class="rounded-2xl border bg-surface shadow-xs overflow-hidden transition-shadow {highlighted
+		? `border-accent-pop ring-2 ${color.ringClass}`
+		: 'border-border'}"
 >
 	<!-- Group Header -->
-	<div class="px-5 pt-4 pb-3 border-b border-slate-100 dark:border-slate-800/80 grid grid-cols-[minmax(0,1fr)_96px_96px] sm:grid-cols-[minmax(0,1fr)_116px_116px] items-end gap-3">
+	<div class="px-5 pt-4 pb-3 border-b border-border grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-end gap-3">
 		<div class="flex items-center gap-2 min-w-0">
 			<span class="w-2.5 h-2.5 rounded-full shrink-0 {color.dotClass}" aria-hidden="true"></span>
-			<h3 class="text-base font-bold text-slate-900 dark:text-white truncate">{groupName}</h3>
+			<h3 class="text-base font-bold text-ink-primary truncate">{groupName}</h3>
 		</div>
 
 		<div class="text-right">
-			<div class="text-sm font-mono font-bold text-slate-900 dark:text-white">
+			<div class="text-xs font-mono font-medium text-ink-muted">
 				{fmt(groupPlannedTotal)}
 			</div>
-			<div class="text-[11px] font-medium text-slate-500 dark:text-slate-400">Planned</div>
+			<div class="text-[11px] font-medium text-ink-muted">Planned</div>
 		</div>
 
 		<div class="text-right">
 			<div
-				class="text-sm font-mono font-bold {displayMode === 'remaining' && groupRemainingTotal < 0
-					? 'text-rose-600 dark:text-rose-400'
-					: 'text-slate-900 dark:text-white'}"
+				class="text-sm sm:text-base font-mono font-bold {displayMode === 'remaining' && groupRemainingTotal < 0
+					? 'text-status-danger'
+					: 'text-ink-primary'}"
 			>
 				{fmt(displayMode === 'spent' ? groupSpentTotal : groupRemainingTotal)}
 			</div>
 			<button
 				type="button"
 				onclick={onToggleDisplayMode}
-				class="inline-flex items-center justify-end gap-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400 hover:underline"
+				class="inline-flex items-center justify-end gap-0.5 text-[11px] font-medium text-accent-pop hover:underline"
 				title="Switch between Remaining and Spent"
 			>
 				<span>{displayMode === 'spent' ? 'Spent' : 'Remaining'}</span>
@@ -89,12 +91,13 @@
 	</div>
 
 	<!-- Categories -->
-	<div class="divide-y divide-slate-100 dark:divide-slate-800/80">
+	<div class="divide-y divide-border">
 		{#each categories as cat (cat.id)}
 			<CategoryRow
 				category={cat}
 				{displayMode}
 				embedded={true}
+				transactions={transactionsByCategory?.get(cat.id) ?? []}
 				{onCoverClick}
 				{onEditClick}
 				{onUpdatePlanned}
@@ -104,11 +107,11 @@
 	</div>
 
 	<!-- Footer -->
-	<div class="px-5 py-2.5 bg-slate-50/60 dark:bg-slate-900/60 border-t border-slate-100 dark:border-slate-800/80">
+	<div class="px-5 py-2.5 bg-subtle border-t border-border">
 		<button
 			type="button"
 			onclick={() => onAddCategoryInGroup(groupName)}
-			class="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
+			class="text-xs font-semibold text-accent-pop hover:underline transition-colors"
 		>
 			+ Add Item
 		</button>

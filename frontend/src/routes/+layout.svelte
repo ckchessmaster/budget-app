@@ -13,6 +13,7 @@
 	const PUBLIC_PATHS = ['/login', '/auth/callback'];
 
 	let currentPath = $derived(page.url.pathname);
+	let isBudgetRoute = $derived(currentPath === '/budget' || currentPath.startsWith('/budget/'));
 	let isBudgetActive = $derived(currentPath === '/' || currentPath.startsWith('/budget'));
 	let isAccountsActive = $derived(currentPath.startsWith('/accounts'));
 	let isSettingsActive = $derived(currentPath.startsWith('/settings'));
@@ -38,108 +39,110 @@
 	});
 </script>
 
-<div class="flex flex-col h-dvh w-full bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 overflow-hidden font-sans">
-	<header class="flex items-center justify-between gap-4 px-4 sm:px-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800 shrink-0 select-none">
-		<div class="flex items-center gap-6">
-			<a href="/budget" class="flex items-center gap-2.5 py-2.5 group">
-				<div class="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-500/30 group-hover:border-emerald-500/60 transition-colors">
-					$
-				</div>
-				<div class="hidden sm:block">
-					<h1 class="text-sm font-bold leading-none tracking-tight text-slate-900 dark:text-white">
-						Budget App
-					</h1>
-					<p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Zero-Based Ledger</p>
-				</div>
-			</a>
-
-			<nav aria-label="Primary" class="flex items-center gap-1">
-				<a
-					href="/budget"
-					aria-current={isBudgetActive ? 'page' : undefined}
-					class="relative px-3 py-3.5 text-xs font-semibold transition-colors {isBudgetActive
-						? 'text-emerald-700 dark:text-emerald-400 after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-emerald-600 dark:after:bg-emerald-400'
-						: 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'}"
-				>
-					Budget
+<div class="flex flex-col h-dvh w-full bg-canvas text-ink-primary overflow-hidden font-sans">
+	{#if !isBudgetRoute}
+		<header class="flex items-center justify-between gap-4 px-4 sm:px-6 bg-surface border-b border-border shrink-0 select-none">
+			<div class="flex items-center gap-6">
+				<a href="/budget" class="flex items-center gap-2.5 py-2.5 group">
+					<div class="w-8 h-8 rounded-lg bg-accent-primary text-accent-primary-text flex items-center justify-center font-bold text-lg group-hover:opacity-90 transition-opacity">
+						$
+					</div>
+					<div class="hidden sm:block">
+						<h1 class="text-sm font-bold leading-none tracking-tight text-ink-primary">
+							Budget App
+						</h1>
+						<p class="text-[11px] text-ink-secondary mt-0.5">Zero-Based Ledger</p>
+					</div>
 				</a>
-				<a
-					href="/accounts"
-					aria-current={isAccountsActive ? 'page' : undefined}
-					class="relative px-3 py-3.5 text-xs font-semibold transition-colors {isAccountsActive
-						? 'text-emerald-700 dark:text-emerald-400 after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-emerald-600 dark:after:bg-emerald-400'
-						: 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'}"
-				>
-					Accounts
-				</a>
-			</nav>
-		</div>
 
-		<div class="flex items-center gap-2 sm:gap-3">
-			<button
-				type="button"
-				onclick={() => theme.toggle()}
-				aria-label={theme.effective === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-				title={theme.effective === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-				data-testid="theme-toggle-btn"
-				class="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
-			>
-				{#if theme.effective === 'dark'}
-					<!-- Sun icon -->
-					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-						<circle cx="12" cy="12" r="4" />
-						<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-					</svg>
-				{:else}
-					<!-- Moon icon -->
-					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-					</svg>
+				<nav aria-label="Primary" class="flex items-center gap-1">
+					<a
+						href="/budget"
+						aria-current={isBudgetActive ? 'page' : undefined}
+						class="relative px-3 py-3.5 text-xs font-semibold transition-colors {isBudgetActive
+							? 'text-accent-pop after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent-pop'
+							: 'text-ink-secondary hover:text-ink-primary'}"
+					>
+						Budget
+					</a>
+					<a
+						href="/accounts"
+						aria-current={isAccountsActive ? 'page' : undefined}
+						class="relative px-3 py-3.5 text-xs font-semibold transition-colors {isAccountsActive
+							? 'text-accent-pop after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent-pop'
+							: 'text-ink-secondary hover:text-ink-primary'}"
+					>
+						Accounts
+					</a>
+				</nav>
+			</div>
+
+			<div class="flex items-center gap-2 sm:gap-3">
+				{#if auth.isAuthenticated}
+					<a
+						href="/settings"
+						aria-label="Settings"
+						title="Settings"
+						aria-current={isSettingsActive ? 'page' : undefined}
+						data-testid="settings-nav-link"
+						class="p-2 rounded-lg border transition-colors {isSettingsActive
+							? 'border-accent-pop/60 bg-accent-tint text-accent-pop'
+							: 'border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary'}"
+					>
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<circle cx="12" cy="12" r="3" />
+							<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+						</svg>
+					</a>
 				{/if}
-			</button>
 
-			{#if auth.isAuthenticated}
-				<a
-					href="/settings"
-					aria-label="Settings"
-					title="Settings"
-					aria-current={isSettingsActive ? 'page' : undefined}
-					data-testid="settings-nav-link"
-					class="p-2 rounded-lg border transition-colors {isSettingsActive
-						? 'border-emerald-500/60 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
-						: 'border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'}"
-				>
-					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<circle cx="12" cy="12" r="3" />
-						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-					</svg>
-				</a>
-			{/if}
-
-			{#if auth.isAuthenticated}
-				<span class="hidden md:inline-block text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-700 font-mono">
-					{auth.user?.email || auth.user?.id.slice(0, 8)}
-				</span>
 				<button
 					type="button"
-					onclick={() => {
-						demo.resetOnLogout();
-						void auth.logout();
-					}}
-					class="text-xs text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 px-2.5 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+					onclick={() => theme.toggle()}
+					aria-label={theme.effective === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+					title={theme.effective === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+					data-testid="theme-toggle-btn"
+					class="p-2 rounded-lg border border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary transition-colors"
 				>
-					Sign Out
+					{#if theme.effective === 'dark'}
+						<!-- Sun icon -->
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+							<circle cx="12" cy="12" r="4" />
+							<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+						</svg>
+					{:else}
+						<!-- Moon icon -->
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+							<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+						</svg>
+					{/if}
 				</button>
-			{:else}
-				<a
-					href="/login"
-					class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-3 py-1.5 rounded-md transition-colors"
-				>
-					Sign In
-				</a>
-			{/if}
-		</div>
-	</header>
+
+				{#if auth.isAuthenticated}
+					<span class="hidden md:inline-block text-xs bg-subtle text-ink-secondary px-2.5 py-1 rounded-full border border-border font-mono">
+						{auth.user?.email || auth.user?.id.slice(0, 8)}
+					</span>
+					<button
+						type="button"
+						onclick={() => {
+							demo.resetOnLogout();
+							void auth.logout();
+						}}
+						class="text-xs text-ink-secondary hover:text-ink-primary px-2.5 py-1.5 rounded-md hover:bg-surface-hover transition-colors"
+					>
+						Sign Out
+					</button>
+				{:else}
+					<a
+						href="/login"
+						class="text-xs bg-accent-primary hover:opacity-90 text-accent-primary-text font-medium px-3 py-1.5 rounded-md transition-opacity"
+					>
+						Sign In
+					</a>
+				{/if}
+			</div>
+		</header>
+	{/if}
 
 	{#if auth.sessionExpired && !auth.isAuthenticated}
 		<div

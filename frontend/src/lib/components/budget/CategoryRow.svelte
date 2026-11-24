@@ -1,7 +1,13 @@
 <script lang="ts">
+	import type { InlineActivityItem } from '$lib/types/budget';
+	import { isFixedCategory } from '$lib/utils/budgetCategoryKind';
+	import InlineActivityDrawer from './InlineActivityDrawer.svelte';
+
 	export interface CategoryRowItem {
 		id: string;
 		name: string;
+		groupName?: string;
+		kind?: 'fixed' | 'variable';
 		originalPlanned: number;
 		effectiveTarget: number;
 		spentCleared: number;
@@ -18,6 +24,7 @@
 		category: CategoryRowItem;
 		displayMode?: 'remaining' | 'spent';
 		embedded?: boolean;
+		transactions?: InlineActivityItem[];
 		onCoverClick: (categoryId: string) => void;
 		onEditClick?: (categoryId: string) => void;
 		onUpdatePlanned?: (categoryId: string, newPlanned: number) => Promise<void> | void;
@@ -28,12 +35,14 @@
 		category,
 		displayMode = 'remaining',
 		embedded = false,
+		transactions = [],
 		onCoverClick,
 		onEditClick,
 		onUpdatePlanned,
 		onFilterTransactions
 	}: Props = $props();
 
+	let isExpanded = $state(false);
 	let editingPlanned = $state(false);
 	let plannedDraft = $state('');
 	let savingPlanned = $state(false);
@@ -42,8 +51,16 @@
 	let totalSpent = $derived(category.spentCleared + category.spentPending);
 	let isOverspent = $derived(category.remaining < 0 || totalSpent > category.effectiveTarget);
 
+	let isFixed = $derived(
+		category.kind ? category.kind === 'fixed' : isFixedCategory(category.name, category.groupName)
+	);
+	let isFixedPaid = $derived(
+		totalSpent > 0 && (category.effectiveTarget <= 0 || totalSpent >= category.effectiveTarget - 0.005)
+	);
+
 	let statusColor = $derived.by(() => {
 		if (isOverspent) return 'red';
+		if (isFixed) return 'green';
 		if (category.effectiveTarget <= 0) return totalSpent > 0 ? 'red' : 'green';
 		const ratio = totalSpent / category.effectiveTarget;
 		if (ratio > 0.8) return 'amber';
@@ -72,15 +89,15 @@
 		return n < 0 ? `-$${abs}` : `$${abs}`;
 	}
 
-	function handleRowClick() {
-		onEditClick?.(category.id);
+	function toggleExpanded() {
+		isExpanded = !isExpanded;
 	}
 
 	function handleRowKeydown(e: KeyboardEvent) {
-		if (!onEditClick) return;
+		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
-			onEditClick(category.id);
+			toggleExpanded();
 		}
 	}
 
@@ -122,32 +139,64 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
-	role={onEditClick ? 'button' : undefined}
-	tabindex={onEditClick ? 0 : undefined}
-	onclick={onEditClick ? handleRowClick : undefined}
-	onkeydown={onEditClick ? handleRowKeydown : undefined}
-	class="group transition-colors {embedded
-		? 'px-5 py-3 hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
-		: 'rounded-xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900/70 p-3.5 hover:border-slate-300 dark:hover:border-slate-700'} {onEditClick
-		? 'cursor-pointer'
-		: ''}"
-	data-testid="category-row"
+	data-testid="category-row-container"
+	class={embedded
+		? ''
+		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'}
 >
-	<div class="grid grid-cols-[minmax(0,1fr)_96px_96px] sm:grid-cols-[minmax(0,1fr)_116px_116px] items-center gap-3">
-		<!-- Name & Meta -->
-		<div class="min-w-0">
-			<div class="flex items-center gap-2">
-				<span
-					class="truncate text-left text-sm font-medium text-slate-900 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors"
+	<div
+		role="button"
+		tabindex="0"
+		aria-expanded={isExpanded}
+		onclick={toggleExpanded}
+		onkeydown={handleRowKeydown}
+		class="group cursor-pointer transition-colors {embedded
+			? 'px-5 py-3 hover:bg-surface-hover/50'
+			: 'p-3.5 hover:bg-surface-hover/40'}"
+		data-testid="category-row"
+	>
+		<div class="grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-3">
+			<!-- Name & Meta -->
+			<div class="min-w-0 flex items-center gap-2">
+				<svg
+					class="w-3.5 h-3.5 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					aria-hidden="true"
 				>
+					<path d="m9 18 6-6-6-6" />
+				</svg>
+
+				<span class="truncate text-left text-sm font-medium text-ink-primary">
 					{category.name}
 				</span>
 
+				{#if isFixed}
+					<span
+						data-testid="fixed-status-badge"
+						class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {isFixedPaid
+							? 'bg-status-good-bg text-status-good'
+							: 'bg-subtle text-ink-secondary border border-border'}"
+					>
+						{isFixedPaid ? 'Paid' : 'Upcoming'}
+					</span>
+				{/if}
+
+				{#if category.spentPending > 0}
+					<span
+						data-testid="pending-badge"
+						class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn px-1.5 py-0.5 text-[11px] font-mono font-medium"
+					>
+						+{fmt(category.spentPending)} pend
+					</span>
+				{/if}
+
 				{#if category.pacing && !category.pacing.isMet}
 					<span
-						class="hidden sm:inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+						class="hidden sm:inline-flex items-center shrink-0 rounded-md bg-subtle px-1.5 py-0.5 text-[11px] font-medium text-ink-secondary border border-border"
 					>
 						Pace: {fmt(category.pacing.monthlyDue)}/mo
 					</span>
@@ -162,154 +211,154 @@
 						}}
 						title={`Filter transactions for ${category.name}`}
 						aria-label={`Filter transactions for ${category.name}`}
-						class="text-[11px] text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+						class="text-[11px] text-ink-muted hover:text-accent-pop opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
 					>
 						Txns
 					</button>
 				{/if}
 
 				{#if onEditClick}
-					<span
-						class="text-[11px] text-slate-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
+					<button
+						type="button"
+						data-testid="edit-category-btn"
+						aria-label={`Edit ${category.name}`}
+						onclick={(e) => {
+							e.stopPropagation();
+							onEditClick(category.id);
+						}}
+						class="text-[11px] text-ink-muted hover:text-ink-primary opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
 					>
 						Edit
+					</button>
+				{/if}
+			</div>
+
+			<!-- Planned Column (Muted, Inline Editable when onUpdatePlanned is provided) -->
+			<div class="text-right">
+				{#if editingPlanned}
+					<input
+						bind:this={inputEl}
+						type="number"
+						step="0.01"
+						min="0"
+						aria-label={`Planned budget for ${category.name}`}
+						data-testid="inline-planned-input"
+						bind:value={plannedDraft}
+						onclick={(e) => e.stopPropagation()}
+						onkeydown={handlePlannedInputKeydown}
+						onblur={() => void commitPlanned()}
+						class="w-24 rounded-md border border-accent-pop bg-surface px-2 py-0.5 text-right text-xs font-mono font-medium text-ink-primary focus:outline-none"
+					/>
+				{:else if onUpdatePlanned}
+					<button
+						type="button"
+						data-testid="inline-planned-btn"
+						onclick={startEditPlanned}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								startEditPlanned(e);
+							}
+						}}
+						disabled={savingPlanned}
+						title={showOriginalTick
+							? `Base planned: ${fmt(category.originalPlanned)} (adjusted to ${fmt(category.effectiveTarget)})`
+							: 'Click to edit planned budget'}
+						class="inline-block rounded px-1.5 py-0.5 text-xs font-mono font-normal text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
+					>
+						{fmt(category.effectiveTarget)}
+					</button>
+				{:else}
+					<span class="text-xs font-mono text-ink-muted">
+						{fmt(category.effectiveTarget)}
+					</span>
+				{/if}
+			</div>
+
+			<!-- Remaining / Spent / Overspent Column (Bold Primary Figure) -->
+			<div class="text-right shrink-0">
+				{#if isOverspent}
+					<button
+						type="button"
+						data-testid="overspent-badge"
+						onclick={(e) => {
+							e.stopPropagation();
+							onCoverClick(category.id);
+						}}
+						class="inline-flex items-center gap-1 rounded-full bg-status-danger-bg px-2.5 py-0.5 text-xs font-mono font-bold text-status-danger border border-status-danger/30 hover:opacity-90 transition-opacity"
+					>
+						<span>{fmt(category.remaining)}</span>
+						<span class="font-sans text-[10px] uppercase tracking-wider underline">Cover</span>
+					</button>
+				{:else if displayMode === 'spent'}
+					<span
+						data-testid="status-badge"
+						class="inline-flex items-center text-sm font-mono font-bold {statusColor === 'amber'
+							? 'text-status-warn'
+							: 'text-ink-primary'}"
+					>
+						{fmt(totalSpent)}
+					</span>
+				{:else if statusColor === 'amber'}
+					<span
+						data-testid="status-badge"
+						class="inline-flex items-center rounded-full bg-status-warn-bg px-2 py-0.5 text-xs font-mono font-bold text-status-warn"
+					>
+						{fmt(category.remaining)}
+					</span>
+				{:else}
+					<span
+						data-testid="status-badge"
+						class="inline-flex items-center text-sm font-mono font-bold {totalSpent > 0 || category.effectiveTarget > 0
+							? 'text-ink-primary'
+							: 'text-ink-muted'}"
+					>
+						{fmt(category.remaining)}
 					</span>
 				{/if}
 			</div>
 		</div>
 
-		<!-- Planned Column (Inline Editable when onUpdatePlanned is provided) -->
-		<div class="text-right">
-			{#if editingPlanned}
-				<input
-					bind:this={inputEl}
-					type="number"
-					step="0.01"
-					min="0"
-					aria-label={`Planned budget for ${category.name}`}
-					data-testid="inline-planned-input"
-					bind:value={plannedDraft}
-					onclick={(e) => e.stopPropagation()}
-					onkeydown={handlePlannedInputKeydown}
-					onblur={() => void commitPlanned()}
-					class="w-24 rounded-md border border-sky-500 bg-white dark:bg-slate-950 px-2 py-0.5 text-right text-sm font-mono font-semibold text-slate-900 dark:text-white focus:outline-none"
-				/>
-			{:else if onUpdatePlanned}
-				<button
-					type="button"
-					data-testid="inline-planned-btn"
-					onclick={startEditPlanned}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							startEditPlanned(e);
-						}
-					}}
-					disabled={savingPlanned}
-					title={showOriginalTick
-						? `Base planned: ${fmt(category.originalPlanned)} (adjusted to ${fmt(category.effectiveTarget)})`
-						: 'Click to edit planned budget'}
-					class="inline-block rounded px-1.5 py-0.5 text-sm font-mono font-semibold text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/10 transition-colors"
-				>
-					{fmt(category.effectiveTarget)}
-				</button>
-			{:else}
-				<span class="text-xs font-mono text-slate-500 dark:text-slate-400">
-					{fmt(category.effectiveTarget)}
-				</span>
-			{/if}
-		</div>
-
-		<!-- Remaining / Spent / Overspent Column -->
-		<div class="text-right shrink-0">
-			{#if isOverspent}
-				<button
-					type="button"
-					data-testid="overspent-badge"
-					onclick={(e) => {
-						e.stopPropagation();
-						onCoverClick(category.id);
-					}}
-					class="inline-flex items-center gap-1 rounded-full bg-rose-50 dark:bg-rose-500/15 px-2.5 py-0.5 text-xs font-mono font-semibold text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/40 hover:bg-rose-100 dark:hover:bg-rose-500/25 transition-colors"
-				>
-					<span>{fmt(category.remaining)}</span>
-					<span class="font-sans text-[10px] uppercase tracking-wider underline">Cover</span>
-				</button>
-			{:else if displayMode === 'spent'}
-				<span
-					data-testid="status-badge"
-					class="inline-flex items-center text-sm font-mono font-semibold {statusColor === 'amber'
-						? 'text-amber-600 dark:text-amber-300'
-						: 'text-slate-700 dark:text-slate-200'}"
-				>
-					{fmt(totalSpent)}
-				</span>
-			{:else if statusColor === 'amber'}
-				<span
-					data-testid="status-badge"
-					class="inline-flex items-center rounded-full bg-amber-50 dark:bg-amber-500/15 px-2 py-0.5 text-xs font-mono font-semibold text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
-				>
-					{fmt(category.remaining)}
-				</span>
-			{:else}
-				<span
-					data-testid="status-badge"
-					class="inline-flex items-center text-sm font-mono font-semibold {totalSpent > 0 || category.effectiveTarget > 0
-						? 'text-slate-800 dark:text-slate-100'
-						: 'text-slate-400 dark:text-slate-500'}"
-				>
-					{fmt(category.remaining)}
-				</span>
-			{/if}
-		</div>
-	</div>
-
-	<!-- Compact Meta Subline + 3-Layer Progress Bar -->
-	<div class="mt-2 flex items-center gap-3">
-		<div class="relative h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-			<!-- Layer 1: Solid cleared spend -->
+		<!-- Slim Progress Bar (Variable Categories Only) -->
+		{#if !isFixed}
 			<div
-				data-testid="bar-cleared"
-				class="absolute inset-y-0 left-0 transition-all duration-300 {statusColor === 'red'
-					? 'bg-rose-500'
-					: statusColor === 'amber'
-						? 'bg-amber-400'
-						: 'bg-emerald-500'}"
-				style="width: {clearedPct}%"
-			></div>
-
-			<!-- Layer 2: Striped pending spend -->
-			{#if pendingPct > 0}
+				data-testid="variable-progress-bar"
+				class="mt-2 ml-5 relative h-1.5 overflow-hidden rounded-full bg-subtle"
+			>
+				<!-- Layer 1: Solid cleared spend -->
 				<div
-					data-testid="bar-pending"
-					class="absolute inset-y-0 transition-all duration-300 opacity-80"
-					style="left: {clearedPct}%; width: {pendingPct}%; background-image: repeating-linear-gradient(45deg, {statusColor === 'red'
-						? '#f43f5e'
+					data-testid="bar-cleared"
+					class="absolute inset-y-0 left-0 transition-all duration-300 {statusColor === 'red'
+						? 'bg-status-danger'
 						: statusColor === 'amber'
-							? '#fbbf24'
-							: '#10b981'} 0px, {statusColor === 'red'
-						? '#f43f5e'
-						: statusColor === 'amber'
-							? '#fbbf24'
-							: '#10b981'} 4px, transparent 4px, transparent 8px);"
+							? 'bg-status-warn'
+							: 'bg-accent-pop'}"
+					style="width: {clearedPct}%"
 				></div>
-			{/if}
 
-			<!-- Layer 3: Original planned tick mark -->
-			{#if showOriginalTick}
-				<div
-					data-testid="bar-original-tick"
-					title="Original baseline: {fmt(category.originalPlanned)}"
-					class="absolute inset-y-0 w-0.5 bg-slate-900/70 dark:bg-white/90 shadow-[0_0_4px_rgba(255,255,255,0.8)] z-10"
-					style="left: {tickPct}%"
-				></div>
-			{/if}
-		</div>
+				<!-- Layer 2: Striped pending spend -->
+				{#if pendingPct > 0}
+					<div
+						data-testid="bar-pending"
+						class="absolute inset-y-0 transition-all duration-300 bg-pending-stripe"
+						style="left: {clearedPct}%; width: {pendingPct}%;"
+					></div>
+				{/if}
 
-		{#if category.spentPending > 0}
-			<span class="shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
-				{fmt(category.spentPending)} pending
-			</span>
+				<!-- Layer 3: Original planned tick mark -->
+				{#if showOriginalTick}
+					<div
+						data-testid="bar-original-tick"
+						title="Original baseline: {fmt(category.originalPlanned)}"
+						class="absolute inset-y-0 w-0.5 bg-ink-primary/70 z-10"
+						style="left: {tickPct}%"
+					></div>
+				{/if}
+			</div>
 		{/if}
 	</div>
+
+	{#if isExpanded}
+		<InlineActivityDrawer {transactions} {embedded} />
+	{/if}
 </div>

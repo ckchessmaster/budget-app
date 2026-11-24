@@ -1,9 +1,19 @@
 <script lang="ts">
 	import type { OfflineTransaction } from '$lib/offline/db';
 	import type { CategoryBudget } from '$lib/types/budget';
-	import type { AccountItem, TransactionItemModel } from '$lib/types/transaction';
+	import type {
+		AccountItem,
+		TransactionItemModel,
+		UpdateTransactionPayload
+	} from '$lib/types/transaction';
+	import {
+		getReviewBadgeKind,
+		isPendingTransaction,
+		isToReviewTransaction,
+		mapOfflineQueuedToTransactions
+	} from '$lib/utils/transactionReview';
 
-	type TxSubTab = 'new' | 'tracked' | 'pending' | 'all';
+	type TxSubTab = 'to_review' | 'all';
 
 	interface Props {
 		currentMonth: string;
@@ -23,6 +33,7 @@
 			transactionDate: string;
 		}) => Promise<void>;
 		onCategorizeTransaction: (txId: string, categoryId: string | null) => Promise<void>;
+		onUpdateTransaction?: (txId: string, payload: UpdateTransactionPayload) => Promise<void>;
 		onDeleteTransaction: (txId: string) => Promise<void>;
 		onSyncNow: () => Promise<void>;
 	}
@@ -39,17 +50,27 @@
 		onClearCategoryFilter,
 		onCreateTransaction,
 		onCategorizeTransaction,
+		onUpdateTransaction,
 		onDeleteTransaction,
 		onSyncNow
 	}: Props = $props();
 
-	let activeSubTab = $state<TxSubTab>('new');
+	let activeSubTab = $state<TxSubTab>('to_review');
 	let searchQuery = $state('');
 	let selectedAccountId = $state('');
 	let showQuickAdd = $state(false);
 	let savingIds = $state<Record<string, boolean>>({});
-	let confirmDeleteId = $state<string | null>(null);
 	let actionError = $state<string | null>(null);
+
+	// Quick Category Picker, Overflow Menu & Inline Edit State
+	let openPickerTxId = $state<string | null>(null);
+	let pickerFilter = $state('');
+	let openMenuTxId = $state<string | null>(null);
+	let confirmDeleteId = $state<string | null>(null);
+	let editingTxId = $state<string | null>(null);
+	let editMerchant = $state('');
+	let editNotes = $state('');
+	let editCategoryId = $state('');
 
 	// Quick-Add Form State
 	let formAccountId = $state('');
@@ -79,10 +100,39 @@
 	});
 
 	$effect(() => {
-		// When user filters by a specific category from the left budget list, ensure All/Tracked can show it
-		if (activeCategoryFilterId && activeSubTab === 'new') {
+		// When user filters by a specific category from the left budget list, ensure All can show it
+		if (activeCategoryFilterId && activeSubTab === 'to_review') {
 			activeSubTab = 'all';
 		}
+	});
+
+	$effect(() => {
+		if (!openMenuTxId && !openPickerTxId && !editingTxId && !confirmDeleteId) return;
+
+		function handleKeyDown(e: KeyboardEvent) {
+			if (e.key === 'Escape') {
+				openMenuTxId = null;
+				confirmDeleteId = null;
+				openPickerTxId = null;
+				editingTxId = null;
+			}
+		}
+
+		function handleDocumentClick(e: MouseEvent) {
+			if (!openMenuTxId && !confirmDeleteId) return;
+			const target = e.target as Element | null;
+			if (!target?.closest('[data-tx-menu-container]')) {
+				openMenuTxId = null;
+				confirmDeleteId = null;
+			}
+		}
+
+		window.addEventListener('keydown', handleKeyDown);
+		document.addEventListener('click', handleDocumentClick);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown);
+			document.removeEventListener('click', handleDocumentClick);
+		};
 	});
 
 	let selectedFormAccount = $derived(accounts.find((a) => a.id === formAccountId) ?? null);
@@ -109,48 +159,34 @@
 		return Array.from(groups.entries());
 	});
 
+	let filteredPickerGroups = $derived.by(() => {
+		const q = pickerFilter.trim().toLowerCase();
+		if (!q) return groupedCategories;
+		return groupedCategories
+			.map(
+				([groupName, cats]) =>
+					[
+						groupName,
+						cats.filter(
+							(c) =>
+								c.name.toLowerCase().includes(q) || groupName.toLowerCase().includes(q)
+						)
+					] as [string, CategoryBudget[]]
+			)
+			.filter(([, cats]) => cats.length > 0);
+	});
+
 	let combinedItems = $derived.by(() => {
-		const offlineMapped: TransactionItemModel[] = queuedTransactions
-			.filter((q) => q.transactionDate.startsWith(currentMonth))
-			.map((q) => ({
-				id: q.localId,
-				accountId: q.accountId,
-				origin: 'MANUAL_OFFLINE',
-				status: 'PENDING',
-				amount: q.amount,
-				merchantRaw: q.merchantRaw,
-				categoryId: q.categoryId,
-				transactionDate: q.transactionDate,
-				isCleared: false,
-				isTransfer: false,
-				syncStatus: q.syncStatus
-			}));
+		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
 		return [...offlineMapped, ...transactions];
 	});
 
-	function isNewUncategorized(tx: TransactionItemModel): boolean {
-		if (tx.categoryId !== null) return false;
-		if (tx.isTransfer) return false;
-		if (tx.splits && tx.splits.length > 0) return false;
-		const acct = accountById.get(tx.accountId);
-		if (acct && !acct.isOnBudget) return false;
-		return true;
-	}
-
-	let newItems = $derived(combinedItems.filter(isNewUncategorized));
-	let pendingItems = $derived(
-		combinedItems.filter((tx) => tx.status === 'PENDING' || tx.syncStatus === 'QUEUED')
+	let toReviewItems = $derived(
+		combinedItems.filter((tx) => isToReviewTransaction(tx, accountById))
 	);
 
 	let filteredItems = $derived.by(() => {
-		let base = combinedItems;
-		if (activeSubTab === 'new') {
-			base = newItems;
-		} else if (activeSubTab === 'tracked') {
-			base = combinedItems.filter((tx) => !isNewUncategorized(tx));
-		} else if (activeSubTab === 'pending') {
-			base = pendingItems;
-		}
+		let base = activeSubTab === 'to_review' ? toReviewItems : combinedItems;
 
 		if (selectedAccountId) {
 			base = base.filter((tx) => tx.accountId === selectedAccountId);
@@ -185,11 +221,9 @@
 		return base;
 	});
 
-	const SUB_TABS: Array<{ id: TxSubTab; label: (newCount: number, pendingCount: number) => string }> = [
-		{ id: 'new', label: (n) => `New (${n})` },
-		{ id: 'tracked', label: () => 'Tracked' },
-		{ id: 'pending', label: (_n, p) => (p > 0 ? `Pending (${p})` : 'Pending') },
-		{ id: 'all', label: () => 'All' }
+	const SUB_TABS: Array<{ id: TxSubTab; label: (reviewCount: number, allCount: number) => string }> = [
+		{ id: 'to_review', label: (r) => `To Review (${r})` },
+		{ id: 'all', label: (_r, a) => `All (${a})` }
 	];
 
 	function parseDateBadge(isoDate: string): { month: string; day: string } {
@@ -210,17 +244,87 @@
 		return val < 0 ? `-$${abs}` : `+$${abs}`;
 	}
 
+	function toggleQuickPicker(txId: string) {
+		openMenuTxId = null;
+		confirmDeleteId = null;
+		editingTxId = null;
+		if (openPickerTxId === txId) {
+			openPickerTxId = null;
+		} else {
+			openPickerTxId = txId;
+			pickerFilter = '';
+		}
+	}
+
+	function openRowMenu(txId: string, e: MouseEvent) {
+		e.stopPropagation();
+		if (openMenuTxId === txId) {
+			openMenuTxId = null;
+			confirmDeleteId = null;
+		} else {
+			openMenuTxId = txId;
+			confirmDeleteId = null;
+		}
+	}
+
+	function startEditDetails(tx: TransactionItemModel) {
+		openMenuTxId = null;
+		confirmDeleteId = null;
+		openPickerTxId = null;
+		editingTxId = tx.id;
+		editMerchant = tx.merchantClean || tx.merchantRaw;
+		editNotes = tx.userNotes || '';
+		editCategoryId = tx.categoryId ?? '';
+	}
+
 	async function handleCategorySelect(txId: string, rawVal: string) {
 		const nextCatId = rawVal === '' ? null : rawVal;
 		savingIds = { ...savingIds, [txId]: true };
 		actionError = null;
 		try {
 			await onCategorizeTransaction(txId, nextCatId);
+			openPickerTxId = null;
+			pickerFilter = '';
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to categorize transaction.';
 		} finally {
 			const next = { ...savingIds };
 			delete next[txId];
+			savingIds = next;
+		}
+	}
+
+	async function handleEditSubmit(e: SubmitEvent, tx: TransactionItemModel, canCategorize: boolean) {
+		e.preventDefault();
+		const trimmedMerchant = editMerchant.trim();
+		if (!trimmedMerchant) return;
+
+		savingIds = { ...savingIds, [tx.id]: true };
+		actionError = null;
+		try {
+			const nextCatId = editCategoryId === '' ? null : editCategoryId;
+			if (onUpdateTransaction) {
+				const payload: UpdateTransactionPayload = {
+					merchantClean: trimmedMerchant,
+					userNotes: editNotes.trim()
+				};
+				if (canCategorize) {
+					if (nextCatId) {
+						payload.categoryId = nextCatId;
+					} else {
+						payload.clearCategory = true;
+					}
+				}
+				await onUpdateTransaction(tx.id, payload);
+			} else if (canCategorize && nextCatId !== tx.categoryId) {
+				await onCategorizeTransaction(tx.id, nextCatId);
+			}
+			editingTxId = null;
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to update transaction.';
+		} finally {
+			const next = { ...savingIds };
+			delete next[tx.id];
 			savingIds = next;
 		}
 	}
@@ -262,6 +366,9 @@
 		try {
 			await onDeleteTransaction(txId);
 			confirmDeleteId = null;
+			openMenuTxId = null;
+			if (openPickerTxId === txId) openPickerTxId = null;
+			if (editingTxId === txId) editingTxId = null;
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to delete transaction.';
 		} finally {
@@ -282,12 +389,12 @@
 	}
 </script>
 
-<div class="flex flex-col h-full min-h-0" data-testid="transactions-panel">
-	<!-- Sub-Tabs -->
+<div class="flex flex-col h-full min-h-0 bg-surface text-ink-primary" data-testid="transactions-panel">
+	<!-- Sub-Tabs: To Review + All -->
 	<div
 		role="tablist"
 		aria-label="Transaction status filter"
-		class="grid grid-cols-4 border-b border-slate-200 dark:border-slate-800 px-2 shrink-0"
+		class="grid grid-cols-2 border-b border-border px-2 shrink-0 bg-surface"
 	>
 		{#each SUB_TABS as tab, idx}
 			{@const isSelected = activeSubTab === tab.id}
@@ -299,20 +406,20 @@
 				onclick={() => (activeSubTab = tab.id)}
 				onkeydown={(e) => handleSubTabKeydown(e, idx)}
 				class="relative py-2.5 text-xs font-semibold transition-colors {isSelected
-					? 'text-sky-600 dark:text-sky-400 after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-sky-600 dark:after:bg-sky-400'
-					: 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}"
+					? 'text-accent-pop after:content-[""] after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent-pop'
+					: 'text-ink-secondary hover:text-ink-primary'}"
 			>
-				{tab.label(newItems.length, pendingItems.length)}
+				{tab.label(toReviewItems.length, combinedItems.length)}
 			</button>
 		{/each}
 	</div>
 
 	<!-- Search + Filter + Quick-Add Trigger -->
-	<div class="p-3 space-y-2 border-b border-slate-100 dark:border-slate-800/80 shrink-0">
+	<div class="p-3 space-y-2 border-b border-border shrink-0 bg-surface">
 		<div class="flex items-center gap-2">
 			<div class="relative flex-1">
 				<svg
-					class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+					class="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
 					viewBox="0 0 24 24"
 					fill="none"
 					stroke="currentColor"
@@ -327,7 +434,7 @@
 					placeholder="Search merchant, account, amount..."
 					aria-label="Search transactions"
 					bind:value={searchQuery}
-					class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none"
+					class="w-full rounded-lg border border-border bg-subtle pl-8 pr-3 py-1.5 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 				/>
 			</div>
 
@@ -335,9 +442,9 @@
 				type="button"
 				onclick={() => (showQuickAdd = !showQuickAdd)}
 				aria-expanded={showQuickAdd}
-				class="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors {showQuickAdd
-					? 'bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
-					: 'bg-emerald-600 hover:bg-emerald-500 text-white'}"
+				class="shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-opacity {showQuickAdd
+					? 'bg-subtle border border-border text-ink-primary hover:bg-surface-hover'
+					: 'bg-accent-primary text-accent-primary-text hover:opacity-90'}"
 			>
 				{showQuickAdd ? 'Close' : '+ Add'}
 			</button>
@@ -347,7 +454,7 @@
 			<select
 				aria-label="Filter by account"
 				bind:value={selectedAccountId}
-				class="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-[11px] text-slate-700 dark:text-slate-200 focus:outline-none"
+				class="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-ink-secondary focus:border-accent-pop focus:outline-none"
 			>
 				<option value="">All Accounts</option>
 				{#each accounts as acct}
@@ -360,7 +467,7 @@
 				<button
 					type="button"
 					onclick={onClearCategoryFilter}
-					class="inline-flex items-center gap-1 rounded-full bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/30 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-300"
+					class="inline-flex items-center gap-1 rounded-full bg-accent-tint border border-accent-pop/30 px-2 py-0.5 text-[11px] font-medium text-accent-pop"
 				>
 					<span>Category: {filteredCat?.name ?? 'Selected'}</span>
 					<span aria-hidden="true">✕</span>
@@ -372,7 +479,7 @@
 					type="button"
 					onclick={() => void onSyncNow()}
 					disabled={syncing || isOffline}
-					class="ml-auto rounded-md bg-sky-600 hover:bg-sky-500 disabled:opacity-50 px-2 py-0.5 text-[11px] font-medium text-white"
+					class="ml-auto rounded-md bg-accent-pop text-accent-primary-text disabled:opacity-50 px-2 py-0.5 text-[11px] font-medium hover:opacity-90 transition-opacity"
 				>
 					{syncing ? 'Syncing...' : `Sync (${queuedTransactions.length})`}
 				</button>
@@ -383,18 +490,18 @@
 			<form
 				onsubmit={handleQuickAddSubmit}
 				data-testid="quick-add-tx-form"
-				class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950/70 p-3 space-y-2.5"
+				class="rounded-xl border border-border bg-subtle p-3 space-y-2.5"
 			>
 				<div class="grid grid-cols-2 gap-2">
 					<div>
-						<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5" for="qa-account">
+						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-account">
 							Account
 						</label>
 						<select
 							id="qa-account"
 							bind:value={formAccountId}
 							required
-							class="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 						>
 							{#each accounts as acct}
 								<option value={acct.id}>{acct.name}</option>
@@ -403,14 +510,14 @@
 					</div>
 
 					<div>
-						<span class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Type</span>
-						<div class="grid grid-cols-2 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-0.5 text-[11px]">
+						<span class="block text-[11px] text-ink-secondary mb-0.5">Type</span>
+						<div class="grid grid-cols-2 rounded-md border border-border bg-surface p-0.5 text-[11px]">
 							<button
 								type="button"
 								onclick={() => (formDirection = 'expense')}
 								class="rounded py-0.5 font-medium transition-colors {formDirection === 'expense'
-									? 'bg-rose-600 text-white'
-									: 'text-slate-500 dark:text-slate-400'}"
+									? 'bg-status-danger-bg text-status-danger'
+									: 'text-ink-secondary hover:text-ink-primary'}"
 							>
 								Expense
 							</button>
@@ -418,8 +525,8 @@
 								type="button"
 								onclick={() => (formDirection = 'inflow')}
 								class="rounded py-0.5 font-medium transition-colors {formDirection === 'inflow'
-									? 'bg-emerald-600 text-white'
-									: 'text-slate-500 dark:text-slate-400'}"
+									? 'bg-status-good-bg text-status-good'
+									: 'text-ink-secondary hover:text-ink-primary'}"
 							>
 								Inflow
 							</button>
@@ -429,7 +536,7 @@
 
 				<div class="grid grid-cols-3 gap-2">
 					<div class="col-span-2">
-						<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5" for="qa-merchant">
+						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-merchant">
 							Merchant / Payee
 						</label>
 						<input
@@ -438,12 +545,12 @@
 							bind:value={formMerchant}
 							placeholder={formDirection === 'inflow' ? 'Paycheck / Deposit' : 'Trader Joe\'s'}
 							required
-							class="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
 
 					<div>
-						<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5" for="qa-amount">
+						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-amount">
 							Amount ($)
 						</label>
 						<input
@@ -454,14 +561,14 @@
 							bind:value={formAmount}
 							placeholder="25.00"
 							required
-							class="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100"
+							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs font-mono text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
 				</div>
 
 				<div class="grid grid-cols-2 gap-2">
 					<div>
-						<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5" for="qa-date">
+						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-date">
 							Date
 						</label>
 						<input
@@ -470,19 +577,19 @@
 							bind:value={formDate}
 							oninput={() => (formDateDirty = true)}
 							required
-							class="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100"
+							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
 
 					<div>
-						<label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5" for="qa-category">
+						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-category">
 							Category
 						</label>
 						<select
 							id="qa-category"
 							bind:value={formCategoryId}
 							disabled={isOffBudgetFormAccount}
-							class="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs text-slate-900 dark:text-slate-100 disabled:opacity-50"
+							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary disabled:opacity-50 focus:border-accent-pop focus:outline-none"
 						>
 							<option value="">
 								{isOffBudgetFormAccount ? 'Off-budget' : 'Uncategorized'}
@@ -502,7 +609,7 @@
 					<button
 						type="submit"
 						disabled={submitting || !formAccountId}
-						class="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 py-1.5 text-xs font-semibold text-white transition-colors"
+						class="w-full rounded-lg bg-accent-primary text-accent-primary-text hover:opacity-90 disabled:opacity-50 py-1.5 text-xs font-semibold transition-opacity"
 					>
 						{submitting
 							? 'Saving...'
@@ -517,24 +624,24 @@
 		{/if}
 
 		{#if actionError}
-			<p class="text-[11px] text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-md px-2.5 py-1.5">
+			<p class="text-[11px] text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-md px-2.5 py-1.5">
 				{actionError}
 			</p>
 		{/if}
 	</div>
 
 	<!-- Transaction Feed -->
-	<div class="flex-1 overflow-y-auto overscroll-contain-scroll divide-y divide-slate-100 dark:divide-slate-800/80">
+	<div class="flex-1 overflow-y-auto overscroll-contain-scroll divide-y divide-border">
 		{#if filteredItems.length === 0}
 			<div class="px-4 py-10 text-center space-y-1">
-				<p class="text-xs font-medium text-slate-600 dark:text-slate-300">
-					{#if activeSubTab === 'new'}
-						All caught up — no uncategorized transactions!
+				<p class="text-xs font-medium text-ink-secondary">
+					{#if activeSubTab === 'to_review'}
+						All caught up — no transactions to review!
 					{:else}
 						No matching transactions for {currentMonth}.
 					{/if}
 				</p>
-				<p class="text-[11px] text-slate-400 dark:text-slate-500">
+				<p class="text-[11px] text-ink-muted">
 					Click "+ Add" above to record one manually.
 				</p>
 			</div>
@@ -542,153 +649,567 @@
 			{#each filteredItems as tx (tx.id)}
 				{@const badge = parseDateBadge(tx.transactionDate)}
 				{@const acct = accountById.get(tx.accountId)}
-				{@const isPending = tx.status === 'PENDING'}
+				{@const isPending = isPendingTransaction(tx)}
 				{@const isQueued = tx.origin === 'MANUAL_OFFLINE' && tx.syncStatus === 'QUEUED'}
 				{@const hasSplits = Boolean(tx.splits && tx.splits.length > 0)}
 				{@const isOffBudget = acct ? !acct.isOnBudget : false}
+				{@const canCategorize = !isQueued && !tx.isTransfer && !isOffBudget && !hasSplits}
+				{@const badgeKind = getReviewBadgeKind(tx, accountById)}
 				{@const displayMerchant = tx.merchantClean || tx.merchantRaw}
 				{@const isSaving = Boolean(savingIds[tx.id])}
+				{@const assignedCategory = tx.categoryId ? categoryById.get(tx.categoryId) : null}
+				{@const isPickerOpen = openPickerTxId === tx.id}
+				{@const isMenuOpen = openMenuTxId === tx.id}
+				{@const isEditing = editingTxId === tx.id}
 
-				<div
-					data-testid="tx-panel-row"
-					class="group px-3.5 py-3 flex items-start justify-between gap-2.5 hover:bg-slate-50/70 dark:hover:bg-slate-800/30 transition-colors"
-				>
-					<!-- Circular Date Badge + Merchant + Account -->
-					<div class="flex items-start gap-2.5 min-w-0 flex-1">
+				<div data-testid="tx-panel-row" class="transition-colors">
+					{#if canCategorize}
 						<div
-							class="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center shrink-0 leading-none"
-							aria-label={tx.transactionDate}
+							role="button"
+							tabindex="0"
+							aria-expanded={isPickerOpen}
+							onclick={() => toggleQuickPicker(tx.id)}
+							onkeydown={(e) => {
+								if (e.target !== e.currentTarget) return;
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									toggleQuickPicker(tx.id);
+								}
+							}}
+							class="group px-3.5 py-3 flex items-start justify-between gap-2.5 cursor-pointer hover:bg-surface-hover/40 transition-colors"
 						>
-							<span class="text-[9px] uppercase font-semibold text-sky-600 dark:text-sky-400">
-								{badge.month}
-							</span>
-							<span class="text-xs font-bold text-slate-700 dark:text-slate-200 mt-0.5">
-								{badge.day}
-							</span>
-						</div>
-
-						<div class="min-w-0 flex-1">
-							<div class="flex items-center gap-1.5 flex-wrap">
-								<span
-									class="text-xs font-semibold truncate {isPending
-										? 'italic text-slate-500 dark:text-slate-400'
-										: 'text-slate-900 dark:text-slate-100'}"
+							<!-- Circular Date Badge + Merchant + Account -->
+							<div class="flex items-start gap-2.5 min-w-0 flex-1">
+								<div
+									class="w-9 h-9 rounded-full border border-border bg-subtle flex flex-col items-center justify-center shrink-0 leading-none"
+									aria-label={tx.transactionDate}
 								>
-									{displayMerchant}
-								</span>
-
-								{#if isPending}
-									<span
-										class="inline-flex items-center gap-0.5 text-[10px] italic text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded"
-										title="Pending transaction"
-									>
-										Pending
+									<span class="text-[9px] uppercase font-semibold text-accent-pop">
+										{badge.month}
 									</span>
-								{/if}
-
-								{#if isQueued}
-									<span
-										class="inline-flex items-center text-[10px] text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-500/15 border border-sky-200 dark:border-sky-500/30 px-1.5 py-0.5 rounded"
-									>
-										Queued
+									<span class="text-xs font-bold text-ink-primary mt-0.5">
+										{badge.day}
 									</span>
-								{/if}
+								</div>
 
-								{#if tx.settledDelta != null && tx.settledDelta !== 0}
-									<span
-										class="inline-flex items-center text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 border border-amber-200 dark:border-amber-500/30 px-1 py-0.5 rounded"
-									>
-										Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
-									</span>
-								{/if}
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5 flex-wrap">
+										<span
+											class="text-xs font-semibold truncate {isPending
+												? 'italic text-ink-secondary'
+												: 'text-ink-primary'}"
+										>
+											{displayMerchant}
+										</span>
+
+										{#if badgeKind === 'pending'}
+											<span
+												data-testid="tx-badge-pending"
+												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+												title="Pending transaction"
+											>
+												Pending
+											</span>
+										{:else if badgeKind === 'new'}
+											<span
+												data-testid="tx-badge-new"
+												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
+												title="Uncategorized transaction"
+											>
+												New
+											</span>
+										{/if}
+
+										{#if tx.settledDelta != null && tx.settledDelta !== 0}
+											<span
+												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1 py-0.5 rounded"
+											>
+												Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
+											</span>
+										{/if}
+									</div>
+
+									<div class="flex items-center gap-2 mt-0.5 text-[11px] text-ink-secondary">
+										<span class="truncate">{acct?.name ?? 'Account'}</span>
+										{#if tx.userNotes}
+											<span class="truncate text-ink-muted">· {tx.userNotes}</span>
+										{/if}
+									</div>
+								</div>
 							</div>
 
-							<div class="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-								<span class="truncate">{acct?.name ?? 'Account'}</span>
-								{#if !isQueued}
-									{#if confirmDeleteId === tx.id}
-										<span class="inline-flex items-center gap-1">
+							<!-- Amount + Category Pill + Overflow Menu -->
+							<div class="shrink-0 flex items-start gap-1.5">
+								<div class="flex flex-col items-end gap-1">
+									<span
+										class="text-xs font-mono font-bold {isPending
+											? 'italic text-ink-secondary'
+											: tx.amount > 0
+												? 'text-status-good'
+												: 'text-ink-primary'}"
+									>
+										{formatCurrency(tx.amount)}
+									</span>
+
+									<button
+										type="button"
+										data-testid="tx-category-pill"
+										aria-label={`Category for ${displayMerchant}`}
+										disabled={isSaving}
+										onclick={(e) => {
+											e.stopPropagation();
+											toggleQuickPicker(tx.id);
+										}}
+										class="max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {tx.categoryId === null
+											? 'border-accent-pop/40 bg-accent-tint text-accent-pop hover:opacity-90'
+											: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
+									>
+										{assignedCategory?.name ?? tx.categoryName ?? '+ Categorize'}
+									</button>
+								</div>
+
+								<div class="relative" data-tx-menu-container>
+									<button
+										type="button"
+										data-testid="tx-row-menu-btn"
+										aria-label={`More actions for ${displayMerchant}`}
+										aria-haspopup="menu"
+										aria-expanded={isMenuOpen}
+										onclick={(e) => openRowMenu(tx.id, e)}
+										class="p-1 rounded-md text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
+									>
+										<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+											<circle cx="12" cy="5" r="1.75" />
+											<circle cx="12" cy="12" r="1.75" />
+											<circle cx="12" cy="19" r="1.75" />
+										</svg>
+									</button>
+
+									{#if isMenuOpen}
+										<div
+											role="menu"
+											tabindex="-1"
+											data-testid="tx-row-menu"
+											onclick={(e) => e.stopPropagation()}
+											onkeydown={(e) => e.stopPropagation()}
+											class="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-border bg-surface shadow-lg py-1 text-xs"
+										>
 											<button
 												type="button"
-												disabled={isSaving}
-												onclick={() => void handleDelete(tx.id)}
-												class="text-rose-600 dark:text-rose-400 font-semibold hover:underline"
+												role="menuitem"
+												data-testid="tx-menu-categorize"
+												onclick={() => {
+													openMenuTxId = null;
+													openPickerTxId = tx.id;
+													pickerFilter = '';
+													editingTxId = null;
+												}}
+												class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
 											>
-												Confirm
+												Categorize
 											</button>
 											<button
 												type="button"
-												onclick={() => (confirmDeleteId = null)}
-												class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+												role="menuitem"
+												data-testid="tx-menu-edit"
+												onclick={() => startEditDetails(tx)}
+												class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
 											>
-												Cancel
+												Edit details
 											</button>
+											<div class="my-1 border-t border-border"></div>
+											{#if confirmDeleteId === tx.id}
+												<div class="px-3 py-1.5 space-y-1.5">
+													<p class="text-[11px] font-medium text-status-danger">
+														Delete this transaction?
+													</p>
+													<div class="flex items-center gap-1.5">
+														<button
+															type="button"
+															data-testid="tx-menu-confirm-delete"
+															disabled={isSaving}
+															onclick={() => void handleDelete(tx.id)}
+															class="flex-1 rounded-md bg-status-danger-bg text-status-danger px-2 py-1 text-[11px] font-semibold hover:opacity-90"
+														>
+															Confirm Delete
+														</button>
+														<button
+															type="button"
+															data-testid="tx-menu-cancel-delete"
+															onclick={() => (confirmDeleteId = null)}
+															class="rounded-md border border-border bg-subtle px-2 py-1 text-[11px] text-ink-secondary hover:text-ink-primary"
+														>
+															Cancel
+														</button>
+													</div>
+												</div>
+											{:else}
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-delete"
+													onclick={() => (confirmDeleteId = tx.id)}
+													class="w-full text-left px-3 py-1.5 text-status-danger hover:bg-status-danger-bg transition-colors"
+												>
+													Delete transaction
+												</button>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+						</div>
+					{:else}
+						<div class="group px-3.5 py-3 flex items-start justify-between gap-2.5 hover:bg-surface-hover/40 transition-colors">
+							<!-- Circular Date Badge + Merchant + Account -->
+							<div class="flex items-start gap-2.5 min-w-0 flex-1">
+								<div
+									class="w-9 h-9 rounded-full border border-border bg-subtle flex flex-col items-center justify-center shrink-0 leading-none"
+									aria-label={tx.transactionDate}
+								>
+									<span class="text-[9px] uppercase font-semibold text-accent-pop">
+										{badge.month}
+									</span>
+									<span class="text-xs font-bold text-ink-primary mt-0.5">
+										{badge.day}
+									</span>
+								</div>
+
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5 flex-wrap">
+										<span
+											class="text-xs font-semibold truncate {isPending
+												? 'italic text-ink-secondary'
+												: 'text-ink-primary'}"
+										>
+											{displayMerchant}
 										</span>
-									{:else}
+
+										{#if badgeKind === 'pending'}
+											<span
+												data-testid="tx-badge-pending"
+												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+												title="Pending transaction"
+											>
+												Pending
+											</span>
+										{:else if badgeKind === 'new'}
+											<span
+												data-testid="tx-badge-new"
+												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
+												title="Uncategorized transaction"
+											>
+												New
+											</span>
+										{/if}
+
+										{#if isQueued}
+											<span
+												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
+											>
+												Queued
+											</span>
+										{/if}
+
+										{#if tx.settledDelta != null && tx.settledDelta !== 0}
+											<span
+												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1 py-0.5 rounded"
+											>
+												Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
+											</span>
+										{/if}
+									</div>
+
+									<div class="flex items-center gap-2 mt-0.5 text-[11px] text-ink-secondary">
+										<span class="truncate">{acct?.name ?? 'Account'}</span>
+										{#if tx.userNotes}
+											<span class="truncate text-ink-muted">· {tx.userNotes}</span>
+										{/if}
+									</div>
+								</div>
+							</div>
+
+							<!-- Amount + Static Pill + Optional Overflow Menu -->
+							<div class="shrink-0 flex items-start gap-1.5">
+								<div class="flex flex-col items-end gap-1">
+									<span
+										class="text-xs font-mono font-bold {isPending
+											? 'italic text-ink-secondary'
+											: tx.amount > 0
+												? 'text-status-good'
+												: 'text-ink-primary'}"
+									>
+										{formatCurrency(tx.amount)}
+									</span>
+
+									{#if isQueued}
+										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+											{tx.categoryId ? categoryById.get(tx.categoryId)?.name ?? 'Categorized' : 'Queued'}
+										</span>
+									{:else if tx.isTransfer}
+										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+											Transfer
+										</span>
+									{:else if isOffBudget}
+										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+											Off-Budget
+										</span>
+									{:else if hasSplits}
+										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+											Split ({tx.splits?.length})
+										</span>
+									{/if}
+								</div>
+
+								{#if !isQueued}
+									<div class="relative" data-tx-menu-container>
 										<button
 											type="button"
-											onclick={() => (confirmDeleteId = tx.id)}
-											class="text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-											aria-label={`Delete ${displayMerchant}`}
+											data-testid="tx-row-menu-btn"
+											aria-label={`More actions for ${displayMerchant}`}
+											aria-haspopup="menu"
+											aria-expanded={isMenuOpen}
+											onclick={(e) => openRowMenu(tx.id, e)}
+											class="p-1 rounded-md text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
 										>
-											Delete
+											<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+												<circle cx="12" cy="5" r="1.75" />
+												<circle cx="12" cy="12" r="1.75" />
+												<circle cx="12" cy="19" r="1.75" />
+											</svg>
 										</button>
-									{/if}
+
+										{#if isMenuOpen}
+											<div
+												role="menu"
+												tabindex="-1"
+												data-testid="tx-row-menu"
+												onclick={(e) => e.stopPropagation()}
+												onkeydown={(e) => e.stopPropagation()}
+												class="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-border bg-surface shadow-lg py-1 text-xs"
+											>
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-edit"
+													onclick={() => startEditDetails(tx)}
+													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
+												>
+													Edit details
+												</button>
+												<div class="my-1 border-t border-border"></div>
+												{#if confirmDeleteId === tx.id}
+													<div class="px-3 py-1.5 space-y-1.5">
+														<p class="text-[11px] font-medium text-status-danger">
+															Delete this transaction?
+														</p>
+														<div class="flex items-center gap-1.5">
+															<button
+																type="button"
+																data-testid="tx-menu-confirm-delete"
+																disabled={isSaving}
+																onclick={() => void handleDelete(tx.id)}
+																class="flex-1 rounded-md bg-status-danger-bg text-status-danger px-2 py-1 text-[11px] font-semibold hover:opacity-90"
+															>
+																Confirm Delete
+															</button>
+															<button
+																type="button"
+																data-testid="tx-menu-cancel-delete"
+																onclick={() => (confirmDeleteId = null)}
+																class="rounded-md border border-border bg-subtle px-2 py-1 text-[11px] text-ink-secondary hover:text-ink-primary"
+															>
+																Cancel
+															</button>
+														</div>
+													</div>
+												{:else}
+													<button
+														type="button"
+														role="menuitem"
+														data-testid="tx-menu-delete"
+														onclick={() => (confirmDeleteId = tx.id)}
+														class="w-full text-left px-3 py-1.5 text-status-danger hover:bg-status-danger-bg transition-colors"
+													>
+														Delete transaction
+													</button>
+												{/if}
+											</div>
+										{/if}
+									</div>
 								{/if}
 							</div>
 						</div>
-					</div>
+					{/if}
 
-					<!-- Amount + Quick Categorize Pill -->
-					<div class="shrink-0 flex flex-col items-end gap-1">
-						<span
-							class="text-xs font-mono font-bold {isPending
-								? 'italic text-slate-500 dark:text-slate-400'
-								: tx.amount > 0
-									? 'text-emerald-600 dark:text-emerald-400'
-									: 'text-slate-900 dark:text-slate-100'}"
+					<!-- Inline Quick Category Picker -->
+					{#if isPickerOpen && canCategorize}
+						<div
+							role="region"
+							aria-label={`Quick category picker for ${displayMerchant}`}
+							data-testid="quick-category-picker"
+							class="mx-3.5 mb-3 rounded-xl border border-border bg-subtle p-2.5 space-y-2"
 						>
-							{formatCurrency(tx.amount)}
-						</span>
+							<div class="flex items-center justify-between gap-2">
+								<span class="text-[11px] font-semibold text-ink-primary">
+									Sort into category
+								</span>
+								<button
+									type="button"
+									aria-label="Close category picker"
+									onclick={() => (openPickerTxId = null)}
+									class="text-[11px] text-ink-muted hover:text-ink-primary px-1"
+								>
+									✕
+								</button>
+							</div>
 
-						{#if isQueued}
-							<span class="text-[10px] rounded-full border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-slate-500 dark:text-slate-400">
-								{tx.categoryId ? categoryById.get(tx.categoryId)?.name ?? 'Categorized' : 'Queued'}
-							</span>
-						{:else if tx.isTransfer}
-							<span class="text-[10px] rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-slate-500 dark:text-slate-300">
-								Transfer
-							</span>
-						{:else if isOffBudget}
-							<span class="text-[10px] rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-slate-500 dark:text-slate-300">
-								Off-Budget
-							</span>
-						{:else if hasSplits}
-							<span class="text-[10px] rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 text-slate-600 dark:text-slate-300">
-								Split ({tx.splits?.length})
-							</span>
-						{:else}
-							<select
-								aria-label={`Category for ${displayMerchant}`}
-								data-testid="tx-category-select"
-								value={tx.categoryId ?? ''}
-								disabled={isSaving}
-								onchange={(e) => void handleCategorySelect(tx.id, e.currentTarget.value)}
-								class="max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {tx.categoryId === null
-									? 'border-sky-300 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-500/20'
-									: 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600'}"
-							>
-								<option value="">{tx.categoryId === null ? '+ Categorize' : 'Uncategorized'}</option>
-								{#each groupedCategories as [grp, cats]}
-									<optgroup label={grp}>
-										{#each cats as cat}
-											<option value={cat.id}>{cat.name}</option>
+							<input
+								type="search"
+								aria-label="Filter categories"
+								placeholder="Filter categories..."
+								bind:value={pickerFilter}
+								class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+
+							<div class="max-h-44 overflow-y-auto space-y-2">
+								{#if filteredPickerGroups.length === 0}
+									<p class="text-[11px] text-ink-muted py-1 text-center">
+										No matching categories
+									</p>
+								{:else}
+									{#each filteredPickerGroups as [grp, cats]}
+										<div class="space-y-1">
+											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+												{grp}
+											</p>
+											<div class="flex flex-wrap gap-1.5">
+												{#each cats as cat}
+													{@const isAssigned = tx.categoryId === cat.id}
+													<button
+														type="button"
+														data-testid="quick-category-option"
+														disabled={isSaving}
+														onclick={() => void handleCategorySelect(tx.id, cat.id)}
+														class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors {isAssigned
+															? 'border-accent-pop bg-accent-tint text-accent-pop font-semibold'
+															: 'border-border bg-surface text-ink-primary hover:bg-surface-hover'}"
+													>
+														{cat.name}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/each}
+								{/if}
+
+								{#if tx.categoryId !== null}
+									<div class="pt-1 border-t border-border">
+										<button
+											type="button"
+											data-testid="quick-category-clear"
+											disabled={isSaving}
+											onclick={() => void handleCategorySelect(tx.id, '')}
+											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
+										>
+											Uncategorized
+										</button>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{/if}
+
+					<!-- Inline Edit Details Form -->
+					{#if isEditing && !isQueued}
+						<form
+							data-testid="tx-edit-form"
+							onsubmit={(e) => void handleEditSubmit(e, tx, canCategorize)}
+							class="mx-3.5 mb-3 rounded-xl border border-border bg-subtle p-2.5 space-y-2"
+						>
+							<div class="flex items-center justify-between">
+								<span class="text-[11px] font-semibold text-ink-primary">
+									Edit transaction details
+								</span>
+								<button
+									type="button"
+									aria-label="Close edit form"
+									onclick={() => (editingTxId = null)}
+									class="text-[11px] text-ink-muted hover:text-ink-primary px-1"
+								>
+									✕
+								</button>
+							</div>
+
+							<div>
+								<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-merchant-${tx.id}`}>
+									Merchant
+								</label>
+								<input
+									id={`edit-merchant-${tx.id}`}
+									aria-label="Edit merchant"
+									type="text"
+									required
+									bind:value={editMerchant}
+									class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+								/>
+							</div>
+
+							<div>
+								<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-notes-${tx.id}`}>
+									Notes
+								</label>
+								<input
+									id={`edit-notes-${tx.id}`}
+									aria-label="Edit notes"
+									type="text"
+									placeholder="Optional note..."
+									bind:value={editNotes}
+									class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+								/>
+							</div>
+
+							{#if canCategorize}
+								<div>
+									<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-cat-${tx.id}`}>
+										Category
+									</label>
+									<select
+										id={`edit-cat-${tx.id}`}
+										aria-label="Edit category"
+										bind:value={editCategoryId}
+										class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+									>
+										<option value="">Uncategorized</option>
+										{#each groupedCategories as [grp, cats]}
+											<optgroup label={grp}>
+												{#each cats as cat}
+													<option value={cat.id}>{cat.name}</option>
+												{/each}
+											</optgroup>
 										{/each}
-									</optgroup>
-								{/each}
-							</select>
-						{/if}
-					</div>
+									</select>
+								</div>
+							{/if}
+
+							<div class="flex justify-end gap-2 pt-1">
+								<button
+									type="button"
+									onclick={() => (editingTxId = null)}
+									class="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink-primary"
+								>
+									Cancel
+								</button>
+								<button
+									type="submit"
+									disabled={isSaving || !editMerchant.trim()}
+									class="rounded-md bg-accent-primary text-accent-primary-text px-2.5 py-1 text-[11px] font-semibold hover:opacity-90 disabled:opacity-50"
+								>
+									{isSaving ? 'Saving...' : 'Save changes'}
+								</button>
+							</div>
+						</form>
+					{/if}
 				</div>
 			{/each}
 		{/if}
