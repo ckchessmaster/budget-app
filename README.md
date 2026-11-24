@@ -84,15 +84,19 @@ budget-app/
   * Pending vs. posted transaction matching & internal transfer auto-pairing
   * SvelteKit PWA with offline `IndexedDB` transaction logging
 
-* **Phase 3: Receipt Automation & Financial Safeguards**
-  * Cloudflare Email Routing webhook receiver
-  * Multi-package subset-sum Amazon reconciliation workflow in Temporal
+* **Phase 3: Month-End Rollover & Financial Safeguards**
+  * Automated month-end rollover & credit card uncovered debt interlock
+  * Historical spend trend recommendations
   * Credit card Solvency Buffer gauge & debt paydown amortization
 
 * **Phase 4: Cluster Deployment & Hardening**
-  * Kubernetes manifests & Authentik OIDC integration
+  * Helm chart (`charts/budget-app`) & Authentik OIDC integration
   * Nightly asymmetric `age` + `rclone` Google Drive backup CronJob
   * W3C Web Push notifications on mobile home-screen PWAs
+
+* **Post-MVP: Receipt Automation**
+  * Cloudflare Email Routing webhook receiver
+  * Multi-package subset-sum Amazon reconciliation workflow in Temporal
 
 ---
 

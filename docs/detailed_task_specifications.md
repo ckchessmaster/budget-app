@@ -1628,7 +1628,9 @@ Every task ticket adheres to the following five-part contract:
 
 ---
 
-# Milestone 6: Receipt Ingestion, Parsing, & Multi-Package Matching
+# Milestone 6 (Post-MVP): Receipt Ingestion, Parsing, & Multi-Package Matching
+
+> **Note:** Deferred to Post-MVP. MVP proceeds from Milestone 5 directly to Milestone 7 (M7.1–M7.2).
 
 ## Epic M6.1: Inbound Webhook & Verification Receiver
 
@@ -1891,6 +1893,8 @@ Every task ticket adheres to the following five-part contract:
 ---
 
 ## Epic M7.3: Kubernetes Deployment & Production Hardening
+
+> **Note:** Largely completed via `backend/Dockerfile`, `frontend/Dockerfile`, and the Helm chart in `charts/budget-app/` (used instead of `k8s/base/` Kustomize manifests).
 
 ### `TASK-7.3.1`: Production Multi-Stage Dockerfiles
 * **Target Files**:

@@ -6,9 +6,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
+// RegisterRoutes wires the SimpleFIN endpoints. The vault is injected rather than read
+// from the environment here so a missing master key stops the process at boot instead of
+// surfacing later as an undecryptable stored access URL.
+func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, vault crypto.Vault) {
 	client := NewClient(nil)
-	vault := crypto.LoadVaultFromEnv()
 	h := NewHandler(pool, client, vault)
 
 	r.Route("/api/v1/bank/simplefin", func(r chi.Router) {

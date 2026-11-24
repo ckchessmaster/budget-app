@@ -561,11 +561,11 @@ To guarantee disaster recovery without hosting private decryption keys on the Ku
 ## 10. Implementation Roadmap
 
 ```
-Phase 1: Foundation ──────► Phase 2: Ingestion ──────► Phase 3: Intelligence ──────► Phase 4: Production
-• Aspire Dev Environment   • SimpleFIN Poller          • Cloudflare Receipts          • K8s Manifests
-• PostgreSQL RLS Engine    • Dedup / Auto-Match        • Ollama Line-Item Split       • Authentik OIDC
-• Dex Authentication       • Internal Transfers        • Multi-Package Matching       • Rclone Drive Backup
-• Core Budget CRUD         • SvelteKit Offline PWA     • Solvency Warnings            • iOS Web Push Prep
+Phase 1: Foundation ──────► Phase 2: Ingestion ──────► Phase 3: Rollover & Guards ──► Phase 4: Production ──► Post-MVP: Receipts
+• Aspire Dev Environment   • SimpleFIN Poller          • Month-End Rollover          • Helm Chart            • Cloudflare Receipts
+• PostgreSQL RLS Engine    • Dedup / Auto-Match        • CC Debt Interlock           • Authentik OIDC        • Ollama Line-Item Split
+• Dex Authentication       • Internal Transfers        • Spend Recommendations       • Rclone Drive Backup   • Multi-Package Matching
+• Core Budget CRUD         • SvelteKit Offline PWA     • Solvency Warnings           • iOS Web Push Prep
 ```
 
 1. **Phase 1: Local Foundation & Core Ledger**
@@ -576,12 +576,14 @@ Phase 1: Foundation ──────► Phase 2: Ingestion ──────�
    * Build Temporal `BankSyncWorkflow` interfacing with SimpleFIN Bridge.
    * Implement pending vs. posted matching heuristics and internal transfer detection.
    * Build the SvelteKit PWA interface with offline `IndexedDB` transaction logging.
-3. **Phase 3: Receipt Automation & Financial Safeguards**
-   * Deploy Cloudflare Email Routing webhook endpoint.
-   * Implement durable multi-package Amazon matching workflows in Temporal.
+3. **Phase 3: Month-End Rollover & Financial Safeguards**
+   * Automate month-end category rollover, credit card uncovered debt interlock, and spend recommendations in Temporal.
    * Build the "Pay-in-Full" Solvency Buffer gauge and "Debt Paydown" burndown views.
 4. **Phase 4: Cluster Deployment & Hardening**
-   * Deploy application workloads to the on-premise Kubernetes cluster.
+   * Deploy application workloads to the on-premise Kubernetes cluster via Helm (`charts/budget-app`).
    * Cut over OIDC authentication from local Dex to Authentik.
    * Configure the nightly `age` + `rclone` Google Drive backup CronJob.
    * Register W3C VAPID keys and verify Web Push notifications on iOS/Android home-screen PWAs.
+5. **Post-MVP: Receipt Automation**
+   * Deploy Cloudflare Email Routing webhook endpoint.
+   * Implement durable multi-package Amazon matching workflows in Temporal with local Ollama vision extraction.

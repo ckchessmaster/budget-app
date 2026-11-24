@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/ckchessmaster/budget-app/backend/pkg/merchant"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,8 +15,9 @@ import (
 )
 
 type PersistTransactionsInput struct {
-	WorkspaceID uuid.UUID
-	Data        *simplefin.DataResponse
+	temporalinternal.SyncScope
+
+	Data *simplefin.DataResponse
 }
 
 type PersistTransactionsResult struct {
@@ -47,7 +50,9 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 	}
 
 	normalizer := merchant.NewStandardNormalizer()
-	tx, err := a.Pool.Begin(ctx)
+	// RLS-scoped: see FetchSimpleFINDataActivity. A plain pool transaction sees no tenant
+	// rows, and every INSERT/UPDATE below would be rejected by the WITH CHECK clauses.
+	tx, err := db.BeginWorkspaceTx(ctx, a.Pool, input.UserID)
 	if err != nil {
 		return result, err
 	}
@@ -59,7 +64,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		SELECT id, external_account_id
 		FROM accounts
 		WHERE workspace_id = $1 AND external_account_id IS NOT NULL
-	`, input.WorkspaceID)
+	`, input.SyncScope.WorkspaceID)
 	if err != nil {
 		return result, err
 	}
@@ -86,17 +91,17 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		if bal, err := decimal.NewFromString(extAcct.Balance); err == nil {
 			if _, err := tx.Exec(ctx, `
 				UPDATE accounts SET current_balance = $2, updated_at = NOW() WHERE id = $1 AND workspace_id = $3
-			`, internalID, bal.Round(2), input.WorkspaceID); err != nil {
+			`, internalID, bal.Round(2), input.SyncScope.WorkspaceID); err != nil {
 				return result, err
 			}
 		}
 	}
 
-	manualPool, err := loadTxPool(ctx, tx, input.WorkspaceID, "origin = 'MANUAL_OFFLINE'")
+	manualPool, err := loadTxPool(ctx, tx, input.SyncScope.WorkspaceID, "origin = 'MANUAL_OFFLINE'")
 	if err != nil {
 		return result, err
 	}
-	pendingPool, err := loadTxPool(ctx, tx, input.WorkspaceID, "status = 'PENDING' AND origin = 'BANK_FEED'")
+	pendingPool, err := loadTxPool(ctx, tx, input.SyncScope.WorkspaceID, "status = 'PENDING' AND origin = 'BANK_FEED'")
 	if err != nil {
 		return result, err
 	}
@@ -111,7 +116,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		var exists bool
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS(SELECT 1 FROM transactions WHERE workspace_id = $1 AND external_transaction_id = $2)
-		`, input.WorkspaceID, dto.ID).Scan(&exists); err != nil {
+		`, input.SyncScope.WorkspaceID, dto.ID).Scan(&exists); err != nil {
 			return result, err
 		}
 		if exists {
@@ -195,7 +200,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 				amount, merchant_raw, merchant_clean, transaction_date, is_cleared
 			)
 			VALUES ($1, $2, $3, 'BANK_FEED', $4, $5, $6, $7, $8, $9)
-		`, input.WorkspaceID, acctID, dto.ID, status, amt, dto.Description, cleanName, txDate.Format("2006-01-02"), isCleared); err != nil {
+		`, input.SyncScope.WorkspaceID, acctID, dto.ID, status, amt, dto.Description, cleanName, txDate.Format("2006-01-02"), isCleared); err != nil {
 			return result, err
 		}
 		result.InsertedCount++
@@ -215,7 +220,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		SET last_synced_at = NOW(),
 		    last_sync_warnings = $2::jsonb
 		WHERE workspace_id = $1
-	`, input.WorkspaceID, string(warningsJSON)); err != nil {
+	`, input.SyncScope.WorkspaceID, string(warningsJSON)); err != nil {
 		return result, err
 	}
 

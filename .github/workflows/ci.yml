@@ -146,7 +146,25 @@ jobs:
             --set ingress.hosts[0].host=budget.example.com \
             --set ingress.tls[0].secretName=budget-app-tls \
             --set ingress.tls[0].hosts[0]=budget.example.com \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
             > /tmp/rendered.yaml
+
+          # The chart must refuse to render an install that would put banking data in
+          # someone else's namespace or leave bank sync without a queue to run on.
+          refusal=$(helm template budget-app ./charts/budget-app \
+              --set oidc.clientId=budget-app-client \
+              --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+              --set vault.existingSecret=budget-app-secrets \
+              --set temporal.namespace=default 2>&1) && {
+            echo "::error::the chart rendered temporal.namespace=default"
+            exit 1
+          }
+          echo "$refusal" | grep -q "temporal.namespace=default is refused" || {
+            echo "::error::expected a refusal naming temporal.namespace, got: $refusal"
+            exit 1
+          }
+          echo "chart correctly refuses temporal.namespace=default"
           if ! python3 -c "import yaml" >/dev/null 2>&1; then
             python3 -m pip install --quiet pyyaml
           fi
@@ -186,5 +204,42 @@ jobs:
               print("::error::chart rendered invalid value types")
               print("\n".join(problems))
               sys.exit(1)
+
+          # Bank sync only works if something polls the task queue, and the worker has to
+          # share a network namespace with the API to reach the loopback-only demo bridge.
+          # Both of those have already broken in production without anyone noticing, so
+          # pin them here instead of trusting the chart to keep them intact.
+          backends = [
+              d for d in yaml.safe_load_all(open("/tmp/rendered.yaml"))
+              if d and d.get("kind") == "Deployment" and "backend" in (d.get("metadata") or {}).get("name", "")
+          ]
+          if not backends:
+              print("::error::no backend Deployment rendered")
+              sys.exit(1)
+
+          for deployment in backends:
+              pod = deployment["spec"]["template"]["spec"]
+              containers = pod.get("containers") or []
+              names = [c.get("name") for c in containers]
+              if "sync-worker" not in names:
+                  print("::error::backend pod has no sync-worker container; bank sync would queue forever")
+                  sys.exit(1)
+
+              api_image = next(c["image"] for c in containers if c.get("name") == "backend")
+              worker = next(c for c in containers if c.get("name") == "sync-worker")
+              if worker.get("image") != api_image:
+                  print("::error::sync-worker must run the backend image so /usr/local/bin/worker exists")
+                  sys.exit(1)
+              if worker.get("command") != ["/usr/local/bin/worker"]:
+                  print(f"::error::sync-worker command = {worker.get('command')!r}, want ['/usr/local/bin/worker']")
+                  sys.exit(1)
+
+              env_names = {e["name"] for c in containers for e in (c.get("env") or [])}
+              for required in ("DATABASE_URL", "VAULT_MASTER_KEY"):
+                  if required not in env_names:
+                      print(f"::error::backend pod is missing {required}; the API and worker must share one vault key")
+                      sys.exit(1)
+
+          print("bank sync topology ok (sidecar worker present, shared vault key)")
           print(f"chart structure ok ({sum(1 for d in yaml.safe_load_all(open('/tmp/rendered.yaml')) if d)} objects)")
           PY

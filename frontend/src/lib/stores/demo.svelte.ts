@@ -24,6 +24,21 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Turn a sync failure into something actionable.
+ *
+ * An expired session used to surface here as the API's bare error code, so the banner
+ * read `invalid_token` next to the demo simulator and looked like the bank feed was
+ * broken rather than like the user needed to sign in again.
+ */
+function describeSyncError(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err ?? '');
+	if (message === 'invalid_token' || message === 'missing_token') {
+		return 'Session expired — sign in again to sync';
+	}
+	return message || 'Failed to sync bank feed';
+}
+
 export class DemoStore {
 	loaded = $state(false);
 	loading = $state(false);
@@ -193,7 +208,7 @@ export class DemoStore {
 			return null;
 		} catch (err) {
 			this.syncStatus = 'failed';
-			this.lastSyncError = err instanceof Error ? err.message : 'Failed to sync bank feed';
+			this.lastSyncError = describeSyncError(err);
 			this.syncMessage = this.lastSyncError;
 			return null;
 		}
