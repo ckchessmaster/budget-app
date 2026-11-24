@@ -141,6 +141,24 @@
 		</div>
 	</header>
 
+	{#if auth.sessionExpired && !auth.isAuthenticated}
+		<div
+			data-testid="session-expired-banner"
+			class="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-2 bg-rose-50 dark:bg-rose-950/50 border-b border-rose-200 dark:border-rose-800/70 text-xs shrink-0"
+		>
+			<span class="font-semibold text-rose-900 dark:text-rose-200">
+				Your session expired. Sign in again to keep syncing.
+			</span>
+			<a
+				href="/login"
+				data-testid="session-expired-signin"
+				class="px-2.5 py-1 rounded-md font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors"
+			>
+				Sign In
+			</a>
+		</div>
+	{/if}
+
 	{#if auth.isAuthenticated && demo.isDemo}
 		<div
 			data-testid="demo-mode-banner"
