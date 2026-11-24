@@ -31,9 +31,10 @@ type CategoryBudgetView struct {
 }
 
 type MonthBudgetDetails struct {
-	Summary    MonthSummary           `json:"summary"`
-	Categories []CategoryBudgetView   `json:"categories"`
-	Incomes    []MonthlyPlannedIncome `json:"incomes"`
+	Summary           MonthSummary           `json:"summary"`
+	Categories        []CategoryBudgetView   `json:"categories"`
+	Incomes           []MonthlyPlannedIncome `json:"incomes"`
+	PendingInterlocks []CCDebtInterlockView  `json:"pending_interlocks,omitempty"`
 }
 
 type categoryMonthAmounts struct {
@@ -215,10 +216,17 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 		return nil, fmt.Errorf("error iterating category budget views: %w", err)
 	}
 
+	pendingStatus := CCInterlockPending
+	pendingInterlocks, err := NewCCDebtInterlockService().ListInterlocks(ctx, tx, &ym, &pendingStatus)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending credit card interlocks: %w", err)
+	}
+
 	summary := aggregateMonthSummary(ym, totalIncome, rolloverAdjustment, summaryItems)
 	return &MonthBudgetDetails{
-		Summary:    *summary,
-		Categories: categories,
-		Incomes:    incomes,
+		Summary:           *summary,
+		Categories:        categories,
+		Incomes:           incomes,
+		PendingInterlocks: pendingInterlocks,
 	}, nil
 }
