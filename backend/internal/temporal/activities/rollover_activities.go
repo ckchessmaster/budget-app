@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,9 +21,9 @@ type RolloverActivities struct {
 	Pool *pgxpool.Pool
 }
 
-// ExecuteWorkspaceRolloverInput identifies the workspace and source month (M) to roll over into M+1.
+// ExecuteWorkspaceRolloverInput identifies the scoped workspace, acting user, and source month (M) to roll over into M+1.
 type ExecuteWorkspaceRolloverInput struct {
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	temporalinternal.SyncScope
 	SourceMonth time.Time `json:"source_month"`
 }
 
@@ -50,44 +52,14 @@ type rolloverCategoryState struct {
 	Remaining    decimal.Decimal
 }
 
-// ListWorkspacesForRolloverActivity lists all workspace IDs eligible for month-end rollover.
-func (a *RolloverActivities) ListWorkspacesForRolloverActivity(ctx context.Context) ([]uuid.UUID, error) {
-	if a.Pool == nil {
-		return nil, temporal.NewNonRetryableApplicationError("database pool is not configured", "NilPoolError", nil)
-	}
-
-	rows, err := a.Pool.Query(ctx, `
-		SELECT id
-		FROM workspaces
-		ORDER BY created_at ASC, id ASC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list workspaces for rollover: %w", err)
-	}
-	defer rows.Close()
-
-	ids := make([]uuid.UUID, 0)
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan workspace id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating workspace ids: %w", err)
-	}
-	return ids, nil
-}
-
 // ExecuteWorkspaceRolloverActivity evaluates and persists a workspace's month-end rollover from M to M+1
-// inside a single idempotent PostgreSQL transaction.
+// inside a single idempotent, RLS-scoped PostgreSQL transaction.
 func (a *RolloverActivities) ExecuteWorkspaceRolloverActivity(ctx context.Context, input ExecuteWorkspaceRolloverInput) (*WorkspaceRolloverResult, error) {
 	if a.Pool == nil {
 		return nil, temporal.NewNonRetryableApplicationError("database pool is not configured", "NilPoolError", nil)
 	}
-	if input.WorkspaceID == uuid.Nil {
-		return nil, temporal.NewNonRetryableApplicationError("workspace_id is required", "InvalidRolloverInput", nil)
+	if input.WorkspaceID == uuid.Nil || input.UserID == uuid.Nil {
+		return nil, temporal.NewNonRetryableApplicationError("workspace_id and user_id are required", "InvalidRolloverInput", nil)
 	}
 	if input.SourceMonth.IsZero() {
 		return nil, temporal.NewNonRetryableApplicationError("source_month is required", "InvalidRolloverInput", nil)
@@ -96,9 +68,9 @@ func (a *RolloverActivities) ExecuteWorkspaceRolloverActivity(ctx context.Contex
 	sourceMonth := budget.NormalizeYearMonth(input.SourceMonth)
 	targetMonth := sourceMonth.AddDate(0, 1, 0)
 
-	tx, err := a.Pool.Begin(ctx)
+	tx, err := db.BeginWorkspaceTx(ctx, a.Pool, input.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to begin rollover transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin scoped rollover transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 

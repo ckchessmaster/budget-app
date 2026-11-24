@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,32 +68,29 @@ func openRolloverTestDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, uuid.UUID, 
 func TestRolloverActivitiesIntegration(t *testing.T) {
 	adminPool, appPool, wsID, userID := openRolloverTestDB(t)
 	ctx := context.Background()
-	acts := &RolloverActivities{Pool: adminPool}
+	acts := &RolloverActivities{Pool: appPool}
 
 	sourceMonth := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	targetMonth := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
 
-	// Verify ListWorkspacesForRolloverActivity includes our workspace.
-	wsList, err := acts.ListWorkspacesForRolloverActivity(ctx)
-	if err != nil {
-		t.Fatalf("ListWorkspacesForRolloverActivity error: %v", err)
+	// Seed a second isolated tenant to verify FORCE RLS blocks cross-tenant rollover.
+	intruderWS := uuid.New()
+	intruderID := uuid.New()
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name) VALUES ($1, 'Intruder Workspace')", intruderWS); err != nil {
+		t.Fatalf("failed to create intruder workspace: %v", err)
 	}
-	foundWS := false
-	for _, id := range wsList {
-		if id == wsID {
-			foundWS = true
-			break
-		}
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')", intruderWS, intruderID); err != nil {
+		t.Fatalf("failed to create intruder membership: %v", err)
 	}
-	if !foundWS {
-		t.Fatalf("expected workspace %s in ListWorkspacesForRolloverActivity result", wsID)
-	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id = $1", intruderWS)
+	})
 
 	// Seed accounts, categories across all rollover modes, planned income, and transactions in sourceMonth.
 	var checkingID, cardID uuid.UUID
 	var sinkingCatID, sweepTargetCatID, sweepToCatSrcID, sweepToPoolCatID, targetCapCatID, cashOverspendCatID, ccOverspendCatID uuid.UUID
 
-	err = db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
+	err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO accounts (workspace_id, name, type, current_balance, is_on_budget)
 			VALUES ($1, 'Checking', 'checking', 3000.00, TRUE)
@@ -216,9 +214,37 @@ func TestRolloverActivitiesIntegration(t *testing.T) {
 		t.Fatalf("failed to seed rollover test data: %v", err)
 	}
 
-	// Execute rollover activity for sourceMonth (2026-11).
+	// Verify cross-tenant user cannot roll over target workspace under FORCE RLS.
+	intruderRes, err := acts.ExecuteWorkspaceRolloverActivity(ctx, ExecuteWorkspaceRolloverInput{
+		SyncScope:   temporalinternal.SyncScope{WorkspaceID: wsID, UserID: intruderID},
+		SourceMonth: sourceMonth,
+	})
+	if err != nil {
+		t.Fatalf("cross-tenant rollover returned unexpected error: %v", err)
+	}
+	if !intruderRes.Skipped {
+		t.Fatalf("expected Skipped = true for cross-tenant rollover under FORCE RLS")
+	}
+
+	// Verify missing UserID fails loudly with InvalidRolloverInput.
+	if _, err := acts.ExecuteWorkspaceRolloverActivity(ctx, ExecuteWorkspaceRolloverInput{
+		SyncScope:   temporalinternal.SyncScope{WorkspaceID: wsID, UserID: uuid.Nil},
+		SourceMonth: sourceMonth,
+	}); err == nil {
+		t.Fatalf("expected error when UserID is nil")
+	}
+
+	var preRunCount int
+	if err := adminPool.QueryRow(ctx, `SELECT COUNT(*) FROM month_end_rollover_runs WHERE workspace_id = $1`, wsID).Scan(&preRunCount); err != nil {
+		t.Fatalf("failed to verify zero rollover runs before owning execution: %v", err)
+	}
+	if preRunCount != 0 {
+		t.Fatalf("expected 0 rollover runs before owning execution, got %d", preRunCount)
+	}
+
+	// Execute rollover activity for sourceMonth (2026-11) as owning user.
 	res, err := acts.ExecuteWorkspaceRolloverActivity(ctx, ExecuteWorkspaceRolloverInput{
-		WorkspaceID: wsID,
+		SyncScope:   temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID},
 		SourceMonth: time.Date(2026, 11, 28, 23, 59, 0, 0, time.UTC),
 	})
 	if err != nil {
@@ -326,7 +352,7 @@ func TestRolloverActivitiesIntegration(t *testing.T) {
 
 	// Verify idempotency: second execution returns AlreadyExecuted=true and creates no duplicates.
 	res2, err := acts.ExecuteWorkspaceRolloverActivity(ctx, ExecuteWorkspaceRolloverInput{
-		WorkspaceID: wsID,
+		SyncScope:   temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID},
 		SourceMonth: sourceMonth,
 	})
 	if err != nil {
@@ -349,7 +375,7 @@ func TestRolloverActivitiesIntegration(t *testing.T) {
 
 	// Verify non-existent workspace returns Skipped=true without error.
 	missingRes, err := acts.ExecuteWorkspaceRolloverActivity(ctx, ExecuteWorkspaceRolloverInput{
-		WorkspaceID: uuid.New(),
+		SyncScope:   temporalinternal.SyncScope{WorkspaceID: uuid.New(), UserID: userID},
 		SourceMonth: sourceMonth,
 	})
 	if err != nil {

@@ -3,9 +3,12 @@ package schedules
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
+	"github.com/google/uuid"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
@@ -29,11 +32,16 @@ func (c *stubTemporalClient) ScheduleClient() client.ScheduleClient {
 	return c.schedClient
 }
 
-func TestBuildMonthEndRolloverScheduleOptions(t *testing.T) {
-	opts := BuildMonthEndRolloverScheduleOptions()
+func TestBuildWorkspaceRolloverScheduleOptions(t *testing.T) {
+	scope := temporalinternal.SyncScope{
+		WorkspaceID: uuid.New(),
+		UserID:      uuid.New(),
+	}
+	opts := BuildWorkspaceRolloverScheduleOptions(scope)
 
-	if opts.ID != MonthEndRolloverScheduleID {
-		t.Fatalf("ID = %q, want %q", opts.ID, MonthEndRolloverScheduleID)
+	wantScheduleID := fmt.Sprintf("month-end-rollover-%s", scope.WorkspaceID.String())
+	if opts.ID != wantScheduleID {
+		t.Fatalf("ID = %q, want %q", opts.ID, wantScheduleID)
 	}
 	if len(opts.Spec.CronExpressions) != 1 || opts.Spec.CronExpressions[0] != "0 0 1 * *" {
 		t.Fatalf("CronExpressions = %v, want [0 0 1 * *]", opts.Spec.CronExpressions)
@@ -49,12 +57,32 @@ func TestBuildMonthEndRolloverScheduleOptions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *client.ScheduleWorkflowAction, got %T", opts.Action)
 	}
+	wantWFID := fmt.Sprintf("month-end-rollover-wf-%s", scope.WorkspaceID.String())
+	if action.ID != wantWFID {
+		t.Fatalf("Action.ID = %q, want %q", action.ID, wantWFID)
+	}
 	if action.TaskQueue != temporalinternal.TaskQueue {
 		t.Fatalf("TaskQueue = %q, want %q", action.TaskQueue, temporalinternal.TaskQueue)
 	}
+	if len(action.Args) != 1 {
+		t.Fatalf("Args len = %d, want 1", len(action.Args))
+	}
+	in, ok := action.Args[0].(workflows.MonthEndRolloverInput)
+	if !ok {
+		t.Fatalf("Args[0] type = %T, want workflows.MonthEndRolloverInput", action.Args[0])
+	}
+	if in.SyncScope != scope {
+		t.Fatalf("Args[0].SyncScope = %+v, want %+v", in.SyncScope, scope)
+	}
 }
 
-func TestEnsureMonthEndRolloverSchedule(t *testing.T) {
+func TestEnsureWorkspaceRolloverSchedule(t *testing.T) {
+	scope := temporalinternal.SyncScope{
+		WorkspaceID: uuid.New(),
+		UserID:      uuid.New(),
+	}
+	wantID := fmt.Sprintf("month-end-rollover-%s", scope.WorkspaceID.String())
+
 	t.Run("creates schedule cleanly", func(t *testing.T) {
 		var captured client.ScheduleOptions
 		tc := &stubTemporalClient{
@@ -66,11 +94,11 @@ func TestEnsureMonthEndRolloverSchedule(t *testing.T) {
 			},
 		}
 
-		if err := EnsureMonthEndRolloverSchedule(context.Background(), tc); err != nil {
+		if err := EnsureWorkspaceRolloverSchedule(context.Background(), tc, scope); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if captured.ID != MonthEndRolloverScheduleID {
-			t.Fatalf("created schedule ID = %q, want %q", captured.ID, MonthEndRolloverScheduleID)
+		if captured.ID != wantID {
+			t.Fatalf("created schedule ID = %q, want %q", captured.ID, wantID)
 		}
 	})
 
@@ -83,7 +111,7 @@ func TestEnsureMonthEndRolloverSchedule(t *testing.T) {
 			},
 		}
 
-		if err := EnsureMonthEndRolloverSchedule(context.Background(), tc); err != nil {
+		if err := EnsureWorkspaceRolloverSchedule(context.Background(), tc, scope); err != nil {
 			t.Fatalf("expected nil on AlreadyExists, got %v", err)
 		}
 	})
@@ -98,9 +126,19 @@ func TestEnsureMonthEndRolloverSchedule(t *testing.T) {
 			},
 		}
 
-		err := EnsureMonthEndRolloverSchedule(context.Background(), tc)
+		err := EnsureWorkspaceRolloverSchedule(context.Background(), tc, scope)
 		if !errors.Is(err, boom) {
 			t.Fatalf("expected %v, got %v", boom, err)
+		}
+	})
+
+	t.Run("rejects missing scope", func(t *testing.T) {
+		tc := &stubTemporalClient{}
+		if err := EnsureWorkspaceRolloverSchedule(context.Background(), tc, temporalinternal.SyncScope{WorkspaceID: scope.WorkspaceID}); err == nil {
+			t.Fatalf("expected error when UserID is missing")
+		}
+		if err := EnsureWorkspaceRolloverSchedule(context.Background(), tc, temporalinternal.SyncScope{UserID: scope.UserID}); err == nil {
+			t.Fatalf("expected error when WorkspaceID is missing")
 		}
 	})
 }
