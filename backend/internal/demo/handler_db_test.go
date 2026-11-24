@@ -12,7 +12,6 @@ import (
 
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
-	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -116,7 +115,7 @@ func TestToggleDemoSeedsSandboxUnderRLS(t *testing.T) {
 	ctx := context.Background()
 
 	provisioner := workspace.NewProvisioner()
-	h := NewHandler(appPool, crypto.LoadVaultFromEnv(), "http://127.0.0.1:8080", provisioner)
+	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil)
 
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)
@@ -210,7 +209,7 @@ func TestResetDemoRebuildsSandboxUnderRLS(t *testing.T) {
 	ctx := context.Background()
 
 	provisioner := workspace.NewProvisioner()
-	h := NewHandler(appPool, crypto.LoadVaultFromEnv(), "http://127.0.0.1:8080", provisioner)
+	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil)
 
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)

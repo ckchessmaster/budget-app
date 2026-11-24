@@ -2,6 +2,16 @@ import { createBuilder } from './.aspire/modules/aspire.mjs';
 
 const builder = await createBuilder();
 
+// Temporal and the vault master key are required dependencies, not optional ones: the API
+// exits at boot without them. This key is a fixed development value so the API and the
+// worker agree across restarts; production supplies a real one through the Helm chart and
+// the Secret, never from this file.
+const temporalNamespace = 'budget-app';
+const devVaultMasterKey = await builder.addParameter('vault-master-key', {
+  value: 'YnVkZ2V0LWFwcC1kZXZlbG9wbWVudC12YXVsdC1rZXk=',
+  secret: true
+});
+
 // TASK-1.1.2: PostgreSQL 16 Resource
 const dbPassword = await builder.addParameter('db-password', {
   value: 'postgrespassword',
@@ -41,6 +51,9 @@ export const backend = await builder
   // The Vite dev server runs on 5173 and calls the API on 8080, which is a
   // different origin, so it has to be allowlisted explicitly.
   .withEnvironment('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
+  .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
+  .withEnvironment('TEMPORAL_NAMESPACE', temporalNamespace)
+  .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
   .waitFor(budgetDb)
   .waitFor(dex)
   .waitFor(temporal);
@@ -49,6 +62,8 @@ export const worker = await builder
   .addGolangApp('worker', '../backend', 'cmd/worker/main.go')
   .withReference(budgetDb)
   .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
+  .withEnvironment('TEMPORAL_NAMESPACE', temporalNamespace)
+  .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
   .waitFor(budgetDb)
   .waitFor(temporal)
   .waitFor(backend);

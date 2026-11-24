@@ -56,11 +56,7 @@ spec:
             - configMapRef:
                 name: {{ include "budget-app.fullname" . }}-config
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "budget-app.secretName" . }}
-                  key: {{ .Values.database.secretKey }}
+            {{- include "budget-app.syncEnv" . | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /livez
@@ -79,3 +75,27 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+        {{- if .Values.temporal.worker.enabled }}
+        # The Temporal sync worker.
+        #
+        # It is a sidecar in this pod rather than its own Deployment on purpose: the demo
+        # SimpleFIN bridge binds loopback (see backend/internal/demo/routes.go), and
+        # containers in one pod share a network namespace, so this is the only placement
+        # that keeps demo bank sync working without re-exposing the bridge to the cluster.
+        # The worker and the API must also read the same VAULT_MASTER_KEY.
+        - name: sync-worker
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["/usr/local/bin/worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "budget-app.fullname" . }}-config
+          env:
+            {{- include "budget-app.syncEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.temporal.worker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+        {{- end }}

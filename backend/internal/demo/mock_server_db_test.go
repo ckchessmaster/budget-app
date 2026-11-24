@@ -15,7 +15,6 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
-	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,7 +32,7 @@ func enableDemo(t *testing.T, adminPool, appPool *pgxpool.Pool, userID uuid.UUID
 		t.Fatalf("failed to provision real workspace: %v", err)
 	}
 
-	h := NewHandler(appPool, crypto.LoadVaultFromEnv(), DefaultMockBridgeBaseURL, provisioner)
+	h := NewHandler(appPool, testVault(t), DefaultMockBridgeBaseURL, provisioner, nil)
 	status, settings := postToggle(t, h, userID, true)
 	if status != 200 {
 		t.Fatalf("demo toggle status = %d, want 200", status)
@@ -478,8 +477,8 @@ func TestResetDemoSeedsAWorkingAccessURL(t *testing.T) {
 	mockBase := "http://" + listener.Addr().String()
 
 	provisioner := workspace.NewProvisioner()
-	vault := crypto.LoadVaultFromEnv()
-	h := NewHandler(appPool, vault, mockBase, provisioner)
+	vault := testVault(t)
+	h := NewHandler(appPool, vault, mockBase, provisioner, nil)
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)
 	}

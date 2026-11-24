@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
+	"go.temporal.io/sdk/client"
 )
 
 type SimpleFINStatus struct {
@@ -90,6 +91,11 @@ type Handler struct {
 	vault       crypto.Vault
 	mockBaseURL string
 	provisioner workspace.Provisioner
+
+	// temporal is the API's shared client. Bank sync is queued there, so the simulator
+	// must not dial a fresh connection per request, and must not pretend a sync started
+	// when the process booted without one.
+	temporal client.Client
 }
 
 func NewHandler(
@@ -97,12 +103,14 @@ func NewHandler(
 	vault crypto.Vault,
 	mockBaseURL string,
 	provisioner workspace.Provisioner,
+	temporalClient client.Client,
 ) *Handler {
 	return &Handler{
 		pool:        pool,
 		vault:       vault,
 		mockBaseURL: mockBaseURL,
 		provisioner: provisioner,
+		temporal:    temporalClient,
 	}
 }
 
@@ -193,19 +201,26 @@ func (h *Handler) loadSettingsResponse(ctx context.Context, userID uuid.UUID) (*
 	}, nil
 }
 
-func (h *Handler) maybeTriggerSync(ctx context.Context, wsID uuid.UUID, syncNow bool) (string, string) {
+func (h *Handler) maybeTriggerSync(ctx context.Context, scope temporalinternal.SyncScope, syncNow bool) (string, string) {
 	if !syncNow {
 		return "", ""
 	}
-	tc, err := temporalinternal.NewClient(slog.Default())
-	if err != nil {
+	if h.temporal == nil {
+		slog.Error("demo sync requested but no temporal client is configured",
+			"workspace_id", scope.WorkspaceID)
 		return "", "temporal_unavailable"
 	}
-	defer tc.Close()
 
-	_ = schedules.EnsureWorkspaceSyncSchedule(ctx, tc, wsID)
-	workflowID, err := schedules.TriggerSyncNow(ctx, tc, wsID)
+	if err := schedules.EnsureWorkspaceSyncSchedule(ctx, h.temporal, scope); err != nil {
+		slog.Warn("failed to ensure recurring sync schedule",
+			"workspace_id", scope.WorkspaceID, "error", err)
+	}
+
+	workflowID, err := schedules.TriggerSyncNow(ctx, h.temporal, scope)
 	if err != nil {
+		slog.Error("failed to trigger demo bank sync",
+			"workspace_id", scope.WorkspaceID, "address", temporalinternal.AddressFromEnv(),
+			"namespace", temporalinternal.NamespaceFromEnv(), "error", err)
 		return "", "failed_to_trigger_sync"
 	}
 	return workflowID, ""
@@ -715,7 +730,7 @@ func (h *Handler) StageTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID, syncErr := h.maybeTriggerSync(r.Context(), wsID, req.SyncNow)
+	workflowID, syncErr := h.maybeTriggerSync(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, req.SyncNow)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                      txID,
 		"external_transaction_id": extTxID,
@@ -821,7 +836,7 @@ func (h *Handler) SettlePending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID, syncErr := h.maybeTriggerSync(r.Context(), wsID, req.SyncNow)
+	workflowID, syncErr := h.maybeTriggerSync(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, req.SyncNow)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"external_transaction_id": newExtTxID,
 		"workflow_id":             workflowID,
@@ -929,7 +944,7 @@ func (h *Handler) StageTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID, syncErr := h.maybeTriggerSync(r.Context(), wsID, req.SyncNow)
+	workflowID, syncErr := h.maybeTriggerSync(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, req.SyncNow)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"outflow_external_id": outExtID,
 		"inflow_external_id":  inExtID,
@@ -1031,7 +1046,7 @@ func (h *Handler) StageManualMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workflowID, syncErr := h.maybeTriggerSync(r.Context(), wsID, req.SyncNow)
+	workflowID, syncErr := h.maybeTriggerSync(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, req.SyncNow)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"external_transaction_id": extTxID,
 		"workflow_id":             workflowID,

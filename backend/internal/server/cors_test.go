@@ -279,7 +279,7 @@ func TestServerDoesNotGrantWildcardCORS(t *testing.T) {
 		OIDCEnforceAudience: true,
 		CORSAllowedOrigins:  []string{allowedOrigin},
 	}
-	router := server.NewServer(cfg, nil, verifier).Router()
+	router := server.NewServer(cfg, nil, verifier, nil, nil).Router()
 
 	t.Run("preflight is only granted for the allowlisted origin", func(t *testing.T) {
 		rec := httptest.NewRecorder()
@@ -361,7 +361,7 @@ func TestServerDoesNotGrantWildcardCORS(t *testing.T) {
 func TestServerRejectsUnsignedTokenEndToEnd(t *testing.T) {
 	verifier := &stubVerifier{err: errors.New("token rejected: failed to verify signature")}
 	cfg := server.Config{Port: "8080", OIDCIssuerURL: "https://auth.example.com/"}
-	router := server.NewServer(cfg, nil, verifier).Router()
+	router := server.NewServer(cfg, nil, verifier, nil, nil).Router()
 
 	for _, path := range []string{"/api/v1/budget", "/api/v1/accounts", "/api/v1/demo/toggle", "/api/v1/settings"} {
 		rec := httptest.NewRecorder()
@@ -379,7 +379,7 @@ func TestServerRejectsUnsignedTokenEndToEnd(t *testing.T) {
 }
 
 func TestNewServerWithoutVerifierDoesNotExposeProtectedRoutes(t *testing.T) {
-	router := server.NewServer(server.Config{Port: "8080"}, nil, nil).Router()
+	router := server.NewServer(server.Config{Port: "8080"}, nil, nil, nil, nil).Router()
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/budget", nil))
