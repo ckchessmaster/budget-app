@@ -20,7 +20,7 @@ import (
 
 func dialTemporalWithRetry(ctx context.Context, logger *slog.Logger) (client.Client, error) {
 	for {
-		c, err := temporalinternal.NewClient(logger)
+		c, err := temporalinternal.Prepare(ctx, logger)
 		if err == nil {
 			return c, nil
 		}
@@ -39,6 +39,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	vault, err := crypto.LoadVaultFromEnv()
+	if err != nil {
+		logger.Error("temporal worker requires a vault master key; refusing to start with a derived key",
+			"error", err)
+		os.Exit(1)
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -64,7 +71,7 @@ func main() {
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:   pool,
 		Client: simplefin.NewClient(nil),
-		Vault:  crypto.LoadVaultFromEnv(),
+		Vault:  vault,
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)

@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.temporal.io/sdk/client"
 )
 
 // MockBridgeRouter serves the fake SimpleFIN bridge used to simulate bank data for
@@ -29,9 +30,15 @@ func MockBridgeRouter(pool *pgxpool.Pool) chi.Router {
 	return r
 }
 
-func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, mockBaseURL string, provisioner workspace.Provisioner) {
-	vault := crypto.LoadVaultFromEnv()
-	h := NewHandler(pool, vault, mockBaseURL, provisioner)
+func RegisterRoutes(
+	r chi.Router,
+	pool *pgxpool.Pool,
+	mockBaseURL string,
+	provisioner workspace.Provisioner,
+	vault crypto.Vault,
+	temporalClient client.Client,
+) {
+	h := NewHandler(pool, vault, mockBaseURL, provisioner, temporalClient)
 
 	r.Route("/api/v1/settings", func(r chi.Router) {
 		r.Get("/", h.GetSettings)

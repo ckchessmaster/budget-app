@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -52,8 +54,9 @@ func FindTransferPairs(txs []TxRecord) []TransferPair {
 
 // DetectAndLinkTransfersActivity scans recent unlinked transactions for a workspace
 // and links offsetting cross-account transfers with category_id = NULL.
-func (a *BankActivities) DetectAndLinkTransfersActivity(ctx context.Context, workspaceID uuid.UUID) (int, error) {
-	tx, err := a.Pool.Begin(ctx)
+func (a *BankActivities) DetectAndLinkTransfersActivity(ctx context.Context, scope temporalinternal.SyncScope) (int, error) {
+	// RLS-scoped: see FetchSimpleFINDataActivity.
+	tx, err := db.BeginWorkspaceTx(ctx, a.Pool, scope.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -67,7 +70,7 @@ func (a *BankActivities) DetectAndLinkTransfersActivity(ctx context.Context, wor
 		  AND transfer_linked_transaction_id IS NULL
 		  AND transaction_date >= CURRENT_DATE - INTERVAL '30 days'
 		ORDER BY transaction_date ASC
-	`, workspaceID)
+	`, scope.WorkspaceID)
 	if err != nil {
 		return 0, err
 	}

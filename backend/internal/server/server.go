@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/sdk/client"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
@@ -34,6 +35,7 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
 	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
+	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 )
 
@@ -124,15 +126,29 @@ type Server struct {
 	bridgeRouter chi.Router
 	provisioner  workspace.Provisioner
 	verifier     middleware.OIDCVerifier
+	temporal     client.Client
+	vault        crypto.Vault
 }
 
-func NewServer(cfg Config, pool *pgxpool.Pool, verifier middleware.OIDCVerifier) *Server {
+// NewServer builds the API. temporal and vault are dependencies the process cannot do
+// bank sync or store credentials without; cmd/api fails to start unless both resolve.
+// Unit tests may pass nil to exercise routing alone, and every path that needs them
+// reports a clear failure instead of dialling a connection per request.
+func NewServer(
+	cfg Config,
+	pool *pgxpool.Pool,
+	verifier middleware.OIDCVerifier,
+	temporalClient client.Client,
+	vault crypto.Vault,
+) *Server {
 	s := &Server{
 		cfg:         cfg,
 		pool:        pool,
 		router:      chi.NewRouter(),
 		provisioner: workspace.NewProvisioner(),
 		verifier:    verifier,
+		temporal:    temporalClient,
+		vault:       vault,
 	}
 	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
@@ -166,7 +182,7 @@ func (s *Server) setupRoutes() {
 
 	// Health check endpoints
 	r.Get("/livez", LivenessHandler())
-	r.Get("/healthz", HealthHandler(s.pool))
+	r.Get("/healthz", HealthHandler(s.pool, s.temporal))
 
 	// Protected routes
 	if s.verifier != nil {
@@ -185,12 +201,12 @@ func (s *Server) setupRoutes() {
 			transaction.RegisterRoutes(protected, s.pool)
 
 			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
-			simplefin.RegisterRoutes(protected, s.pool)
+			simplefin.RegisterRoutes(protected, s.pool, s.vault)
 			protected.Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
 			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleBankSyncStatus)
 
 			// Settings & Demo Mode simulator routes
-			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner)
+			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal)
 		})
 	}
 }
@@ -231,16 +247,26 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tc, err := temporalinternal.NewClient(slog.Default())
-	if err != nil {
+	if s.temporal == nil {
+		slog.Error("bank sync requested but no temporal client is configured",
+			"workspace_id", wsID, "address", temporalinternal.AddressFromEnv(),
+			"namespace", temporalinternal.NamespaceFromEnv())
 		http.Error(w, `{"error": "temporal_unavailable"}`, http.StatusServiceUnavailable)
 		return
 	}
-	defer tc.Close()
 
-	_ = schedules.EnsureWorkspaceSyncSchedule(r.Context(), tc, wsID)
-	workflowID, err := schedules.TriggerSyncNow(r.Context(), tc, wsID)
+	scope := temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}
+	if err := schedules.EnsureWorkspaceSyncSchedule(r.Context(), s.temporal, scope); err != nil {
+		// The recurring schedule is a convenience; an on-demand sync must still run.
+		slog.Warn("failed to ensure recurring sync schedule",
+			"workspace_id", wsID, "error", err)
+	}
+
+	workflowID, err := schedules.TriggerSyncNow(r.Context(), s.temporal, scope)
 	if err != nil {
+		slog.Error("failed to trigger bank sync workflow",
+			"workspace_id", wsID, "address", temporalinternal.AddressFromEnv(),
+			"namespace", temporalinternal.NamespaceFromEnv(), "error", err)
 		http.Error(w, `{"error": "failed_to_trigger_sync"}`, http.StatusInternalServerError)
 		return
 	}
@@ -281,14 +307,12 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tc, err := temporalinternal.NewClient(slog.Default())
-	if err != nil {
+	if s.temporal == nil {
 		http.Error(w, `{"error": "temporal_unavailable"}`, http.StatusServiceUnavailable)
 		return
 	}
-	defer tc.Close()
 
-	desc, err := tc.DescribeWorkflowExecution(r.Context(), workflowID, "")
+	desc, err := s.temporal.DescribeWorkflowExecution(r.Context(), workflowID, "")
 	if err != nil {
 		var notFound *serviceerror.NotFound
 		if errors.As(err, &notFound) {
@@ -330,7 +354,7 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 		getCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		var result workflows.BankSyncResult
-		if err := tc.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, &result); err == nil {
+		if err := s.temporal.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, &result); err == nil {
 			resp.Result = &result
 		}
 	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
@@ -340,7 +364,7 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Status = "FAILED"
 		getCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := tc.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, nil); err != nil {
+		if err := s.temporal.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, nil); err != nil {
 			resp.LastError = err.Error()
 		} else {
 			resp.LastError = wfStatus.String()

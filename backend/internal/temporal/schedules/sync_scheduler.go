@@ -8,14 +8,14 @@ import (
 
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
-	"github.com/google/uuid"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 )
 
 // EnsureWorkspaceSyncSchedule registers a 6-hour recurring schedule (with 15m jitter)
 // for BankSyncWorkflow on the workspace.
-func EnsureWorkspaceSyncSchedule(ctx context.Context, c client.Client, workspaceID uuid.UUID) error {
+func EnsureWorkspaceSyncSchedule(ctx context.Context, c client.Client, scope temporalinternal.SyncScope) error {
+	workspaceID := scope.WorkspaceID
 	scheduleID := fmt.Sprintf("bank-sync-%s", workspaceID.String())
 
 	_, err := c.ScheduleClient().Create(ctx, client.ScheduleOptions{
@@ -30,7 +30,7 @@ func EnsureWorkspaceSyncSchedule(ctx context.Context, c client.Client, workspace
 			ID:        fmt.Sprintf("bank-sync-wf-%s", workspaceID.String()),
 			Workflow:  workflows.BankSyncWorkflow,
 			TaskQueue: temporalinternal.TaskQueue,
-			Args:      []any{workflows.BankSyncInput{WorkspaceID: workspaceID}},
+			Args:      []any{workflows.BankSyncInput{SyncScope: scope}},
 		},
 	})
 	if err != nil {
@@ -44,11 +44,12 @@ func EnsureWorkspaceSyncSchedule(ctx context.Context, c client.Client, workspace
 }
 
 // TriggerSyncNow starts an immediate on-demand BankSyncWorkflow execution.
-func TriggerSyncNow(ctx context.Context, c client.Client, workspaceID uuid.UUID) (string, error) {
+func TriggerSyncNow(ctx context.Context, c client.Client, scope temporalinternal.SyncScope) (string, error) {
+	workspaceID := scope.WorkspaceID
 	run, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("bank-sync-manual-%s-%d", workspaceID.String(), time.Now().UTC().UnixNano()),
 		TaskQueue: temporalinternal.TaskQueue,
-	}, workflows.BankSyncWorkflow, workflows.BankSyncInput{WorkspaceID: workspaceID})
+	}, workflows.BankSyncWorkflow, workflows.BankSyncInput{SyncScope: scope})
 	if err != nil {
 		return "", err
 	}

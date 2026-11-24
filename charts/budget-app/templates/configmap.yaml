@@ -5,6 +5,18 @@ metadata:
   labels:
     {{- include "budget-app.labels" . | nindent 4 }}
 data:
+{{- if not (trim (.Values.temporal.address | default "")) }}
+{{- fail "temporal.address is required. Bank sync runs as a Temporal workflow and the API now exits at boot when no server can be reached, so set temporal.address to the Temporal frontend gRPC endpoint (host:port) rather than deploying an app whose sync is silently dead." }}
+{{- end }}
+{{- if not (trim (.Values.temporal.namespace | default "")) }}
+{{- fail "temporal.namespace is required and must name a namespace budget-app owns. The API registers it on boot when missing." }}
+{{- end }}
+{{- if eq (trim .Values.temporal.namespace) "default" }}
+{{- fail "temporal.namespace=default is refused. Workflows, schedules and retained history for banking data must not share a namespace with every other unnamed workload; give budget-app its own." }}
+{{- end }}
+{{- if and (not (trim (.Values.vault.masterKey | default ""))) (not .Values.vault.existingSecret) (not .Values.database.existingSecret) }}
+{{- fail "a vault master key is required: set vault.masterKey, or point vault.existingSecret (or database.existingSecret) at a Secret holding vault.secretKey. There is no fallback key, so stored SimpleFIN credentials cannot be sealed without one." }}
+{{- end }}
 {{- if and .Values.oidc.enforceAudience (empty (trim .Values.oidc.clientId | default "")) }}
 {{- fail "oidc.clientId is required while oidc.enforceAudience is true: it is the audience the API demands in each token's aud claim. Set oidc.clientId to this application's OIDC client ID, or set oidc.enforceAudience=false to skip only the audience check." }}
 {{- end }}
@@ -25,6 +37,11 @@ data:
   {{- if .Values.backend.mockSimplefinBaseUrl }}
   MOCK_SIMPLEFIN_BASE_URL: {{ .Values.backend.mockSimplefinBaseUrl | quote }}
   {{- end }}
+  # Temporal orchestration. Bank sync workflows and their recurring schedules run here;
+  # TEMPORAL_NAMESPACE is registered by the API at boot when it does not exist yet.
+  TEMPORAL_ADDRESS: {{ .Values.temporal.address | quote }}
+  TEMPORAL_NAMESPACE: {{ .Values.temporal.namespace | quote }}
+  TEMPORAL_RETENTION: {{ .Values.temporal.retention | quote }}
   API_BASE_URL: {{ .Values.frontend.apiBaseUrl | quote }}
   PORT: {{ .Values.backend.port | quote }}
   DB_MAX_CONNS: {{ .Values.backend.dbMaxConns | quote }}
