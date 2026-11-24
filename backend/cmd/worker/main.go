@@ -68,10 +68,14 @@ func main() {
 
 	w := worker.New(c, temporalinternal.TaskQueue, worker.Options{})
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
+	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:   pool,
 		Client: simplefin.NewClient(nil),
 		Vault:  vault,
+	})
+	w.RegisterActivity(&activities.RolloverActivities{
+		Pool: pool,
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)

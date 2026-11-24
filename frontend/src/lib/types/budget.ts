@@ -84,3 +84,12 @@ export interface InlineActivityItem {
 	amount: number;
 	status?: 'PENDING' | 'POSTED';
 }
+
+export interface SpendRecommendation {
+	categoryId: string;
+	categoryName: string;
+	currentPlanned: number;
+	trailingMedianSpend: number;
+	percentageDeviation: number;
+	shouldPrompt: boolean;
+}

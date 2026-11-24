@@ -7,7 +7,8 @@ import type {
 	MonthBudgetDetails,
 	MonthSummary,
 	PlannedIncome,
-	ReallocatePayload
+	ReallocatePayload,
+	SpendRecommendation
 } from '$lib/types/budget';
 
 function num(val: unknown): number {
@@ -207,4 +208,31 @@ export async function updateMonthlyPlanned(
 		const err = await res.json().catch(() => ({}));
 		throw new Error(err.error || `Failed to update monthly planned budget (${res.status})`);
 	}
+}
+
+function mapSpendRecommendation(raw: any): SpendRecommendation {
+	return {
+		categoryId: raw.category_id,
+		categoryName: raw.category_name,
+		currentPlanned: num(raw.current_planned),
+		trailingMedianSpend: num(raw.trailing_median_spend),
+		percentageDeviation: num(raw.percentage_deviation),
+		shouldPrompt: Boolean(raw.should_prompt)
+	};
+}
+
+export async function fetchSpendRecommendations(month: string): Promise<SpendRecommendation[]> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(
+		`${apiBaseUrl}/api/v1/budget/recommendations?month=${encodeURIComponent(month)}`,
+		{
+			headers: await authHeaders()
+		}
+	);
+	if (!res.ok) {
+		throw new Error(`Failed to fetch spend recommendations (${res.status})`);
+	}
+	const raw = await res.json();
+	if (!Array.isArray(raw)) return [];
+	return raw.map(mapSpendRecommendation);
 }

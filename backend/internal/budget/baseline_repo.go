@@ -60,7 +60,7 @@ func (r *pgBaselineRepo) GetByMonth(ctx context.Context, tx pgx.Tx, yearMonth ti
 	}
 	ym := NormalizeYearMonth(yearMonth)
 	rows, err := tx.Query(ctx, `
-		SELECT id, workspace_id, category_id, year_month, original_planned
+		SELECT id, workspace_id, category_id, year_month, original_planned, carryover_balance
 		FROM monthly_category_budgets
 		WHERE workspace_id = $1 AND year_month = $2::date
 		ORDER BY category_id ASC
@@ -73,7 +73,7 @@ func (r *pgBaselineRepo) GetByMonth(ctx context.Context, tx pgx.Tx, yearMonth ti
 	var result []MonthlyCategoryBudget
 	for rows.Next() {
 		var b MonthlyCategoryBudget
-		if err := rows.Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned); err != nil {
+		if err := rows.Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned, &b.CarryoverBalance); err != nil {
 			return nil, fmt.Errorf("failed to scan monthly baseline: %w", err)
 		}
 		result = append(result, b)
@@ -92,10 +92,10 @@ func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, c
 	ym := NormalizeYearMonth(yearMonth)
 	var b MonthlyCategoryBudget
 	err = tx.QueryRow(ctx, `
-		SELECT id, workspace_id, category_id, year_month, original_planned
+		SELECT id, workspace_id, category_id, year_month, original_planned, carryover_balance
 		FROM monthly_category_budgets
 		WHERE workspace_id = $1 AND category_id = $2 AND year_month = $3::date
-	`, wsID, categoryID, ym).Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned)
+	`, wsID, categoryID, ym).Scan(&b.ID, &b.WorkspaceID, &b.CategoryID, &b.YearMonth, &b.OriginalPlanned, &b.CarryoverBalance)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// Fallback to category's default monthly_budget if baseline not yet frozen
@@ -109,10 +109,11 @@ func (r *pgBaselineRepo) GetByCategoryAndMonth(ctx context.Context, tx pgx.Tx, c
 				return nil, fmt.Errorf("failed to get category fallback budget: %w", err2)
 			}
 			return &MonthlyCategoryBudget{
-				WorkspaceID:     catWSID,
-				CategoryID:      categoryID,
-				YearMonth:       ym,
-				OriginalPlanned: defBudget,
+				WorkspaceID:      catWSID,
+				CategoryID:       categoryID,
+				YearMonth:        ym,
+				OriginalPlanned:  defBudget,
+				CarryoverBalance: decimal.Zero,
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to get monthly baseline: %w", err)

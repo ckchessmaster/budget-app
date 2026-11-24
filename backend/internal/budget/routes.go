@@ -13,8 +13,9 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 
 	baselineSvc := NewBaselineService(baseRepo)
 	reallocSvc := NewReallocationService(catRepo, baseRepo, reallocRepo)
+	interlockSvc := NewCCDebtInterlockService()
 
-	h := NewHandler(pool, catRepo, baselineSvc, reallocSvc, incomeRepo)
+	h := NewHandler(pool, catRepo, baselineSvc, reallocSvc, incomeRepo, interlockSvc)
 
 	r.Route("/api/v1/categories", func(r chi.Router) {
 		r.Get("/", h.ListCategories)
@@ -31,5 +32,8 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 		r.Post("/incomes", h.CreatePlannedIncome)
 		r.Get("/incomes", h.ListPlannedIncomes)
 		r.Delete("/incomes/{id}", h.DeletePlannedIncome)
+		r.Get("/cc-interlocks", h.ListCCDebtInterlocks)
+		r.Post("/cc-interlocks/{id}/resolve", h.ResolveCCDebtInterlock)
+		r.Get("/recommendations", h.GetSpendRecommendations)
 	})
 }

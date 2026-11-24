@@ -15,11 +15,12 @@ import (
 )
 
 type Handler struct {
-	pool        *pgxpool.Pool
-	catRepo     CategoryRepo
-	baselineSvc BaselineService
-	reallocSvc  ReallocationService
-	incomeRepo  PlannedIncomeRepo
+	pool         *pgxpool.Pool
+	catRepo      CategoryRepo
+	baselineSvc  BaselineService
+	reallocSvc   ReallocationService
+	incomeRepo   PlannedIncomeRepo
+	interlockSvc CCDebtInterlockService
 }
 
 func NewHandler(
@@ -28,13 +29,18 @@ func NewHandler(
 	baselineSvc BaselineService,
 	reallocSvc ReallocationService,
 	incomeRepo PlannedIncomeRepo,
+	interlockSvc CCDebtInterlockService,
 ) *Handler {
+	if interlockSvc == nil {
+		interlockSvc = NewCCDebtInterlockService()
+	}
 	return &Handler{
-		pool:        pool,
-		catRepo:     catRepo,
-		baselineSvc: baselineSvc,
-		reallocSvc:  reallocSvc,
-		incomeRepo:  incomeRepo,
+		pool:         pool,
+		catRepo:      catRepo,
+		baselineSvc:  baselineSvc,
+		reallocSvc:   reallocSvc,
+		incomeRepo:   incomeRepo,
+		interlockSvc: interlockSvc,
 	}
 }
 

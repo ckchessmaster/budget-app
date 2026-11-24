@@ -2,7 +2,11 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { fetchMonthBudget, updateMonthlyPlanned } from '$lib/api/budget';
+	import {
+		fetchMonthBudget,
+		fetchSpendRecommendations,
+		updateMonthlyPlanned
+	} from '$lib/api/budget';
 	import {
 		createTransaction,
 		deleteTransaction,
@@ -21,6 +25,7 @@
 	import CatchUpModal, { type CatchUpMode } from '$lib/components/budget/CatchUpModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
 	import IncomeCard from '$lib/components/budget/IncomeCard.svelte';
+	import RecommendationBanner from '$lib/components/budget/RecommendationBanner.svelte';
 	import TransactionsDrawer from '$lib/components/budget/TransactionsDrawer.svelte';
 	import TransactionsPanel from '$lib/components/budget/TransactionsPanel.svelte';
 	import { BudgetLocalDB, type OfflineTransaction } from '$lib/offline/db';
@@ -34,7 +39,8 @@
 	import type {
 		CategoryBudget,
 		InlineActivityItem,
-		MonthBudgetDetails
+		MonthBudgetDetails,
+		SpendRecommendation
 	} from '$lib/types/budget';
 	import type {
 		AccountItem,
@@ -69,6 +75,7 @@
 	let queuedTransactions = $state<OfflineTransaction[]>([]);
 	let accounts = $state<AccountItem[]>([]);
 	let solvency = $state<SolvencyReport | null>(null);
+	let recommendations = $state<SpendRecommendation[]>([]);
 
 	let isLoading = $state(false);
 	let syncing = $state(false);
@@ -121,6 +128,7 @@
 
 			if (typeof navigator !== 'undefined' && !navigator.onLine) {
 				isOffline = true;
+				recommendations = [];
 				const [cachedAccts, cachedCats] = await Promise.all([
 					localDB.getCachedAccounts(),
 					localDB.getCachedCategories()
@@ -173,11 +181,12 @@
 			}
 
 			isOffline = false;
-			const [budgetRes, txRes, acctsRes, solvRes] = await Promise.all([
+			const [budgetRes, txRes, acctsRes, solvRes, recsRes] = await Promise.all([
 				fetchMonthBudget(month),
 				fetchTransactions({ month, limit: 200 }).catch(() => ({ items: [], total: 0 })),
 				fetchAccounts().catch(() => []),
-				fetchSolvencyReport().catch(() => null)
+				fetchSolvencyReport().catch(() => null),
+				fetchSpendRecommendations(month).catch(() => [])
 			]);
 			if (seq !== loadSeq) return;
 
@@ -185,6 +194,7 @@
 			transactions = txRes.items;
 			accounts = acctsRes;
 			solvency = solvRes;
+			recommendations = recsRes;
 
 			if (!hasAutoPromptedCatchUp && !silent) {
 				hasAutoPromptedCatchUp = true;
@@ -274,6 +284,15 @@
 		if (effectiveFocusGroup === FOCUS_ALL) return groupedCategories;
 		if (effectiveFocusGroup === FOCUS_INCOME) return [];
 		return groupedCategories.filter((g) => g.groupName === effectiveFocusGroup);
+	});
+
+	let visibleRecommendations = $derived.by(() => {
+		if (isOffline || effectiveFocusGroup === FOCUS_INCOME) return [];
+		if (effectiveFocusGroup === FOCUS_ALL) return recommendations;
+		const visibleCategoryIds = new Set(
+			visibleGroupedCategories.flatMap((g) => g.cats.map((c) => c.id))
+		);
+		return recommendations.filter((r) => visibleCategoryIds.has(r.categoryId));
 	});
 
 	let transactionsByCategory = $derived.by(() => {
@@ -630,6 +649,12 @@
 					groups={focusGroupNames}
 					selected={effectiveFocusGroup}
 					onSelect={(value) => (activeFocusGroup = value)}
+				/>
+
+				<RecommendationBanner
+					recommendations={visibleRecommendations}
+					yearMonth={currentMonth}
+					onApplied={() => void loadWorkspace(currentMonth, true)}
 				/>
 
 				{#if effectiveFocusGroup === FOCUS_ALL || effectiveFocusGroup === FOCUS_INCOME}

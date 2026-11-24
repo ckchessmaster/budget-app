@@ -110,6 +110,37 @@ func TestRLSIsolation(t *testing.T) {
 		t.Fatalf("failed to insert test incomes: %v", err)
 	}
 
+	nextMonth := month.AddDate(0, 1, 0)
+	r1, r2 := uuid.New(), uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO month_end_rollover_runs (id, workspace_id, source_month, target_month, total_rolled_over)
+		VALUES ($1, $2, $5, $6, 100.00),
+		       ($3, $4, $5, $6, 200.00)
+	`, r1, w1, r2, w2, month, nextMonth)
+	if err != nil {
+		t.Fatalf("failed to insert test rollover runs: %v", err)
+	}
+
+	il1, il2 := uuid.New(), uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO credit_card_debt_interlocks (id, workspace_id, source_month, target_month, deficit_amount)
+		VALUES ($1, $2, $5, $6, 45.00),
+		       ($3, $4, $5, $6, 90.00)
+	`, il1, w1, il2, w2, month, nextMonth)
+	if err != nil {
+		t.Fatalf("failed to insert test cc debt interlocks: %v", err)
+	}
+
+	adj1, adj2 := uuid.New(), uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO monthly_rollover_adjustments (id, workspace_id, source_month, target_month, adjustment_type, amount)
+		VALUES ($1, $2, $5, $6, 'SWEEP_TO_POOL', 25.00),
+		       ($3, $4, $5, $6, 'SWEEP_TO_POOL', 75.00)
+	`, adj1, w1, adj2, w2, month, nextMonth)
+	if err != nil {
+		t.Fatalf("failed to insert test rollover adjustments: %v", err)
+	}
+
 	// 3. Open connection as budget_app_user, execute SET LOCAL app.current_user_id = '<U1_UUID>'
 	conn, err := appPool.Acquire(ctx)
 	if err != nil {
@@ -169,6 +200,29 @@ func TestRLSIsolation(t *testing.T) {
 	if len(returnedIncomes) != 1 || returnedIncomes[0] != i1 {
 		t.Fatalf("expected only income I1 (%s), got: %v", i1, returnedIncomes)
 	}
+
+	// 6. Assert: new rollover tables only return W1 rows.
+	assertOnlyID := func(table string, wantID uuid.UUID) {
+		rows, err := tx.Query(ctx, "SELECT id FROM "+table)
+		if err != nil {
+			t.Fatalf("failed to query %s: %v", table, err)
+		}
+		defer rows.Close()
+		var got []uuid.UUID
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				t.Fatalf("scan %s failed: %v", table, err)
+			}
+			got = append(got, id)
+		}
+		if len(got) != 1 || got[0] != wantID {
+			t.Fatalf("expected only %s (%s) in %s, got: %v", wantID, wantID, table, got)
+		}
+	}
+	assertOnlyID("month_end_rollover_runs", r1)
+	assertOnlyID("credit_card_debt_interlocks", il1)
+	assertOnlyID("monthly_rollover_adjustments", adj1)
 }
 
 func TestRLSDemoWorkspaceIsolation(t *testing.T) {

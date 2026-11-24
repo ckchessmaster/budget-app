@@ -225,6 +225,14 @@ func (s *Server) handleWorkspaceProvision(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if s.temporal != nil {
+		scope := temporalinternal.SyncScope{WorkspaceID: res.WorkspaceID, UserID: userID}
+		if err := schedules.EnsureWorkspaceRolloverSchedule(r.Context(), s.temporal, scope); err != nil {
+			slog.Warn("failed to ensure month-end rollover schedule",
+				"workspace_id", res.WorkspaceID, "error", err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
 }

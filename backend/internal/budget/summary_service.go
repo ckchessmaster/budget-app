@@ -22,6 +22,7 @@ type CategoryBudgetView struct {
 	TargetCadence         string           `json:"target_cadence"`
 	SortOrder             int              `json:"sort_order"`
 	OriginalPlanned       decimal.Decimal  `json:"original_planned"`
+	CarryoverBalance      decimal.Decimal  `json:"carryover_balance"`
 	EffectiveTarget       decimal.Decimal  `json:"effective_target"`
 	SpentCleared          decimal.Decimal  `json:"spent_cleared"`
 	SpentPending          decimal.Decimal  `json:"spent_pending"`
@@ -30,18 +31,20 @@ type CategoryBudgetView struct {
 }
 
 type MonthBudgetDetails struct {
-	Summary    MonthSummary           `json:"summary"`
-	Categories []CategoryBudgetView   `json:"categories"`
-	Incomes    []MonthlyPlannedIncome `json:"incomes"`
+	Summary           MonthSummary           `json:"summary"`
+	Categories        []CategoryBudgetView   `json:"categories"`
+	Incomes           []MonthlyPlannedIncome `json:"incomes"`
+	PendingInterlocks []CCDebtInterlockView  `json:"pending_interlocks,omitempty"`
 }
 
 type categoryMonthAmounts struct {
-	EffectiveTarget decimal.Decimal
-	SpentCleared    decimal.Decimal
-	SpentPending    decimal.Decimal
+	CarryoverBalance decimal.Decimal
+	EffectiveTarget  decimal.Decimal
+	SpentCleared     decimal.Decimal
+	SpentPending     decimal.Decimal
 }
 
-func aggregateMonthSummary(yearMonth time.Time, totalIncome decimal.Decimal, items []categoryMonthAmounts) *MonthSummary {
+func aggregateMonthSummary(yearMonth time.Time, totalIncome decimal.Decimal, rolloverAdjustment decimal.Decimal, items []categoryMonthAmounts) *MonthSummary {
 	totalAllocated := decimal.Zero
 	totalCleared := decimal.Zero
 	totalPending := decimal.Zero
@@ -52,17 +55,18 @@ func aggregateMonthSummary(yearMonth time.Time, totalIncome decimal.Decimal, ite
 		totalCleared = totalCleared.Add(item.SpentCleared)
 		totalPending = totalPending.Add(item.SpentPending)
 
-		remaining := item.EffectiveTarget.Sub(item.SpentCleared.Add(item.SpentPending))
+		remaining := item.CarryoverBalance.Add(item.EffectiveTarget).Sub(item.SpentCleared.Add(item.SpentPending))
 		if remaining.LessThan(decimal.Zero) {
 			isUnbalanced = true
 		}
 	}
 
-	readyToAssign := totalIncome.Sub(totalAllocated)
+	readyToAssign := totalIncome.Add(rolloverAdjustment).Sub(totalAllocated)
 
 	return &MonthSummary{
 		YearMonth:           NormalizeYearMonth(yearMonth),
 		TotalIncomeExpected: totalIncome.Round(2),
+		RolloverAdjustment:  rolloverAdjustment.Round(2),
 		TotalAllocated:      totalAllocated.Round(2),
 		ReadyToAssign:       readyToAssign.Round(2),
 		TotalSpentCleared:   totalCleared.Round(2),
@@ -100,7 +104,19 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 		totalIncome = totalIncome.Add(inc.Amount)
 	}
 
-	// 2. Fetch categories with their baseline, net reallocations, and cleared/pending spend
+	// 1b. Fetch active rollover adjustments targeting this month
+	var rolloverAdjustment decimal.Decimal
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount), 0)
+		FROM monthly_rollover_adjustments
+		WHERE workspace_id = $1
+		  AND target_month = $2::date
+		  AND is_active = TRUE
+	`, wsID, ym).Scan(&rolloverAdjustment); err != nil {
+		return nil, fmt.Errorf("failed to compute rollover adjustments: %w", err)
+	}
+
+	// 2. Fetch categories with their baseline, carryover, net reallocations, and cleared/pending spend
 	rows, err := tx.Query(ctx, `
 		WITH cat_realloc AS (
 			SELECT c.id AS category_id,
@@ -139,6 +155,7 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 		       c.target_cadence,
 		       c.sort_order,
 		       COALESCE(mcb.original_planned, c.monthly_budget) AS original_planned,
+		       COALESCE(mcb.carryover_balance, 0) AS carryover_balance,
 		       COALESCE(cr.net_transfer, 0) AS net_transfer,
 		       COALESCE(cs.spent_cleared, 0) AS spent_cleared,
 		       COALESCE(cs.spent_pending, 0) AS spent_pending
@@ -168,13 +185,14 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 			&v.ID, &v.Name, &v.GroupName, &rolloverMode,
 			&v.SweepTargetCategoryID, &v.TargetAmount, &v.TargetDate,
 			&v.TargetCadence, &v.SortOrder,
-			&v.OriginalPlanned, &netTransfer, &v.SpentCleared, &v.SpentPending,
+			&v.OriginalPlanned, &v.CarryoverBalance, &netTransfer, &v.SpentCleared, &v.SpentPending,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan category budget view: %w", err)
 		}
 		v.RolloverMode = RolloverMode(rolloverMode)
+		v.CarryoverBalance = v.CarryoverBalance.Round(2)
 		v.EffectiveTarget = v.OriginalPlanned.Add(netTransfer).Round(2)
-		v.Remaining = v.EffectiveTarget.Sub(v.SpentCleared.Add(v.SpentPending)).Round(2)
+		v.Remaining = v.CarryoverBalance.Add(v.EffectiveTarget).Sub(v.SpentCleared.Add(v.SpentPending)).Round(2)
 
 		if v.TargetAmount != nil && v.TargetDate != nil {
 			pacing := CalculateSinkingFundPace(PacingInput{
@@ -188,19 +206,27 @@ func ComputeMonthDetails(ctx context.Context, tx pgx.Tx, yearMonth time.Time) (*
 
 		categories = append(categories, v)
 		summaryItems = append(summaryItems, categoryMonthAmounts{
-			EffectiveTarget: v.EffectiveTarget,
-			SpentCleared:    v.SpentCleared,
-			SpentPending:    v.SpentPending,
+			CarryoverBalance: v.CarryoverBalance,
+			EffectiveTarget:  v.EffectiveTarget,
+			SpentCleared:     v.SpentCleared,
+			SpentPending:     v.SpentPending,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating category budget views: %w", err)
 	}
 
-	summary := aggregateMonthSummary(ym, totalIncome, summaryItems)
+	pendingStatus := CCInterlockPending
+	pendingInterlocks, err := NewCCDebtInterlockService().ListInterlocks(ctx, tx, &ym, &pendingStatus)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pending credit card interlocks: %w", err)
+	}
+
+	summary := aggregateMonthSummary(ym, totalIncome, rolloverAdjustment, summaryItems)
 	return &MonthBudgetDetails{
-		Summary:    *summary,
-		Categories: categories,
-		Incomes:    incomes,
+		Summary:           *summary,
+		Categories:        categories,
+		Incomes:           incomes,
+		PendingInterlocks: pendingInterlocks,
 	}, nil
 }
