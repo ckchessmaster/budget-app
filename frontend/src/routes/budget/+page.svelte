@@ -12,6 +12,10 @@
 		updateTransaction
 	} from '$lib/api/transactions';
 	import BudgetHeader from '$lib/components/budget/BudgetHeader.svelte';
+	import CategoryFocusPills, {
+		FOCUS_ALL,
+		FOCUS_INCOME
+	} from '$lib/components/budget/CategoryFocusPills.svelte';
 	import CategoryGroupCard from '$lib/components/budget/CategoryGroupCard.svelte';
 	import CategoryModal from '$lib/components/budget/CategoryModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
@@ -25,7 +29,11 @@
 		requestBackgroundSync
 	} from '$lib/offline/sync';
 	import { auth } from '$lib/stores/auth.svelte';
-	import type { CategoryBudget, MonthBudgetDetails } from '$lib/types/budget';
+	import type {
+		CategoryBudget,
+		InlineActivityItem,
+		MonthBudgetDetails
+	} from '$lib/types/budget';
 	import type { AccountItem, SolvencyReport, TransactionItemModel } from '$lib/types/transaction';
 	import { getGroupColor } from '$lib/utils/budgetColors';
 
@@ -60,6 +68,7 @@
 
 	let displayMode = $state<'remaining' | 'spent'>('remaining');
 	let activeCategoryFilterId = $state<string | null>(null);
+	let activeFocusGroup = $state<string>(FOCUS_ALL);
 
 	// Modals & Drawers
 	let coverCategoryId = $state<string | null>(null);
@@ -223,6 +232,109 @@
 			cats,
 			color: getGroupColor(groupName, idx)
 		}));
+	});
+
+	let focusGroupNames = $derived(groupedCategories.map((g) => g.groupName));
+
+	let effectiveFocusGroup = $derived(
+		activeFocusGroup === FOCUS_ALL ||
+			activeFocusGroup === FOCUS_INCOME ||
+			focusGroupNames.includes(activeFocusGroup)
+			? activeFocusGroup
+			: FOCUS_ALL
+	);
+
+	let visibleGroupedCategories = $derived.by(() => {
+		if (effectiveFocusGroup === FOCUS_ALL) return groupedCategories;
+		if (effectiveFocusGroup === FOCUS_INCOME) return [];
+		return groupedCategories.filter((g) => g.groupName === effectiveFocusGroup);
+	});
+
+	let transactionsByCategory = $derived.by(() => {
+		const map = new Map<string, InlineActivityItem[]>();
+		const pushItem = (catId: string, item: InlineActivityItem) => {
+			const list = map.get(catId) ?? [];
+			list.push(item);
+			map.set(catId, list);
+		};
+
+		for (const tx of transactions) {
+			if (tx.isTransfer) continue;
+			const acct = accountById.get(tx.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			const merchant = tx.merchantClean?.trim() || tx.merchantRaw;
+			const accountName = tx.accountName || acct?.name || 'Account';
+
+			if (tx.splits && tx.splits.length > 0) {
+				for (const split of tx.splits) {
+					if (!split.categoryId) continue;
+					pushItem(split.categoryId, {
+						id: `${tx.id}:${split.id}`,
+						date: tx.transactionDate,
+						merchant,
+						accountName,
+						amount: split.amount,
+						status: tx.status
+					});
+				}
+			} else if (tx.categoryId) {
+				pushItem(tx.categoryId, {
+					id: tx.id,
+					date: tx.transactionDate,
+					merchant,
+					accountName,
+					amount: tx.amount,
+					status: tx.status
+				});
+			}
+		}
+
+		for (const q of queuedTransactions) {
+			if (!q.transactionDate.startsWith(currentMonth) || !q.categoryId) continue;
+			const acct = accountById.get(q.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			pushItem(q.categoryId, {
+				id: q.localId,
+				date: q.transactionDate,
+				merchant: q.merchantRaw,
+				accountName: acct?.name || 'Offline',
+				amount: q.amount,
+				status: 'PENDING'
+			});
+		}
+
+		return map;
+	});
+
+	let inflowTransactions = $derived.by(() => {
+		const items: InlineActivityItem[] = [];
+		for (const tx of transactions) {
+			if (tx.amount <= 0 || tx.isTransfer) continue;
+			const acct = accountById.get(tx.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			items.push({
+				id: tx.id,
+				date: tx.transactionDate,
+				merchant: tx.merchantClean?.trim() || tx.merchantRaw,
+				accountName: tx.accountName || acct?.name || 'Account',
+				amount: tx.amount,
+				status: tx.status
+			});
+		}
+		for (const q of queuedTransactions) {
+			if (!q.transactionDate.startsWith(currentMonth) || q.amount <= 0) continue;
+			const acct = accountById.get(q.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			items.push({
+				id: q.localId,
+				date: q.transactionDate,
+				merchant: q.merchantRaw,
+				accountName: acct?.name || 'Offline',
+				amount: q.amount,
+				status: 'PENDING'
+			});
+		}
+		return items;
 	});
 
 	let overspentCategory = $derived.by(() => {
@@ -462,38 +574,50 @@
 					Loading {currentMonth} budget...
 				</div>
 			{:else}
-				<IncomeCard
-					yearMonth={`${currentMonth}-01`}
-					incomes={budgetData?.incomes ?? []}
-					receivedAmount={receivedInflows}
-					onChanged={() => void loadWorkspace(currentMonth, true)}
+				<CategoryFocusPills
+					groups={focusGroupNames}
+					selected={effectiveFocusGroup}
+					onSelect={(value) => (activeFocusGroup = value)}
 				/>
 
-				{#if groupedCategories.length === 0}
-					<div class="rounded-2xl border border-border bg-surface p-8 text-center space-y-3">
-						<p class="text-sm font-medium text-ink-primary">No categories yet</p>
-						<p class="text-xs text-ink-secondary">
-							Add your first budget category or planned income to start assigning every dollar.
-						</p>
-					</div>
-				{:else}
-					<div class="space-y-5">
-						{#each groupedCategories as group (group.groupName)}
-							<CategoryGroupCard
-								groupName={group.groupName}
-								color={group.color}
-								categories={group.cats}
-								{displayMode}
-								onToggleDisplayMode={() =>
-									(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
-								onCoverClick={(id) => (coverCategoryId = id)}
-								onEditClick={openEditCategory}
-								onUpdatePlanned={handleUpdatePlanned}
-								onFilterTransactions={handleFilterCategoryTransactions}
-								onAddCategoryInGroup={openNewCategoryInGroup}
-							/>
-						{/each}
-					</div>
+				{#if effectiveFocusGroup === FOCUS_ALL || effectiveFocusGroup === FOCUS_INCOME}
+					<IncomeCard
+						yearMonth={`${currentMonth}-01`}
+						incomes={budgetData?.incomes ?? []}
+						receivedAmount={receivedInflows}
+						{inflowTransactions}
+						onChanged={() => void loadWorkspace(currentMonth, true)}
+					/>
+				{/if}
+
+				{#if effectiveFocusGroup !== FOCUS_INCOME}
+					{#if groupedCategories.length === 0}
+						<div class="rounded-2xl border border-border bg-surface p-8 text-center space-y-3">
+							<p class="text-sm font-medium text-ink-primary">No categories yet</p>
+							<p class="text-xs text-ink-secondary">
+								Add your first budget category or planned income to start assigning every dollar.
+							</p>
+						</div>
+					{:else}
+						<div class="space-y-5">
+							{#each visibleGroupedCategories as group (group.groupName)}
+								<CategoryGroupCard
+									groupName={group.groupName}
+									color={group.color}
+									categories={group.cats}
+									{displayMode}
+									{transactionsByCategory}
+									onToggleDisplayMode={() =>
+										(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
+									onCoverClick={(id) => (coverCategoryId = id)}
+									onEditClick={openEditCategory}
+									onUpdatePlanned={handleUpdatePlanned}
+									onFilterTransactions={handleFilterCategoryTransactions}
+									onAddCategoryInGroup={openNewCategoryInGroup}
+								/>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			{/if}
 		</div>

@@ -89,3 +89,12 @@
 	overscroll-behavior: contain;
 	scrollbar-gutter: stable;
 }
+
+.no-scrollbar {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+	display: none;
+}
