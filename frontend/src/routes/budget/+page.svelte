@@ -18,6 +18,7 @@
 	} from '$lib/components/budget/CategoryFocusPills.svelte';
 	import CategoryGroupCard from '$lib/components/budget/CategoryGroupCard.svelte';
 	import CategoryModal from '$lib/components/budget/CategoryModal.svelte';
+	import CatchUpModal, { type CatchUpMode } from '$lib/components/budget/CatchUpModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
 	import IncomeCard from '$lib/components/budget/IncomeCard.svelte';
 	import TransactionsDrawer from '$lib/components/budget/TransactionsDrawer.svelte';
@@ -42,6 +43,8 @@
 	} from '$lib/types/transaction';
 	import { getGroupColor } from '$lib/utils/budgetColors';
 	import {
+		isCatchUpTransaction,
+		isCategorizableTransaction,
 		isToReviewTransaction,
 		mapOfflineQueuedToTransactions
 	} from '$lib/utils/transactionReview';
@@ -84,6 +87,9 @@
 	let isCategoryModalOpen = $state(false);
 	let editingCategory = $state<CategoryBudget | null>(null);
 	let modalDefaultGroup = $state('Essentials');
+	let isCatchUpModalOpen = $state(false);
+	let catchUpModalMode = $state<CatchUpMode>('intro');
+	let hasAutoPromptedCatchUp = $state(false);
 
 	$effect(() => {
 		const panelParam = page.url.searchParams.get('panel');
@@ -178,6 +184,15 @@
 			transactions = txRes.items;
 			accounts = acctsRes;
 			solvency = solvRes;
+
+			if (!hasAutoPromptedCatchUp && !silent) {
+				hasAutoPromptedCatchUp = true;
+				const loadedAccountById = new Map(acctsRes.map((a) => [a.id, a]));
+				if (txRes.items.some((tx) => isCatchUpTransaction(tx, loadedAccountById))) {
+					catchUpModalMode = 'intro';
+					isCatchUpModalOpen = true;
+				}
+			}
 
 			await Promise.all([
 				localDB.cacheAccounts(
@@ -392,6 +407,20 @@
 		return count;
 	});
 
+	let catchUpItems = $derived(
+		transactions.filter((tx) => isCatchUpTransaction(tx, accountById))
+	);
+
+	let modalCatchUpItems = $derived.by(() =>
+		catchUpItems.length > 0
+			? catchUpItems
+			: transactions.filter(
+					(tx) =>
+						isToReviewTransaction(tx, accountById) &&
+						isCategorizableTransaction(tx, accountById)
+				)
+	);
+
 	function fmtMoney(n: number): string {
 		return Math.abs(n).toLocaleString('en-US', {
 			minimumFractionDigits: 2,
@@ -513,6 +542,15 @@
 			isMobileDrawerOpen = true;
 		}
 	}
+
+	function openCatchUpStack() {
+		if (modalCatchUpItems.length > 0) {
+			catchUpModalMode = 'stack';
+			isCatchUpModalOpen = true;
+		} else {
+			isMobileDrawerOpen = true;
+		}
+	}
 </script>
 
 <BudgetHeader
@@ -527,7 +565,7 @@
 	isDrawerOpen={isMobileDrawerOpen}
 	onSyncNow={handleSyncNow}
 	onMonthChange={handleMonthChange}
-	onOpenCatchUp={() => (isMobileDrawerOpen = true)}
+	onOpenCatchUp={openCatchUpStack}
 	onToggleTransactionsDrawer={() => (isMobileDrawerOpen = !isMobileDrawerOpen)}
 	onSignOut={() => void auth.logout()}
 />
@@ -712,4 +750,15 @@
 		isCategoryModalOpen = false;
 		void loadWorkspace(currentMonth, true);
 	}}
+/>
+
+<CatchUpModal
+	isOpen={isCatchUpModalOpen}
+	initialMode={catchUpModalMode}
+	items={modalCatchUpItems}
+	allTransactions={transactions}
+	{accounts}
+	categories={budgetData?.categories ?? []}
+	onCategorizeTransaction={handleCategorizeTransaction}
+	onClose={() => (isCatchUpModalOpen = false)}
 />
