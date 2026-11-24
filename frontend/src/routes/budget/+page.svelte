@@ -34,8 +34,17 @@
 		InlineActivityItem,
 		MonthBudgetDetails
 	} from '$lib/types/budget';
-	import type { AccountItem, SolvencyReport, TransactionItemModel } from '$lib/types/transaction';
+	import type {
+		AccountItem,
+		SolvencyReport,
+		TransactionItemModel,
+		UpdateTransactionPayload
+	} from '$lib/types/transaction';
 	import { getGroupColor } from '$lib/utils/budgetColors';
+	import {
+		isToReviewTransaction,
+		mapOfflineQueuedToTransactions
+	} from '$lib/utils/transactionReview';
 
 	function defaultMonth(): string {
 		const now = new Date();
@@ -373,20 +382,12 @@
 	});
 
 	let toReviewCount = $derived.by(() => {
+		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
 		let count = 0;
-		for (const tx of transactions) {
-			if (tx.categoryId !== null || tx.isTransfer || (tx.splits && tx.splits.length > 0)) {
-				continue;
+		for (const tx of [...offlineMapped, ...transactions]) {
+			if (isToReviewTransaction(tx, accountById)) {
+				count++;
 			}
-			const acct = accountById.get(tx.accountId);
-			if (acct && !acct.isOnBudget) continue;
-			count++;
-		}
-		for (const q of queuedTransactions) {
-			if (!q.transactionDate.startsWith(currentMonth) || q.categoryId !== null) continue;
-			const acct = accountById.get(q.accountId);
-			if (acct && !acct.isOnBudget) continue;
-			count++;
 		}
 		return count;
 	});
@@ -429,6 +430,11 @@
 			txId,
 			categoryId ? { categoryId } : { clearCategory: true }
 		);
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleUpdateTransaction(txId: string, payload: UpdateTransactionPayload) {
+		await updateTransaction(txId, payload);
 		await loadWorkspace(currentMonth, true);
 	}
 
@@ -650,6 +656,7 @@
 					onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 					onCreateTransaction={handleCreateTransaction}
 					onCategorizeTransaction={handleCategorizeTransaction}
+					onUpdateTransaction={handleUpdateTransaction}
 					onDeleteTransaction={handleDeleteTransaction}
 					onSyncNow={handleSyncNow}
 				/>
@@ -676,6 +683,7 @@
 		onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 		onCreateTransaction={handleCreateTransaction}
 		onCategorizeTransaction={handleCategorizeTransaction}
+		onUpdateTransaction={handleUpdateTransaction}
 		onDeleteTransaction={handleDeleteTransaction}
 		onSyncNow={handleSyncNow}
 	/>
