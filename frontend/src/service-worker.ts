@@ -4,6 +4,7 @@
 /// <reference lib="webworker" />
 
 import { build, files, version } from '$service-worker';
+import { handleNotificationClick, handlePushEvent } from '$lib/notifications/sw-push';
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = `budget-app-cache-${version}`;
@@ -73,3 +74,11 @@ sw.addEventListener('sync', ((event: SyncEvent) => {
 		);
 	}
 }) as EventListener);
+
+sw.addEventListener('push', (event) => {
+	handlePushEvent(event, sw.registration);
+});
+
+sw.addEventListener('notificationclick', (event) => {
+	handleNotificationClick(event, sw.clients, sw.location.origin);
+});

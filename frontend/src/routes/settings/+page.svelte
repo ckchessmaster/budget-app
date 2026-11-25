@@ -4,6 +4,15 @@
 	import { disconnectSimpleFIN } from '$lib/api/simplefin';
 	import SimpleFINSetupModal from '$lib/components/accounts/SimpleFINSetupModal.svelte';
 	import SimulatorWorkbench from '$lib/components/demo/SimulatorWorkbench.svelte';
+	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
+	import {
+		detectPushEnvironment,
+		fetchPushConfig,
+		getExistingPushSubscription,
+		unsubscribeFromPushNotifications,
+		type PushEnvironment,
+		type PushServerConfig
+	} from '$lib/notifications/push';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
@@ -25,8 +34,45 @@
 
 	let copiedAlias = $state(false);
 
+	let pushLoading = $state(true);
+	let pushConfig = $state<PushServerConfig | null>(null);
+	let pushEnv = $state<PushEnvironment>(detectPushEnvironment());
+	let pushSubscribed = $state(false);
+	let pushModalOpen = $state(false);
+	let disablingPush = $state(false);
+	let pushError = $state<string | null>(null);
+
 	let themeMode = $derived<'light' | 'dark' | 'system'>(theme.override ?? 'system');
 	let isSyncing = $derived(demo.syncStatus === 'running' || demo.syncStatus === 'retrying');
+
+	async function refreshPushState() {
+		pushLoading = true;
+		pushError = null;
+		pushEnv = detectPushEnvironment();
+		try {
+			const [cfg, existingSub] = await Promise.all([
+				fetchPushConfig().catch(() => null),
+				getExistingPushSubscription().catch(() => null)
+			]);
+			pushConfig = cfg;
+			pushSubscribed = Boolean(existingSub);
+		} finally {
+			pushLoading = false;
+		}
+	}
+
+	async function handleDisablePush() {
+		disablingPush = true;
+		pushError = null;
+		try {
+			await unsubscribeFromPushNotifications();
+			pushSubscribed = false;
+		} catch (err) {
+			pushError = err instanceof Error ? err.message : 'Failed to disable push alerts';
+		} finally {
+			disablingPush = false;
+		}
+	}
 
 	$effect(() => {
 		if (demo.loaded) {
@@ -43,6 +89,7 @@
 		await demo.load().catch((err) => {
 			demoError = err instanceof Error ? err.message : 'Failed to load settings';
 		});
+		void refreshPushState();
 	});
 
 	async function handleToggleDemo(e: Event) {
@@ -162,6 +209,12 @@
 				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
 			>
 				Appearance
+			</a>
+			<a
+				href="#notifications"
+				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
+			>
+				Push Notifications
 			</a>
 		</nav>
 
@@ -467,6 +520,93 @@
 					{/each}
 				</div>
 			</section>
+
+			<!-- Section 5: Push Notifications -->
+			<section
+				id="notifications"
+				class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4 shadow-xs"
+			>
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<h3 class="text-base font-bold text-slate-900 dark:text-white">Push Notifications</h3>
+						<p class="text-xs text-slate-500 dark:text-slate-400">
+							Receive alerts when spending crosses 80% of a category budget or a credit card statement is due within 5 days
+						</p>
+					</div>
+
+					<span
+						data-testid="settings-push-status-pill"
+						class="px-2.5 py-1 rounded-full text-[11px] font-semibold {pushSubscribed
+							? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+							: !pushConfig?.enabled
+								? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+								: pushEnv.permission === 'denied'
+									? 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300'
+									: pushEnv.supportReason === 'ios_requires_install'
+										? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'
+										: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}"
+					>
+						{#if pushLoading}
+							Checking...
+						{:else if pushSubscribed}
+							Enabled
+						{:else if !pushConfig?.enabled}
+							Not Configured
+						{:else if pushEnv.supportReason === 'ios_requires_install'}
+							Install PWA (iOS)
+						{:else if pushEnv.permission === 'denied'}
+							Blocked
+						{:else if pushEnv.supportReason === 'unsupported_browser'}
+							Not Supported
+						{:else}
+							Off
+						{/if}
+					</span>
+				</div>
+
+				{#if pushError}
+					<div class="rounded-lg border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+						{pushError}
+					</div>
+				{/if}
+
+				{#if !pushLoading && !pushConfig?.enabled}
+					<p class="text-xs text-slate-500 dark:text-slate-400">
+						Web Push notifications are disabled on this server because VAPID keys are not configured.
+					</p>
+				{:else if !pushLoading && pushEnv.supportReason === 'ios_requires_install'}
+					<p class="text-xs text-amber-800 dark:text-amber-200">
+						On iOS, add Budget App to your Home Screen via Safari Share &rarr; Add to Home Screen before enabling alerts.
+					</p>
+				{/if}
+
+				<div class="flex flex-wrap items-center gap-2 pt-1">
+					{#if pushSubscribed}
+						<button
+							type="button"
+							disabled={disablingPush}
+							onclick={() => void handleDisablePush()}
+							data-testid="settings-disable-push-btn"
+							class="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-50 dark:hover:bg-rose-500/10 disabled:opacity-50"
+						>
+							{disablingPush ? 'Disabling...' : 'Disable Alerts on This Device'}
+						</button>
+					{:else if pushConfig?.enabled}
+						<button
+							type="button"
+							disabled={pushLoading}
+							onclick={() => {
+								pushEnv = detectPushEnvironment();
+								pushModalOpen = true;
+							}}
+							data-testid="settings-open-push-modal-btn"
+							class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white"
+						>
+							Enable Alerts
+						</button>
+					{/if}
+				</div>
+			</section>
 		</div>
 	</div>
 </div>
@@ -475,6 +615,18 @@
 	open={simplefinModalOpen}
 	onClose={() => (simplefinModalOpen = false)}
 	onLinked={() => void demo.load()}
+/>
+
+<PushPromptModal
+	open={pushModalOpen}
+	vapidPublicKey={pushConfig?.vapid_public_key ?? ''}
+	serverEnabled={pushConfig?.enabled ?? false}
+	environment={pushEnv}
+	onClose={() => (pushModalOpen = false)}
+	onSubscribed={() => {
+		pushSubscribed = true;
+		pushEnv = detectPushEnvironment();
+	}}
 />
 
 <style>

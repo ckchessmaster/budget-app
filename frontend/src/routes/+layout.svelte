@@ -4,6 +4,17 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import DemoSimulatorDrawer from '$lib/components/demo/DemoSimulatorDrawer.svelte';
+	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
+	import {
+		detectPushEnvironment,
+		dismissPushPrompt,
+		fetchPushConfig,
+		getExistingPushSubscription,
+		isPushPromptDismissed,
+		shouldShowPushOnboardingModal,
+		type PushEnvironment,
+		type PushServerConfig
+	} from '$lib/notifications/push';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
@@ -19,6 +30,32 @@
 	let isSettingsActive = $derived(currentPath.startsWith('/settings'));
 	let isSyncing = $derived(demo.syncStatus === 'running' || demo.syncStatus === 'retrying');
 
+	let pushModalOpen = $state(false);
+	let pushConfig = $state<PushServerConfig | null>(null);
+	let pushEnv = $state<PushEnvironment>(detectPushEnvironment());
+	let pushChecked = $state(false);
+
+	async function maybePromptIOSPush() {
+		const env = detectPushEnvironment();
+		pushEnv = env;
+		if (!env.isIOS || isPushPromptDismissed()) {
+			return;
+		}
+		try {
+			const [cfg, existing] = await Promise.all([
+				fetchPushConfig().catch(() => null),
+				getExistingPushSubscription().catch(() => null)
+			]);
+			if (!cfg) return;
+			pushConfig = cfg;
+			if (shouldShowPushOnboardingModal(env, cfg.enabled, Boolean(existing), isPushPromptDismissed())) {
+				pushModalOpen = true;
+			}
+		} catch {
+			// Non-fatal onboarding probe
+		}
+	}
+
 	onMount(() => {
 		theme.init();
 	});
@@ -30,10 +67,18 @@
 		}
 		void auth.ready().then(() => {
 			if (!auth.isAuthenticated) {
+				pushChecked = false;
+				pushModalOpen = false;
 				demo.resetOnLogout();
 				void goto('/login');
-			} else if (!demo.loaded && !demo.loading) {
-				void demo.load().catch(() => {});
+			} else {
+				if (!demo.loaded && !demo.loading) {
+					void demo.load().catch(() => {});
+				}
+				if (!pushChecked) {
+					pushChecked = true;
+					void maybePromptIOSPush();
+				}
 			}
 		});
 	});
@@ -229,4 +274,16 @@
 	{#if auth.isAuthenticated && demo.isDemo}
 		<DemoSimulatorDrawer />
 	{/if}
+
+	<PushPromptModal
+		open={pushModalOpen}
+		vapidPublicKey={pushConfig?.vapid_public_key ?? ''}
+		serverEnabled={pushConfig?.enabled ?? false}
+		environment={pushEnv}
+		onClose={() => (pushModalOpen = false)}
+		onDismiss={() => dismissPushPrompt()}
+		onSubscribed={() => {
+			dismissPushPrompt();
+		}}
+	/>
 </div>
