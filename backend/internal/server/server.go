@@ -29,6 +29,7 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/schedules"
@@ -51,6 +52,7 @@ type Config struct {
 	// to loopback so no other pod can reach it.
 	MockSimpleFINListenAddr string
 	MockSimpleFINBaseURL    string
+	VAPID                   notifications.VAPIDConfig
 }
 
 func LoadConfig() Config {
@@ -106,6 +108,11 @@ func LoadConfig() Config {
 		mockBaseURL = mockBridgeBaseURLFor(bridgeListenAddr)
 	}
 
+	vapidCfg, err := notifications.LoadVAPIDConfigFromEnv()
+	if err != nil {
+		slog.Error("invalid or partial VAPID configuration; web push notifications disabled", "error", err)
+	}
+
 	return Config{
 		Port:                    port,
 		DatabaseURL:             databaseURL,
@@ -116,6 +123,7 @@ func LoadConfig() Config {
 		CORSAllowedOrigins:      parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		MockSimpleFINListenAddr: bridgeListenAddr,
 		MockSimpleFINBaseURL:    mockBaseURL,
+		VAPID:                   vapidCfg,
 	}
 }
 
@@ -128,6 +136,7 @@ type Server struct {
 	verifier     middleware.OIDCVerifier
 	temporal     client.Client
 	vault        crypto.Vault
+	push         notifications.PushService
 }
 
 // NewServer builds the API. temporal and vault are dependencies the process cannot do
@@ -149,6 +158,7 @@ func NewServer(
 		verifier:    verifier,
 		temporal:    temporalClient,
 		vault:       vault,
+		push:        notifications.NewWebPushService(pool, cfg.VAPID, nil),
 	}
 	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
@@ -207,6 +217,9 @@ func (s *Server) setupRoutes() {
 
 			// Settings & Demo Mode simulator routes
 			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal)
+
+			// Milestone 7: W3C Web Push notifications (opt-in via VAPID)
+			notifications.RegisterRoutes(protected, s.push)
 		})
 	}
 }
