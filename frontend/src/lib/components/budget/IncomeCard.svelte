@@ -84,7 +84,7 @@
 	async function handleAdd(e: SubmitEvent) {
 		e.preventDefault();
 		const parsed = Number(amount);
-		if (!name.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+		if (!name.trim() || !Number.isFinite(parsed) || parsed < 0) {
 			errorMsg = 'Enter a source name and an amount greater than $0.00.';
 			return;
 		}
@@ -243,7 +243,7 @@
 					<input
 						type="number"
 						step="0.01"
-						min="0.01"
+						min="0"
 						placeholder="2500.00"
 						aria-label="Income amount"
 						bind:value={amount}
