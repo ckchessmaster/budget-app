@@ -115,7 +115,7 @@ func TestToggleDemoSeedsSandboxUnderRLS(t *testing.T) {
 	ctx := context.Background()
 
 	provisioner := workspace.NewProvisioner()
-	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil)
+	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil, nil)
 
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)
@@ -209,7 +209,8 @@ func TestResetDemoRebuildsSandboxUnderRLS(t *testing.T) {
 	ctx := context.Background()
 
 	provisioner := workspace.NewProvisioner()
-	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil)
+	h := NewHandler(appPool, testVault(t), "http://127.0.0.1:8080", provisioner, nil, nil)
+	h.reset = inlineResetStarter{h: h}
 
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)
@@ -224,14 +225,11 @@ func TestResetDemoRebuildsSandboxUnderRLS(t *testing.T) {
 	ctx2 := context.WithValue(req.Context(), middleware.UserIDKey, userID)
 	rec := httptest.NewRecorder()
 	h.ResetDemo(rec, req.WithContext(ctx2))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reset status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("reset status = %d, want 202 (body: %s)", rec.Code, rec.Body.String())
 	}
 
-	var resetSettings toggleSettings
-	if err := json.Unmarshal(rec.Body.Bytes(), &resetSettings); err != nil {
-		t.Fatalf("reset body was not settings JSON: %v (%s)", err, rec.Body.String())
-	}
+	resetSettings := settingsAfterReset(t, h, userID)
 	if resetSettings.WorkspaceID == first.WorkspaceID {
 		t.Fatalf("reset kept workspace %s, want a freshly seeded sandbox", resetSettings.WorkspaceID)
 	}

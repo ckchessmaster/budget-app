@@ -86,11 +86,21 @@ type SimulatorStateResponse struct {
 	UnsyncedCount      int                    `json:"unsynced_count"`
 }
 
+// ResetWorkflow starts the durable demo sandbox reset and returns its workflow id.
+//
+// An interface rather than a direct call into the Temporal workflow packages: this package
+// already feeds the schedule helpers, which import the workflows, which import the
+// activities, which would need this package back for the seeder.
+type ResetWorkflow interface {
+	Start(ctx context.Context, scope temporalinternal.SyncScope, triggerSync bool) (string, error)
+}
+
 type Handler struct {
 	pool        *pgxpool.Pool
 	vault       crypto.Vault
 	mockBaseURL string
 	provisioner workspace.Provisioner
+	reset       ResetWorkflow
 
 	// temporal is the API's shared client. Bank sync is queued there, so the simulator
 	// must not dial a fresh connection per request, and must not pretend a sync started
@@ -104,6 +114,7 @@ func NewHandler(
 	mockBaseURL string,
 	provisioner workspace.Provisioner,
 	temporalClient client.Client,
+	reset ResetWorkflow,
 ) *Handler {
 	return &Handler{
 		pool:        pool,
@@ -111,6 +122,7 @@ func NewHandler(
 		mockBaseURL: mockBaseURL,
 		provisioner: provisioner,
 		temporal:    temporalClient,
+		reset:       reset,
 	}
 }
 
@@ -359,10 +371,35 @@ func (h *Handler) ToggleDemo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// ResetDemo tears the demo sandbox down and rebuilds it in a Temporal workflow.
+//
+// This used to be one request transaction that provisioned a workspace, flipped
+// demo_mode_enabled, deleted the old sandbox and re-seeded categories, accounts, bridge
+// state and a sealed connection. It was the slowest call in the app and the one most often
+// interrupted — by a deploy, a client cancel or an eviction — and a half-finished reset
+// left the sandbox in a state no user could dig themselves out of. It now answers 202 with
+// a workflow id and the browser polls the shared status endpoint.
 func (h *Handler) ResetDemo(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// The body is optional: the settings page resets with no payload at all.
+	var req struct {
+		TriggerSync bool `json:"trigger_sync"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid_request_body")
+			return
+		}
+	}
+
+	if h.reset == nil {
+		slog.Error("demo reset requested but no reset workflow is configured")
+		writeErr(w, http.StatusServiceUnavailable, "temporal_unavailable")
 		return
 	}
 
@@ -371,56 +408,35 @@ func (h *Handler) ResetDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := db.BeginWorkspaceTx(r.Context(), h.pool, userID)
+	var wsID uuid.UUID
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		return txErr
+	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_begin_transaction")
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-
-	// Switch the preference on before replacing the sandbox: the workspace policies hide a
-	// demo workspace until demo_mode_enabled is true, and the delete below has to be able to
-	// see the existing sandbox in order to remove it.
-	if _, err := tx.Exec(r.Context(), `
-		INSERT INTO user_preferences (user_id, demo_mode_enabled, updated_at)
-		VALUES ($1, TRUE, NOW())
-		ON CONFLICT (user_id) DO UPDATE
-		SET demo_mode_enabled = TRUE,
-		    updated_at = NOW()
-	`, userID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_update_demo_preference")
+		writeErr(w, http.StatusNotFound, "workspace_not_found")
 		return
 	}
 
-	if _, err := tx.Exec(r.Context(), `
-		DELETE FROM workspaces
-		WHERE id IN (
-			SELECT w.id
-			FROM workspaces w
-			JOIN workspace_members wm ON wm.workspace_id = w.id
-			WHERE wm.user_id = $1 AND w.is_demo = TRUE
-		)
-	`, userID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_delete_demo_workspace")
-		return
-	}
-
-	if _, err := SeedDemoWorkspaceTx(r.Context(), tx, userID, h.mockBaseURL, h.vault); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_seed_demo_workspace")
-		return
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_commit_demo_reset")
-		return
-	}
-
-	resp, err := h.loadSettingsResponse(r.Context(), userID)
+	workflowID, err := h.reset.Start(r.Context(),
+		temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, req.TriggerSync)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_load_settings")
+		if errors.Is(err, temporalinternal.ErrWorkflowAlreadyRunning) {
+			// Two resets at once would interleave delete and seed against the same
+			// sandbox. The second caller is told to wait rather than queueing a stampede.
+			writeErr(w, http.StatusConflict, "demo_reset_already_running")
+			return
+		}
+		slog.Error("failed to start demo reset workflow", "workspace_id", wsID, "error", err)
+		writeErr(w, http.StatusBadGateway, "failed_to_start_demo_reset")
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"workflow_id": workflowID,
+		"status":      "accepted",
+	})
 }
 
 func (h *Handler) GetSimulatorState(w http.ResponseWriter, r *http.Request) {

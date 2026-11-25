@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/demo"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
@@ -78,6 +79,7 @@ func main() {
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
 	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterWorkflow(workflows.SimpleFINClaimWorkflow)
+	w.RegisterWorkflow(workflows.DemoResetWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:                  pool,
 		Client:                simplefin.NewClient(nil),
@@ -91,6 +93,20 @@ func main() {
 		Pool:   pool,
 		Client: simplefin.NewClient(nil),
 		Vault:  vault,
+	})
+	// The worker builds demo access URLs, so it needs the same bridge address the API
+	// dials. The chart sets this in the shared ConfigMap; the fallback only matters for a
+	// local run where the worker and the API share a host.
+	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
+	if mockBaseURL == "" {
+		mockBaseURL = demo.DefaultMockBridgeBaseURL
+	}
+	w.RegisterActivity(&activities.DemoActivities{
+		Pool:        pool,
+		Vault:       vault,
+		MockBaseURL: mockBaseURL,
+		Temporal:    c,
+		SeedSandbox: demo.SeedDemoWorkspaceTxWithID,
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)

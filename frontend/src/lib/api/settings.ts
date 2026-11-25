@@ -1,4 +1,5 @@
 import { getAppConfig } from '$lib/config';
+import { fetchWorkflowStatus } from '$lib/api/simplefin';
 import { auth } from '$lib/stores/auth.svelte';
 
 export interface SimpleFINConnectionStatus {
@@ -125,16 +126,70 @@ export async function toggleDemoMode(enabled: boolean): Promise<SettingsResponse
 	return res.json();
 }
 
-export async function resetDemoMode(): Promise<SettingsResponse> {
+const DEMO_RESET_POLL_INTERVAL_MS = 1000;
+const DEMO_RESET_TIMEOUT_MS = 240_000;
+
+export interface DemoResetAccepted {
+	workflow_id: string;
+	status: string;
+}
+
+export interface DemoResetResult {
+	workspace_id: string;
+	categories_seeded: number;
+	accounts_seeded: number;
+	connection_ready: boolean;
+	syncs_cancelled?: number;
+}
+
+/**
+ * Tear the demo sandbox down and rebuild it, resolving once the new one exists.
+ *
+ * Reset used to be one long request that either finished or left the sandbox half
+ * rebuilt — a deploy, a cancelled tab or an eviction could all land mid-flight. It now
+ * starts a Temporal workflow and this function polls it, so the caller still gets a
+ * settings response describing the finished sandbox while the work survives the tab
+ * closing. A second reset while one is running is refused with 409 rather than queued.
+ */
+export async function resetDemoMode(triggerSync = false): Promise<SettingsResponse> {
+	const started = await startDemoReset(triggerSync);
+	await waitForDemoReset(started.workflow_id);
+	return fetchSettings();
+}
+
+async function startDemoReset(triggerSync: boolean): Promise<DemoResetAccepted> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/demo/reset`, {
 		method: 'POST',
-		headers: await authHeaders()
+		headers: await authHeaders(),
+		body: JSON.stringify({ trigger_sync: triggerSync })
 	});
+	if (res.status === 409) {
+		throw new Error('A demo reset is already running. Wait for it to finish and try again.');
+	}
 	if (!res.ok) {
 		throw new Error(await parseError(res, 'Failed to reset demo mode'));
 	}
 	return res.json();
+}
+
+async function waitForDemoReset(workflowId: string): Promise<DemoResetResult | undefined> {
+	const deadline = Date.now() + DEMO_RESET_TIMEOUT_MS;
+	while (Date.now() < deadline) {
+		const status = await fetchWorkflowStatus<DemoResetResult>(workflowId);
+		if (status.status === 'COMPLETED') {
+			return status.result;
+		}
+		if (status.status === 'FAILED') {
+			throw new Error(status.last_error || 'Demo reset failed');
+		}
+		await sleep(DEMO_RESET_POLL_INTERVAL_MS);
+	}
+	throw new Error('Timed out waiting for the demo sandbox to rebuild');
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function fetchSimulatorState(): Promise<SimulatorStateResponse> {

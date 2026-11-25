@@ -58,7 +58,7 @@ cluster.
 
 ### What is orchestrated today
 
-Three workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
+Four workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
 
 - `BankSyncWorkflow` in
   [`backend/internal/temporal/workflows/bank_sync.go`](backend/internal/temporal/workflows/bank_sync.go):
@@ -76,9 +76,24 @@ Three workflows are registered on task queue `budget-sync-queue` in namespace `b
   `POST /api/v1/bank/simplefin/claim` returns 202 with a workflow id and the browser polls
   `GET /api/v1/bank/workflow-status/{workflow_id}`, which serves every workflow and passes the
   result through as raw JSON.
+- `DemoResetWorkflow` in
+  [`backend/internal/temporal/workflows/demo_reset.go`](backend/internal/temporal/workflows/demo_reset.go):
+  tears the demo sandbox down and rebuilds it. `POST /api/v1/demo/reset` answers 202 and the
+  browser polls. Its ID is `demo-reset-<workspaceID>` with no timestamp, so Temporal itself
+  refuses a second concurrent reset and the endpoint returns 409.
 
 Claim and fetch are separate activities because a claim token is single-use at the bank: one
 activity doing both would re-claim on every fetch retry.
+
+Two rules the reset workflow encodes that are easy to break by reordering:
+
+- `demo_mode_enabled` must be true before anything is deleted or seeded. The workspace
+  policies hide a demo workspace until it is set, so a delete issued first cannot see the
+  rows it removes, and seeding first fails on `workspace_settings`.
+- The sandbox workspace ID is derived with `uuid.NewSHA1(namespace, workflowID)`, not
+  generated. Workflow code must stay deterministic, and a retry has to rebuild the sandbox
+  under the same key rather than stack a second one. Anything that generates an ID inside a
+  retried activity has the same problem.
 
 Triggers for bank sync are `POST /api/v1/bank/sync-now`, the demo simulator's `syncNow` flag, and
 a per-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
@@ -155,6 +170,12 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
     new claim fails. If you need to pass a secret to a workflow, stage it and pass the scope;
     do not add a token field to an input struct. `TestSimpleFINClaimWorkflowInputCarriesNoCredential`
     fails if one appears.
+
+    The same seam applies to packages that need to start a workflow but are already imported
+    by something in the Temporal chain. `internal/demo` and `internal/simplefin` each declare
+    a one-method interface (`ResetWorkflow`, `ClaimWorkflow`) implemented by a starter in
+    `internal/temporal/schedules` and wired in by the server. Importing the workflow packages
+    from those API packages closes an import cycle.
 
 ### Verifying a Temporal change
 
