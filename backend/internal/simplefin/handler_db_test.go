@@ -36,6 +36,10 @@ func (r *recordingClaim) Start(_ context.Context, scope temporalinternal.SyncSco
 	return r.runID, nil
 }
 
+func (r *recordingClaim) Discover(_ context.Context, scope temporalinternal.SyncScope) (string, error) {
+	return r.Start(context.Background(), scope)
+}
+
 func openHandlerTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
