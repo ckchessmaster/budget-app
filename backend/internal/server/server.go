@@ -331,8 +331,7 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 // knows which workflow it started. The old /bank/sync-status path stays routed to this
 // handler so a cached frontend bundle keeps working.
 //
-// Authorization is the workflow ID containing the caller's workspace ID, which every
-// workflow ID in this app embeds. That is deliberately checked before Temporal is
+// Authorization is mayReadWorkflowStatus below, checked deliberately before Temporal is
 // contacted, so one workspace cannot probe another's history by guessing IDs.
 func (s *Server) handleWorkflowStatus(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
@@ -357,7 +356,7 @@ func (s *Server) handleWorkflowStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "workspace_not_found"}`, http.StatusNotFound)
 		return
 	}
-	if !strings.Contains(workflowID, wsID.String()) {
+	if !mayReadWorkflowStatus(workflowID, wsID) {
 		http.Error(w, `{"error": "workflow_not_found"}`, http.StatusNotFound)
 		return
 	}
@@ -535,4 +534,24 @@ func mockBridgeBaseURLFor(listenAddr string) string {
 	}
 
 	return "http://" + net.JoinHostPort(dialHost, port)
+}
+
+// mayReadWorkflowStatus decides whether the caller of the shared status endpoint may see
+// this workflow.
+//
+// Every workflow ID in this app embeds the workspace it runs for, so a substring test
+// against the caller's active workspace is the rule. The demo reset is the workflow that
+// breaks it: it deletes the sandbox named in its own ID and seeds a replacement under
+// temporalinternal.DemoSandboxID, so the instant the reset lands, the caller's workspace is
+// the derived one and the embedded workspace no longer exists. Authorizing only the exact
+// derivation keeps the reset readable by whoever started it — an attacker would have to own
+// a workspace whose ID is the SHA-1 of someone else's workflow ID — without loosening any
+// other workflow. Without it the reset's own completion poll answers 404, which the demo UI
+// reports as a failed reset that actually succeeded.
+func mayReadWorkflowStatus(workflowID string, activeWorkspaceID uuid.UUID) bool {
+	if strings.Contains(workflowID, activeWorkspaceID.String()) {
+		return true
+	}
+	return strings.HasPrefix(workflowID, temporalinternal.DemoResetWorkflowIDPrefix) &&
+		temporalinternal.DemoSandboxID(workflowID) == activeWorkspaceID
 }

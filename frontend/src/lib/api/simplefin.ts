@@ -117,6 +117,20 @@ export async function startSimpleFINClaim(setupToken: string): Promise<ClaimAcce
 	return res.json();
 }
 
+/**
+ * A status poll that the API refused, carrying the HTTP status so a caller can tell
+ * "not answerable yet" apart from "gone wrong".
+ */
+export class WorkflowStatusError extends Error {
+	readonly status: number;
+
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = 'WorkflowStatusError';
+		this.status = status;
+	}
+}
+
 export async function fetchWorkflowStatus<T>(workflowId: string): Promise<WorkflowStatus<T>> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/workflow-status/${encodeURIComponent(workflowId)}`, {
@@ -124,7 +138,10 @@ export async function fetchWorkflowStatus<T>(workflowId: string): Promise<Workfl
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));
-		throw new Error(err.error || `Failed to fetch workflow status (${res.status})`);
+		throw new WorkflowStatusError(
+			err.error || `Failed to fetch workflow status (${res.status})`,
+			res.status
+		);
 	}
 	return res.json();
 }

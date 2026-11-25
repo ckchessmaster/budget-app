@@ -1,5 +1,5 @@
 import { getAppConfig } from '$lib/config';
-import { fetchWorkflowStatus } from '$lib/api/simplefin';
+import { fetchWorkflowStatus, WorkflowStatusError, type WorkflowStatus } from '$lib/api/simplefin';
 import { auth } from '$lib/stores/auth.svelte';
 
 export interface SimpleFINConnectionStatus {
@@ -176,7 +176,22 @@ async function startDemoReset(triggerSync: boolean): Promise<DemoResetAccepted> 
 async function waitForDemoReset(workflowId: string): Promise<DemoResetResult | undefined> {
 	const deadline = Date.now() + DEMO_RESET_TIMEOUT_MS;
 	while (Date.now() < deadline) {
-		const status = await fetchWorkflowStatus<DemoResetResult>(workflowId);
+		let status: WorkflowStatus<DemoResetResult>;
+		try {
+			status = await fetchWorkflowStatus<DemoResetResult>(workflowId);
+		} catch (err) {
+			// A reset deletes the sandbox named in its own workflow ID and seeds the
+			// replacement under a derived one, so there is a window — one activity hop, or
+			// a seed retrying with backoff — in which the caller has no demo workspace at
+			// all and the status endpoint answers 404. The workflow is still running and it
+			// survives this tab closing, so keep polling instead of reporting a failure that
+			// resolves itself on the next tick.
+			if (err instanceof WorkflowStatusError && err.status === 404) {
+				await sleep(DEMO_RESET_POLL_INTERVAL_MS);
+				continue;
+			}
+			throw err;
+		}
 		if (status.status === 'COMPLETED') {
 			return status.result;
 		}

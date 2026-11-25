@@ -177,9 +177,18 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
    looks like a broken bridge and retries forever. `FetchSimpleFINDataActivity` rebases any
    stored `/mock-simplefin/` URL onto the worker's `MOCK_SIMPLEFIN_BASE_URL`
    (`rebaseMockBridgeURL`), keeping the path and credential pair. Never rewrite a real bank URL.
-7. **Workflow IDs embed the workspace ID.** `handleBankSyncStatus` authorizes a status read by
+7. **Workflow IDs embed the workspace ID.** `handleWorkflowStatus` authorizes a status read by
    checking that the ID contains the caller's workspace. Preserve that invariant for any new
    workflow, or fix the authorization deliberately rather than by accident.
+   `DemoResetWorkflow` is the case the substring rule cannot cover: it deletes the sandbox
+   named in its own ID and seeds the replacement under a derived one
+   (`temporalinternal.DemoSandboxID`, SHA-1 of the workflow ID), so the caller's workspace
+   stops appearing in the ID the moment the reset lands and its own completion poll answers
+   404 — a reset that worked reported as a failure. `mayReadWorkflowStatus` in
+   [`backend/internal/server/server.go`](backend/internal/server/server.go) accepts exactly
+   that derivation, and the demo UI polls through the shorter window where the user has no
+   demo workspace at all. Any workflow that replaces the workspace its ID names needs the
+   same deliberate treatment.
 8. **Do not orchestrate single-transaction CRUD.** Categories, accounts, budget rows, and
    settings are one ACID transaction with no outbound I/O and a result the UI renders
    immediately. A workflow there buys a durable record of something that either committed or

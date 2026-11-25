@@ -96,4 +96,60 @@ describe('demo reset is asynchronous', () => {
 		await vi.advanceTimersByTimeAsync(10);
 		await assertion;
 	});
+
+	// A reset tears the sandbox down before seeding its replacement, so the status endpoint
+	// can answer 404 for a moment even though the workflow is healthy. That window is not a
+	// failed reset.
+	it('keeps polling through the window where the sandbox does not exist yet', async () => {
+		const urls: string[] = [];
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			urls.push(url);
+
+			if (url.endsWith('/api/v1/demo/reset')) {
+				return json(202, { workflow_id: 'demo-reset-ws-3', status: 'accepted' });
+			}
+			if (url.includes('/api/v1/bank/workflow-status/demo-reset-ws-3')) {
+				const polls = urls.filter((u) => u.includes('workflow-status')).length;
+				if (polls <= 1) return json(200, { workflow_id: 'demo-reset-ws-3', status: 'RUNNING' });
+				if (polls <= 3) return json(404, { error: 'workspace_not_found' });
+				return json(200, {
+					workflow_id: 'demo-reset-ws-3',
+					status: 'COMPLETED',
+					result: {
+						workspace_id: 'sandbox-3',
+						categories_seeded: 11,
+						accounts_seeded: 4,
+						connection_ready: true
+					}
+				});
+			}
+			if (url.endsWith('/api/v1/settings')) {
+				return json(200, { workspace_id: 'sandbox-3', workspace_name: 'Demo Sandbox', is_demo: true, demo_mode_enabled: true });
+			}
+			return json(404, { error: 'unexpected ' + url });
+		}) as unknown as typeof fetch;
+
+		const promise = resetDemoMode();
+		await vi.advanceTimersByTimeAsync(10_000);
+		const settings = await promise;
+
+		expect(settings.workspace_id).toBe('sandbox-3');
+		expect(urls.filter((u) => u.includes('workflow-status'))).toHaveLength(4);
+	});
+
+	// A reset that never becomes readable is still an error, reported once the wait gives up.
+	it('gives up on a reset that stays unreadable', async () => {
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/api/v1/demo/reset')) {
+				return json(202, { workflow_id: 'demo-reset-ws-4', status: 'accepted' });
+			}
+			return json(404, { error: 'workflow_not_found' });
+		}) as unknown as typeof fetch;
+
+		const assertion = expect(resetDemoMode()).rejects.toThrow(/Timed out waiting for the demo sandbox/);
+		await vi.advanceTimersByTimeAsync(250_000);
+		await assertion;
+	});
 });

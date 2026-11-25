@@ -33,7 +33,7 @@ func (s DemoResetStarter) Start(
 	// ID is already running, which is exactly the "one reset at a time" rule the endpoint
 	// needs; once a reset closes, the same ID is available again for the next one.
 	run, err := s.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
-		ID:        fmt.Sprintf("demo-reset-%s", scope.WorkspaceID.String()),
+		ID:        temporalinternal.DemoResetWorkflowIDPrefix + scope.WorkspaceID.String(),
 		TaskQueue: temporalinternal.TaskQueue,
 	}, workflows.DemoResetWorkflow, workflows.DemoResetInput{
 		SyncScope:   scope,
