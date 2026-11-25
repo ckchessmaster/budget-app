@@ -137,6 +137,7 @@ type Server struct {
 	temporal     client.Client
 	vault        crypto.Vault
 	push         notifications.PushService
+	evaluator    notifications.Evaluator
 }
 
 // NewServer builds the API. temporal and vault are dependencies the process cannot do
@@ -150,6 +151,7 @@ func NewServer(
 	temporalClient client.Client,
 	vault crypto.Vault,
 ) *Server {
+	pushSvc := notifications.NewWebPushService(pool, cfg.VAPID, nil)
 	s := &Server{
 		cfg:         cfg,
 		pool:        pool,
@@ -158,7 +160,8 @@ func NewServer(
 		verifier:    verifier,
 		temporal:    temporalClient,
 		vault:       vault,
-		push:        notifications.NewWebPushService(pool, cfg.VAPID, nil),
+		push:        pushSvc,
+		evaluator:   notifications.NewEvaluator(pool, pushSvc),
 	}
 	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
@@ -208,7 +211,7 @@ func (s *Server) setupRoutes() {
 
 			// Milestone 3: Accounts, solvency, debt paydown, and transactions
 			account.RegisterRoutes(protected, s.pool)
-			transaction.RegisterRoutes(protected, s.pool)
+			transaction.RegisterRoutes(protected, s.pool, s.evaluator)
 
 			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
 			simplefin.RegisterRoutes(protected, s.pool, s.vault)

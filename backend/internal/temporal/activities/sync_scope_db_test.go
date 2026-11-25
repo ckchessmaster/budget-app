@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 )
 
 // recordingClient reports whether the sync actually reached the bank, which is what makes
@@ -175,6 +178,120 @@ func TestFetchSimpleFINDataActivityIsScopedToTheSyncUser(t *testing.T) {
 		}
 		if len(client.calls) != 0 {
 			t.Fatalf("unscoped sync reached the bank with %v", client.calls)
+		}
+	})
+}
+
+type scopeRecordingPush struct {
+	sent []notifications.NotificationPayload
+}
+
+func (p *scopeRecordingPush) Enabled() bool     { return true }
+func (p *scopeRecordingPush) PublicKey() string { return "pub" }
+func (p *scopeRecordingPush) Subscribe(context.Context, uuid.UUID, notifications.PushSubscriptionDTO) error {
+	return nil
+}
+func (p *scopeRecordingPush) Unsubscribe(context.Context, uuid.UUID, string) error {
+	return nil
+}
+func (p *scopeRecordingPush) SendNotification(_ context.Context, _ uuid.UUID, payload notifications.NotificationPayload) error {
+	p.sent = append(p.sent, payload)
+	return nil
+}
+
+func TestEvaluateNotificationsActivityIsScopedToTheSyncUser(t *testing.T) {
+	adminPool, appPool := openScopeTestDB(t)
+	ctx := context.Background()
+
+	ownerID, ownerWS := provisionWorkspace(t, adminPool, appPool)
+	intruderID, _ := provisionWorkspace(t, adminPool, appPool)
+
+	now := time.Now().UTC()
+	txDate := now.Format("2006-01-02")
+
+	if err := db.WithWorkspaceTx(ctx, appPool, ownerID, func(tx pgx.Tx) error {
+		var acctID, catID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO accounts (workspace_id, name, type, current_balance, is_on_budget)
+			VALUES ($1, 'Checking', 'checking', 1000.00, TRUE)
+			RETURNING id
+		`, ownerWS).Scan(&acctID); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO categories (workspace_id, name, group_name, monthly_budget, sort_order)
+			VALUES ($1, 'Dining', 'Fun', 100.00, 1)
+			RETURNING id
+		`, ownerWS).Scan(&catID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO transactions (workspace_id, account_id, category_id, origin, status, amount, merchant_raw, transaction_date, is_cleared)
+			VALUES ($1, $2, $3, 'BANK_FEED', 'POSTED', -85.00, 'Bistro', $4::date, TRUE)
+		`, ownerWS, acctID, catID, txDate)
+		return err
+	}); err != nil {
+		t.Fatalf("failed to seed owner spending state: %v", err)
+	}
+
+	t.Run("the owning identity dispatches alert and cooldown suppresses repeat", func(t *testing.T) {
+		push := &scopeRecordingPush{}
+		eval := notifications.NewEvaluator(appPool, push).WithClock(func() time.Time { return now })
+		acts := &BankActivities{Pool: appPool, NotificationEvaluator: eval}
+
+		res1, err := acts.EvaluateNotificationsActivity(ctx, temporalinternal.SyncScope{
+			WorkspaceID: ownerWS,
+			UserID:      ownerID,
+		})
+		if err != nil {
+			t.Fatalf("EvaluateNotificationsActivity #1 error: %v", err)
+		}
+		if res1.SpendingAlertsSent != 1 || len(push.sent) != 1 {
+			t.Fatalf("expected 1 alert sent on first pass, got res=%+v sent=%d", res1, len(push.sent))
+		}
+
+		res2, err := acts.EvaluateNotificationsActivity(ctx, temporalinternal.SyncScope{
+			WorkspaceID: ownerWS,
+			UserID:      ownerID,
+		})
+		if err != nil {
+			t.Fatalf("EvaluateNotificationsActivity #2 error: %v", err)
+		}
+		if res2.SpendingAlertsSent != 0 || res2.SuppressedByCooldown != 1 {
+			t.Fatalf("expected cooldown suppression on repeat, got %+v", res2)
+		}
+	})
+
+	t.Run("another tenant cannot trigger notifications for owner workspace", func(t *testing.T) {
+		push := &scopeRecordingPush{}
+		eval := notifications.NewEvaluator(appPool, push).WithClock(func() time.Time { return now.Add(25 * time.Hour) })
+		acts := &BankActivities{Pool: appPool, NotificationEvaluator: eval}
+
+		res, err := acts.EvaluateNotificationsActivity(ctx, temporalinternal.SyncScope{
+			WorkspaceID: ownerWS,
+			UserID:      intruderID,
+		})
+		if err != nil {
+			t.Fatalf("EvaluateNotificationsActivity intruder error: %v", err)
+		}
+		if res.TotalSent() != 0 || len(push.sent) != 0 {
+			t.Fatalf("intruder dispatched alerts on owner workspace: res=%+v sent=%d", res, len(push.sent))
+		}
+	})
+
+	t.Run("identity-less sync dispatches zero notifications", func(t *testing.T) {
+		push := &scopeRecordingPush{}
+		eval := notifications.NewEvaluator(appPool, push).WithClock(func() time.Time { return now.Add(25 * time.Hour) })
+		acts := &BankActivities{Pool: appPool, NotificationEvaluator: eval}
+
+		res, err := acts.EvaluateNotificationsActivity(ctx, temporalinternal.SyncScope{
+			WorkspaceID: ownerWS,
+		})
+		if err != nil {
+			t.Fatalf("EvaluateNotificationsActivity unscoped error: %v", err)
+		}
+		if res.TotalSent() != 0 || len(push.sent) != 0 {
+			t.Fatalf("unscoped sync dispatched alerts: res=%+v sent=%d", res, len(push.sent))
 		}
 	})
 }

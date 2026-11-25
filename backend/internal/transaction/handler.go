@@ -1,13 +1,16 @@
 package transaction
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -16,12 +19,31 @@ import (
 )
 
 type Handler struct {
-	pool *pgxpool.Pool
-	svc  Service
+	pool      *pgxpool.Pool
+	svc       Service
+	evaluator notifications.Evaluator
 }
 
-func NewHandler(pool *pgxpool.Pool, svc Service) *Handler {
-	return &Handler{pool: pool, svc: svc}
+func NewHandler(pool *pgxpool.Pool, svc Service, evaluator ...notifications.Evaluator) *Handler {
+	var eval notifications.Evaluator
+	if len(evaluator) > 0 {
+		eval = evaluator[0]
+	}
+	return &Handler{pool: pool, svc: svc, evaluator: eval}
+}
+
+func (h *Handler) triggerNotificationEval(ctx context.Context, workspaceID, userID uuid.UUID) {
+	if h.evaluator == nil || workspaceID == uuid.Nil || userID == uuid.Nil {
+		return
+	}
+	evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := h.evaluator.EvaluateWorkspace(evalCtx, workspaceID, userID); err != nil {
+		slog.Warn("post-transaction notification evaluation failed",
+			"workspace_id", workspaceID,
+			"user_id", userID,
+			"error", err)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -136,6 +158,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.triggerNotificationEval(r.Context(), created.WorkspaceID, userID)
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -173,6 +196,7 @@ func (h *Handler) UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.triggerNotificationEval(r.Context(), updated.WorkspaceID, userID)
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -219,6 +243,7 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 
 	results := make([]SyncItemResult, 0, len(req.Items))
 	hasFailures := false
+	var syncedWorkspaceID uuid.UUID
 
 	for _, item := range req.Items {
 		txDate, parseErr := time.Parse("2006-01-02", item.TransactionDate)
@@ -232,6 +257,7 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 
 		isCleared := false
 		var createdID uuid.UUID
+		var createdWSID uuid.UUID
 		txErr := db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
 			created, err := h.svc.CreateTransaction(r.Context(), tx, CreateSplitTransactionRequest{
 				AccountID:       item.AccountID,
@@ -248,6 +274,7 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 				return err
 			}
 			createdID = created.ID
+			createdWSID = created.WorkspaceID
 			return nil
 		})
 		if txErr != nil {
@@ -258,6 +285,9 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 				Error:   txErr.Error(),
 			})
 		} else {
+			if syncedWorkspaceID == uuid.Nil {
+				syncedWorkspaceID = createdWSID
+			}
 			idCopy := createdID
 			results = append(results, SyncItemResult{
 				LocalID:       item.LocalID,
@@ -265,6 +295,10 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 				TransactionID: &idCopy,
 			})
 		}
+	}
+
+	if syncedWorkspaceID != uuid.Nil {
+		h.triggerNotificationEval(r.Context(), syncedWorkspaceID, userID)
 	}
 
 	status := http.StatusOK
