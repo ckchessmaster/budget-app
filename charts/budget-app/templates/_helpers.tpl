@@ -60,6 +60,37 @@ key: they have to decrypt the same simplefin_connections rows.
 {{- end -}}
 
 {{/*
+Secret holding VAPID credentials when vapid.enabled is true.
+*/}}
+{{- define "budget-app.vapidSecretName" -}}
+{{- if trim (.Values.vapid.existingSecret | default "") -}}
+{{- trim .Values.vapid.existingSecret -}}
+{{- else -}}
+{{- printf "%s-vapid" (include "budget-app.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Secret and key holding DATABASE_URL for the backup CronJob.
+Defaults to the chart's database Secret when backup.database.existingSecret is empty.
+*/}}
+{{- define "budget-app.backupDatabaseSecretName" -}}
+{{- if trim (.Values.backup.database.existingSecret | default "") -}}
+{{- trim .Values.backup.database.existingSecret -}}
+{{- else -}}
+{{- include "budget-app.secretName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "budget-app.backupDatabaseSecretKey" -}}
+{{- if trim (.Values.backup.database.existingSecret | default "") -}}
+{{- .Values.backup.database.secretKey -}}
+{{- else -}}
+{{- .Values.database.secretKey -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Credentials shared by the API and the Temporal sync worker.
 */}}
 {{- define "budget-app.syncEnv" -}}
@@ -73,4 +104,25 @@ Credentials shared by the API and the Temporal sync worker.
     secretKeyRef:
       name: {{ include "budget-app.vaultSecretName" . }}
       key: {{ .Values.vault.secretKey }}
+{{- if .Values.vapid.enabled }}
+{{- if not (trim (.Values.vapid.publicKey | default "")) }}
+- name: VAPID_PUBLIC_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.vapidSecretName" . }}
+      key: {{ .Values.vapid.publicKeySecretKey }}
+{{- end }}
+- name: VAPID_PRIVATE_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.vapidSecretName" . }}
+      key: {{ .Values.vapid.privateKeySecretKey }}
+{{- if not (trim (.Values.vapid.subject | default "")) }}
+- name: VAPID_SUBJECT
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.vapidSecretName" . }}
+      key: {{ .Values.vapid.subjectSecretKey }}
+{{- end }}
+{{- end }}
 {{- end -}}

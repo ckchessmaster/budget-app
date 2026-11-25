@@ -20,6 +20,24 @@ data:
 {{- if and .Values.oidc.enforceAudience (empty (trim .Values.oidc.clientId | default "")) }}
 {{- fail "oidc.clientId is required while oidc.enforceAudience is true: it is the audience the API demands in each token's aud claim. Set oidc.clientId to this application's OIDC client ID, or set oidc.enforceAudience=false to skip only the audience check." }}
 {{- end }}
+{{- if .Values.vapid.enabled }}
+{{- $vapidExistingSecret := trim (.Values.vapid.existingSecret | default "") }}
+{{- $vapidPrivateKey := trim (.Values.vapid.privateKey | default "") }}
+{{- $vapidPublicKey := trim (.Values.vapid.publicKey | default "") }}
+{{- $vapidSubject := trim (.Values.vapid.subject | default "") }}
+{{- if and (not $vapidPrivateKey) (not $vapidExistingSecret) }}
+{{- fail "vapid.enabled is true, so vapid.existingSecret (recommended) or vapid.privateKey is required for VAPID_PRIVATE_KEY." }}
+{{- end }}
+{{- if and (not $vapidPublicKey) (not $vapidExistingSecret) }}
+{{- fail "vapid.enabled is true, so vapid.publicKey or vapid.existingSecret is required for VAPID_PUBLIC_KEY." }}
+{{- end }}
+{{- if and (not $vapidSubject) (not $vapidExistingSecret) }}
+{{- fail "vapid.enabled is true, so vapid.subject or vapid.existingSecret is required for VAPID_SUBJECT." }}
+{{- end }}
+{{- if and $vapidSubject (not (or (hasPrefix "mailto:" $vapidSubject) (hasPrefix "https://" $vapidSubject))) }}
+{{- fail "vapid.subject must start with mailto: or https:// (RFC 8292)." }}
+{{- end }}
+{{- end }}
   OIDC_ISSUER_URL: {{ .Values.oidc.issuerUrl | quote }}
   OIDC_AUTHORITY: {{ .Values.oidc.authority | quote }}
   OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
@@ -45,3 +63,11 @@ data:
   API_BASE_URL: {{ .Values.frontend.apiBaseUrl | quote }}
   PORT: {{ .Values.backend.port | quote }}
   DB_MAX_CONNS: {{ .Values.backend.dbMaxConns | quote }}
+  {{- if .Values.vapid.enabled }}
+  {{- if trim (.Values.vapid.publicKey | default "") }}
+  VAPID_PUBLIC_KEY: {{ trim .Values.vapid.publicKey | quote }}
+  {{- end }}
+  {{- if trim (.Values.vapid.subject | default "") }}
+  VAPID_SUBJECT: {{ trim .Values.vapid.subject | quote }}
+  {{- end }}
+  {{- end }}

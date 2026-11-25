@@ -100,3 +100,63 @@ ingress:
   hosts:
     - host: budget.example.com
   tls: []
+
+vapid:
+  # Opt-in W3C Web Push (RFC 8292). Disabled by default so installs without push
+  # credentials boot cleanly. When enabled, both the API and the Temporal sync worker
+  # receive VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT.
+  enabled: false
+  # Public VAPID key (URL-safe base64) and RFC 8292 subject (mailto:... or https://...).
+  # When vapid.enabled=true, set these inline here or store them in vapid.existingSecret.
+  publicKey: ""
+  subject: ""
+  # Private VAPID key (URL-safe base64). Prefer vapid.existingSecret over setting this
+  # inline; never commit a real private key to values.yaml.
+  privateKey: ""
+  # Existing Secret holding VAPID credentials (recommended when enabled=true).
+  existingSecret: ""
+  publicKeySecretKey: VAPID_PUBLIC_KEY
+  privateKeySecretKey: VAPID_PRIVATE_KEY
+  subjectSecretKey: VAPID_SUBJECT
+
+backup:
+  # Opt-in encrypted PostgreSQL backup CronJob (pg_dump | gzip -9 | age | rclone).
+  # Disabled by default; enabling it requires backup.agePublicKey (age1... public key
+  # only; private keys are refused) and backup.rclone.existingSecret.
+  enabled: false
+  image:
+    repository: ghcr.io/ckchessmaster/budget-backup
+    tag: latest
+    pullPolicy: IfNotPresent
+  schedule: "0 2 * * *"
+  timeZone: ""
+  suspend: false
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  # Asymmetric age public recipient key (age1..., 62 chars). Never put AGE-SECRET-KEY-*
+  # in cluster config or Secrets; keep the private decryption key offline.
+  agePublicKey: ""
+  prefix: "budget_backup"
+  tmpSizeLimit: 1Gi
+  rclone:
+    # Required when backup.enabled=true: existing Secret containing rclone.conf.
+    existingSecret: ""
+    secretKey: rclone.conf
+    remote: "gdrive:HomelabBackups/BudgetApp/"
+    retries: 3
+  database:
+    # Optional override Secret for backup DATABASE_URL (e.g. a dedicated backup role).
+    # Defaults to the chart's database Secret when empty.
+    existingSecret: ""
+    secretKey: "DATABASE_URL"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
