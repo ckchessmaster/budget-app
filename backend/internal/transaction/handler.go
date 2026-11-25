@@ -204,7 +204,57 @@ func (h *Handler) UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "transaction_not_found")
 			return
 		}
+		if errors.Is(err, ErrCannotSplitTransaction) {
+			writeErr(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "failed_to_update_transaction")
+		return
+	}
+
+	h.triggerNotificationEval(r.Context(), updated.WorkspaceID, userID)
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) ReplaceSplits(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_transaction_id")
+		return
+	}
+
+	var req ReplaceSplitsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+
+	var updated *Transaction
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		updated, txErr = h.svc.ReplaceSplits(r.Context(), tx, id, req)
+		return txErr
+	})
+	if err != nil {
+		if errors.Is(err, ErrTransactionNotFound) {
+			writeErr(w, http.StatusNotFound, "transaction_not_found")
+			return
+		}
+		if errors.Is(err, ErrSplitSumMismatch) ||
+			errors.Is(err, ErrSplitTooFewItems) ||
+			errors.Is(err, ErrSplitSignMismatch) ||
+			errors.Is(err, ErrSplitCategoryRequired) ||
+			errors.Is(err, ErrCannotSplitTransaction) {
+			writeErr(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "failed_to_replace_splits")
 		return
 	}
 

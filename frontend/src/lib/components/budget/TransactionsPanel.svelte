@@ -2,12 +2,17 @@
 	import type { OfflineTransaction } from '$lib/offline/db';
 	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
 	import type {
+		ApplySimilarPayload,
+		CategorizationSuggestion
+	} from '$lib/types/categorization';
+	import type {
 		AccountItem,
 		TransactionItemModel,
 		UpdateTransactionPayload
 	} from '$lib/types/transaction';
 	import {
 		getReviewBadgeKind,
+		hasUncategorizedSplit,
 		isPendingTransaction,
 		isToReviewTransaction,
 		mapOfflineQueuedToTransactions
@@ -22,10 +27,12 @@
 		accounts: AccountItem[];
 		categories: CategoryBudget[];
 		incomes?: PlannedIncome[];
+		suggestionsByTxId?: Record<string, CategorizationSuggestion[]>;
 		isOffline: boolean;
 		syncing: boolean;
 		activeCategoryFilterId: string | null;
 		onClearCategoryFilter: () => void;
+		onSelectTransaction?: (txId: string, opts?: { openSplit?: boolean }) => void;
 		onCreateTransaction: (payload: {
 			accountId: string;
 			amount: number;
@@ -35,6 +42,12 @@
 		}) => Promise<void>;
 		onCategorizeTransaction: (txId: string, categoryId: string | null) => Promise<void>;
 		onAssignTransactionToIncome?: (txId: string, incomeId: string | null) => Promise<void>;
+		onApproveReview?: (txId: string) => Promise<void>;
+		onCreateRule?: (
+			tx: TransactionItemModel,
+			opts?: { categoryId?: string | null; plannedIncomeName?: string | null }
+		) => void;
+		onApplySimilar?: (payload: ApplySimilarPayload) => Promise<number>;
 		onUpdateTransaction?: (txId: string, payload: UpdateTransactionPayload) => Promise<void>;
 		onDeleteTransaction: (txId: string) => Promise<void>;
 		onSyncNow: () => Promise<void>;
@@ -49,13 +62,18 @@
 		accounts,
 		categories,
 		incomes = [],
+		suggestionsByTxId = {},
 		isOffline,
 		syncing,
 		activeCategoryFilterId,
 		onClearCategoryFilter,
+		onSelectTransaction,
 		onCreateTransaction,
 		onCategorizeTransaction,
 		onAssignTransactionToIncome,
+		onApproveReview,
+		onCreateRule,
+		onApplySimilar,
 		onUpdateTransaction,
 		onDeleteTransaction,
 		onSyncNow,
@@ -71,15 +89,23 @@
 	let savingIds = $state<Record<string, boolean>>({});
 	let actionError = $state<string | null>(null);
 
-	// Quick Category Picker, Overflow Menu & Inline Edit State
+	// Quick Category Picker & Overflow Menu State
 	let openPickerTxId = $state<string | null>(null);
 	let pickerFilter = $state('');
+	let showIncomeInPicker = $state(false);
 	let openMenuTxId = $state<string | null>(null);
 	let confirmDeleteId = $state<string | null>(null);
-	let editingTxId = $state<string | null>(null);
-	let editMerchant = $state('');
-	let editNotes = $state('');
-	let editCategoryId = $state('');
+	let postCatAction = $state<{
+		tx: TransactionItemModel;
+		merchantPattern: string;
+		targetLabel: string;
+		categoryId: string | null;
+		plannedIncomeId: string | null;
+		plannedIncomeName: string | null;
+		otherCount: number;
+		applying: boolean;
+		appliedCount: number | null;
+	} | null>(null);
 
 	// Quick-Add Form State
 	let formAccountId = $state('');
@@ -116,14 +142,13 @@
 	});
 
 	$effect(() => {
-		if (!openMenuTxId && !openPickerTxId && !editingTxId && !confirmDeleteId) return;
+		if (!openMenuTxId && !openPickerTxId && !confirmDeleteId) return;
 
 		function handleKeyDown(e: KeyboardEvent) {
 			if (e.key === 'Escape') {
 				openMenuTxId = null;
 				confirmDeleteId = null;
 				openPickerTxId = null;
-				editingTxId = null;
 			}
 		}
 
@@ -271,12 +296,107 @@
 	function toggleQuickPicker(txId: string) {
 		openMenuTxId = null;
 		confirmDeleteId = null;
-		editingTxId = null;
+		showIncomeInPicker = false;
 		if (openPickerTxId === txId) {
 			openPickerTxId = null;
 		} else {
 			openPickerTxId = txId;
 			pickerFilter = '';
+		}
+	}
+
+	function normalizedMerchantKey(tx: TransactionItemModel): string {
+		return (tx.merchantClean?.trim() || tx.merchantRaw).trim();
+	}
+
+	function countMatchingUncategorizedOthers(source: TransactionItemModel): number {
+		const pattern = normalizedMerchantKey(source).toLowerCase();
+		if (!pattern) return 0;
+		const sourceSign = source.amount < 0 ? -1 : source.amount > 0 ? 1 : 0;
+		let count = 0;
+		for (const other of transactions) {
+			if (other.id === source.id || other.isTransfer) continue;
+			if (other.splits && other.splits.length > 0) continue;
+			if (other.categoryId !== null || other.plannedIncomeId) continue;
+			const acct = accountById.get(other.accountId);
+			if (acct && !acct.isOnBudget) continue;
+			if (sourceSign !== 0 && other.amount !== 0 && (other.amount < 0 ? -1 : 1) !== sourceSign) {
+				continue;
+			}
+			const clean = (other.merchantClean ?? '').trim().toLowerCase();
+			const raw = other.merchantRaw.trim().toLowerCase();
+			if ((clean && clean.includes(pattern)) || raw.includes(pattern)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	function recordPostCategorizeAction(
+		tx: TransactionItemModel,
+		targetLabel: string,
+		categoryId: string | null,
+		plannedIncomeId: string | null,
+		plannedIncomeName: string | null
+	) {
+		const pattern = normalizedMerchantKey(tx);
+		const otherCount = countMatchingUncategorizedOthers(tx);
+		if (!onCreateRule && otherCount === 0) return;
+		postCatAction = {
+			tx,
+			merchantPattern: pattern,
+			targetLabel,
+			categoryId,
+			plannedIncomeId,
+			plannedIncomeName,
+			otherCount,
+			applying: false,
+			appliedCount: null
+		};
+	}
+
+	async function handleApplySimilarAction() {
+		if (!postCatAction || !onApplySimilar || postCatAction.applying) return;
+		const current = postCatAction;
+		postCatAction = { ...current, applying: true };
+		try {
+			const updated = await onApplySimilar({
+				merchantPattern: current.merchantPattern,
+				matchType: 'CONTAINS',
+				direction: current.tx.amount < 0 ? 'EXPENSE' : current.tx.amount > 0 ? 'INFLOW' : 'ANY',
+				categoryId: current.categoryId,
+				plannedIncomeId: current.plannedIncomeId,
+				onlyUncategorized: true
+			});
+			postCatAction = {
+				...current,
+				applying: false,
+				otherCount: 0,
+				appliedCount: updated
+			};
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to apply to similar transactions.';
+			postCatAction = { ...current, applying: false };
+		}
+	}
+
+	async function handleApproveReview(txId: string) {
+		const handler = onApproveReview
+			? onApproveReview
+			: onUpdateTransaction
+				? (id: string) => onUpdateTransaction(id, { approveReview: true })
+				: null;
+		if (!handler) return;
+		savingIds = { ...savingIds, [txId]: true };
+		actionError = null;
+		try {
+			await handler(txId);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to approve transaction.';
+		} finally {
+			const next = { ...savingIds };
+			delete next[txId];
+			savingIds = next;
 		}
 	}
 
@@ -291,24 +411,20 @@
 		}
 	}
 
-	function startEditDetails(tx: TransactionItemModel) {
-		openMenuTxId = null;
-		confirmDeleteId = null;
-		openPickerTxId = null;
-		editingTxId = tx.id;
-		editMerchant = tx.merchantClean || tx.merchantRaw;
-		editNotes = tx.userNotes || '';
-		editCategoryId = tx.categoryId ?? '';
-	}
-
 	async function handleCategorySelect(txId: string, rawVal: string) {
 		const nextCatId = rawVal === '' ? null : rawVal;
+		const tx = transactions.find((t) => t.id === txId) ?? null;
 		savingIds = { ...savingIds, [txId]: true };
 		actionError = null;
 		try {
 			await onCategorizeTransaction(txId, nextCatId);
 			openPickerTxId = null;
 			pickerFilter = '';
+			showIncomeInPicker = false;
+			if (tx && nextCatId) {
+				const catName = categoryById.get(nextCatId)?.name ?? 'Category';
+				recordPostCategorizeAction(tx, catName, nextCatId, null, null);
+			}
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to categorize transaction.';
 		} finally {
@@ -320,52 +436,23 @@
 
 	async function handleIncomeSelect(txId: string, incomeId: string | null) {
 		if (!onAssignTransactionToIncome) return;
+		const tx = transactions.find((t) => t.id === txId) ?? null;
 		savingIds = { ...savingIds, [txId]: true };
 		actionError = null;
 		try {
 			await onAssignTransactionToIncome(txId, incomeId);
 			openPickerTxId = null;
 			pickerFilter = '';
+			showIncomeInPicker = false;
+			if (tx && incomeId) {
+				const incName = incomeById.get(incomeId)?.name ?? 'Income';
+				recordPostCategorizeAction(tx, `Income: ${incName}`, null, incomeId, incName);
+			}
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to assign transaction to income.';
 		} finally {
 			const next = { ...savingIds };
 			delete next[txId];
-			savingIds = next;
-		}
-	}
-
-	async function handleEditSubmit(e: SubmitEvent, tx: TransactionItemModel, canCategorize: boolean) {
-		e.preventDefault();
-		const trimmedMerchant = editMerchant.trim();
-		if (!trimmedMerchant) return;
-
-		savingIds = { ...savingIds, [tx.id]: true };
-		actionError = null;
-		try {
-			const nextCatId = editCategoryId === '' ? null : editCategoryId;
-			if (onUpdateTransaction) {
-				const payload: UpdateTransactionPayload = {
-					merchantClean: trimmedMerchant,
-					userNotes: editNotes.trim()
-				};
-				if (canCategorize) {
-					if (nextCatId) {
-						payload.categoryId = nextCatId;
-					} else {
-						payload.clearCategory = true;
-					}
-				}
-				await onUpdateTransaction(tx.id, payload);
-			} else if (canCategorize && nextCatId !== tx.categoryId) {
-				await onCategorizeTransaction(tx.id, nextCatId);
-			}
-			editingTxId = null;
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update transaction.';
-		} finally {
-			const next = { ...savingIds };
-			delete next[tx.id];
 			savingIds = next;
 		}
 	}
@@ -409,7 +496,6 @@
 			confirmDeleteId = null;
 			openMenuTxId = null;
 			if (openPickerTxId === txId) openPickerTxId = null;
-			if (editingTxId === txId) editingTxId = null;
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to delete transaction.';
 		} finally {
@@ -643,7 +729,7 @@
 							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary disabled:opacity-50 focus:border-accent-pop focus:outline-none"
 						>
 							<option value="">
-								{isOffBudgetFormAccount ? 'Off-budget' : 'Uncategorized'}
+								{isOffBudgetFormAccount ? 'Tracked account (not in budget)' : 'Uncategorized'}
 							</option>
 							{#each groupedCategories as [grp, cats]}
 								<optgroup label={grp}>
@@ -679,6 +765,70 @@
 				{actionError}
 			</p>
 		{/if}
+
+		{#if postCatAction}
+			<div
+				data-testid="post-categorize-action-bar"
+				class="rounded-xl border border-accent-pop/35 bg-accent-tint px-2.5 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2"
+			>
+				<div class="min-w-0">
+					{#if postCatAction.appliedCount !== null}
+						<span class="font-medium text-ink-primary">
+							Applied "{postCatAction.targetLabel}" to {postCatAction.appliedCount} other transaction{postCatAction.appliedCount === 1 ? '' : 's'}.
+						</span>
+					{:else}
+						<span class="font-medium text-ink-primary truncate">
+							Saved "{postCatAction.merchantPattern}" &rarr; <strong>{postCatAction.targetLabel}</strong>
+						</span>
+					{/if}
+				</div>
+
+				<div class="flex items-center gap-1.5 shrink-0">
+					{#if onCreateRule}
+						<button
+							type="button"
+							data-testid="post-cat-always-rule-btn"
+							onclick={() => {
+								const action = postCatAction;
+								postCatAction = null;
+								if (action) {
+									onCreateRule(action.tx, {
+										categoryId: action.categoryId,
+										plannedIncomeName: action.plannedIncomeName
+									});
+								}
+							}}
+							class="rounded-md bg-surface border border-border px-2 py-0.5 font-semibold text-accent-pop hover:bg-surface-hover"
+						>
+							Always apply rule
+						</button>
+					{/if}
+
+					{#if postCatAction.otherCount > 0 && onApplySimilar}
+						<button
+							type="button"
+							data-testid="post-cat-apply-similar-btn"
+							disabled={postCatAction.applying}
+							onclick={() => void handleApplySimilarAction()}
+							class="rounded-md bg-accent-primary text-accent-primary-text px-2 py-0.5 font-semibold hover:opacity-90 disabled:opacity-50"
+						>
+							{postCatAction.applying
+								? 'Applying...'
+								: `Apply to ${postCatAction.otherCount} other${postCatAction.otherCount === 1 ? '' : 's'}`}
+						</button>
+					{/if}
+
+					<button
+						type="button"
+						aria-label="Dismiss action bar"
+						onclick={() => (postCatAction = null)}
+						class="px-1 text-ink-muted hover:text-ink-primary"
+					>
+						✕
+					</button>
+				</div>
+			</div>
+		{/if}
 	</div>
 
 	<!-- Transaction Feed -->
@@ -703,8 +853,10 @@
 				{@const isPending = isPendingTransaction(tx)}
 				{@const isQueued = tx.origin === 'MANUAL_OFFLINE' && tx.syncStatus === 'QUEUED'}
 				{@const hasSplits = Boolean(tx.splits && tx.splits.length > 0)}
+				{@const splitNeedsReview = hasUncategorizedSplit(tx)}
 				{@const isOffBudget = acct ? !acct.isOnBudget : false}
 				{@const canCategorize = !isQueued && !tx.isTransfer && !isOffBudget && !hasSplits}
+				{@const canSplit = !isQueued && !tx.isTransfer && !isOffBudget && tx.amount !== 0}
 				{@const badgeKind = getReviewBadgeKind(tx, accountById)}
 				{@const displayMerchant = tx.merchantClean || tx.merchantRaw}
 				{@const isSaving = Boolean(savingIds[tx.id])}
@@ -713,7 +865,6 @@
 				{@const isUnassigned = tx.categoryId === null && !tx.plannedIncomeId}
 				{@const isPickerOpen = openPickerTxId === tx.id}
 				{@const isMenuOpen = openMenuTxId === tx.id}
-				{@const isEditing = editingTxId === tx.id}
 
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -731,117 +882,187 @@
 					}}
 					class="transition-colors {canCategorize ? 'cursor-grab active:cursor-grabbing' : ''}"
 				>
-					{#if canCategorize}
-						<div
-							role="button"
-							tabindex="0"
-							aria-expanded={isPickerOpen}
-							onclick={() => toggleQuickPicker(tx.id)}
-							onkeydown={(e) => {
-								if (e.target !== e.currentTarget) return;
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									toggleQuickPicker(tx.id);
-								}
-							}}
-							class="group px-3.5 py-3 flex items-start justify-between gap-2.5 cursor-pointer hover:bg-surface-hover/40 transition-colors"
-						>
-							<!-- Circular Date Badge + Merchant + Account -->
-							<div class="flex items-start gap-2.5 min-w-0 flex-1">
-								<div
-									class="w-9 h-9 rounded-full border border-border bg-subtle flex flex-col items-center justify-center shrink-0 leading-none"
-									aria-label={tx.transactionDate}
-								>
-									<span class="text-[9px] uppercase font-semibold text-accent-pop">
-										{badge.month}
-									</span>
-									<span class="text-xs font-bold text-ink-primary mt-0.5">
-										{badge.day}
-									</span>
-								</div>
-
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1.5 flex-wrap">
-										<span
-											class="text-xs font-semibold truncate {isPending
-												? 'italic text-ink-secondary'
-												: 'text-ink-primary'}"
-										>
-											{displayMerchant}
-										</span>
-
-										{#if badgeKind === 'pending'}
-											<span
-												data-testid="tx-badge-pending"
-												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
-												title="Pending transaction"
-											>
-												Pending
-											</span>
-										{:else if badgeKind === 'new'}
-											<span
-												data-testid="tx-badge-new"
-												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
-												title="Uncategorized transaction"
-											>
-												New
-											</span>
-										{/if}
-
-										{#if tx.settledDelta != null && tx.settledDelta !== 0}
-											<span
-												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1 py-0.5 rounded"
-											>
-												Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
-											</span>
-										{/if}
-									</div>
-
-									<div class="flex items-center gap-2 mt-0.5 text-[11px] text-ink-secondary">
-										<span class="truncate">{acct?.name ?? 'Account'}</span>
-										{#if tx.userNotes}
-											<span class="truncate text-ink-muted">· {tx.userNotes}</span>
-										{/if}
-									</div>
-								</div>
+					<div
+						role="button"
+						tabindex="0"
+						onclick={() => onSelectTransaction?.(tx.id)}
+						onkeydown={(e) => {
+							if (e.target !== e.currentTarget) return;
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								onSelectTransaction?.(tx.id);
+							}
+						}}
+						class="group px-3.5 py-3 flex items-start justify-between gap-2.5 cursor-pointer hover:bg-surface-hover/40 transition-colors"
+					>
+						<!-- Circular Date Badge + Merchant + Account -->
+						<div class="flex items-start gap-2.5 min-w-0 flex-1">
+							<div
+								class="w-9 h-9 rounded-full border border-border bg-subtle flex flex-col items-center justify-center shrink-0 leading-none"
+								aria-label={tx.transactionDate}
+							>
+								<span class="text-[9px] uppercase font-semibold text-accent-pop">
+									{badge.month}
+								</span>
+								<span class="text-xs font-bold text-ink-primary mt-0.5">
+									{badge.day}
+								</span>
 							</div>
 
-							<!-- Amount + Category Pill + Overflow Menu -->
-							<div class="shrink-0 flex items-start gap-1.5">
-								<div class="flex flex-col items-end gap-1">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-1.5 flex-wrap">
 									<span
-										class="text-xs font-mono font-bold {isPending
+										class="text-xs font-semibold truncate {isPending
 											? 'italic text-ink-secondary'
-											: tx.amount > 0
-												? 'text-status-good'
-												: 'text-ink-primary'}"
+											: 'text-ink-primary'}"
 									>
-										{formatCurrency(tx.amount)}
+										{displayMerchant}
 									</span>
 
-									<button
-										type="button"
-										data-testid="tx-category-pill"
-										aria-label={`Category for ${displayMerchant}`}
-										disabled={isSaving}
-										onclick={(e) => {
-											e.stopPropagation();
-											toggleQuickPicker(tx.id);
-										}}
-										class="max-w-[110px] sm:max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {isUnassigned
-											? 'border-accent-pop/40 bg-accent-tint text-accent-pop hover:opacity-90'
-											: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
-									>
-										{assignedCategory?.name ??
-											tx.categoryName ??
-											(tx.plannedIncomeId
-												? assignedIncome
-													? `Income: ${assignedIncome.name}`
-													: 'Income'
-												: '+ Categorize')}
-									</button>
+									{#if badgeKind === 'pending'}
+										<span
+											data-testid="tx-badge-pending"
+											class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+											title="Pending transaction"
+										>
+											Pending
+										</span>
+									{:else if badgeKind === 'review'}
+										<span
+											data-testid="tx-badge-review"
+											class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+											title="Auto-categorized by rule — approve or change"
+										>
+											Review
+										</span>
+									{:else if badgeKind === 'new'}
+										<span
+											data-testid="tx-badge-new"
+											class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
+											title="Uncategorized transaction"
+										>
+											New
+										</span>
+									{/if}
+
+									{#if tx.categorizedBy === 'RULE' && badgeKind !== 'review'}
+										<span
+											data-testid="tx-badge-auto"
+											class="inline-flex items-center text-[10px] font-medium bg-subtle border border-border text-ink-secondary px-1.5 py-0.5 rounded"
+											title="Auto-categorized by rule"
+										>
+											Auto
+										</span>
+									{/if}
+
+									{#if isQueued}
+										<span
+											class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
+										>
+											Queued
+										</span>
+									{/if}
+
+									{#if tx.settledDelta != null && tx.settledDelta !== 0}
+										<span
+											class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1 py-0.5 rounded"
+										>
+											Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
+										</span>
+									{/if}
 								</div>
 
+								<div class="flex items-center gap-2 mt-0.5 text-[11px] text-ink-secondary">
+									<span class="truncate">{acct?.name ?? 'Account'}</span>
+									{#if tx.userNotes}
+										<span class="truncate text-ink-muted">· {tx.userNotes}</span>
+									{/if}
+								</div>
+							</div>
+						</div>
+
+						<!-- Amount + Category/Split Pill + Overflow Menu -->
+						<div class="shrink-0 flex items-start gap-1.5">
+							<div class="flex flex-col items-end gap-1">
+								<span
+									class="text-xs font-mono font-bold {isPending
+										? 'italic text-ink-secondary'
+										: tx.amount > 0
+											? 'text-status-good'
+											: 'text-ink-primary'}"
+								>
+									{formatCurrency(tx.amount)}
+								</span>
+
+								{#if canCategorize}
+									<div class="flex items-center gap-1">
+										{#if tx.needsReview && (onApproveReview || onUpdateTransaction)}
+											<button
+												type="button"
+												data-testid="tx-approve-review-btn"
+												disabled={isSaving}
+												onclick={(e) => {
+													e.stopPropagation();
+													void handleApproveReview(tx.id);
+												}}
+												class="rounded-full border border-status-good/40 bg-status-good-bg px-2 py-0.5 text-[10px] font-semibold text-status-good hover:opacity-90 disabled:opacity-50"
+											>
+												Approve
+											</button>
+										{/if}
+										<button
+											type="button"
+											data-testid="tx-category-pill"
+											aria-label={`Category for ${displayMerchant}`}
+											aria-expanded={isPickerOpen}
+											disabled={isSaving}
+											onclick={(e) => {
+												e.stopPropagation();
+												toggleQuickPicker(tx.id);
+											}}
+											class="max-w-[110px] sm:max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {isUnassigned
+												? 'border-accent-pop/40 bg-accent-tint text-accent-pop hover:opacity-90'
+												: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
+										>
+											{assignedCategory?.name ??
+												tx.categoryName ??
+												(tx.plannedIncomeId
+													? assignedIncome
+														? `Income: ${assignedIncome.name}`
+														: 'Income'
+													: '+ Categorize')}
+										</button>
+									</div>
+								{:else if hasSplits}
+									<button
+										type="button"
+										data-testid="tx-split-pill"
+										onclick={(e) => {
+											e.stopPropagation();
+											onSelectTransaction?.(tx.id, { openSplit: true });
+										}}
+										class="text-[10px] rounded-full border px-2 py-0.5 font-medium cursor-pointer transition-colors {splitNeedsReview
+											? 'border-status-warn/40 bg-status-warn-bg text-status-warn'
+											: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
+									>
+										Split ({tx.splits?.length}){splitNeedsReview ? ' · Review' : ''}
+									</button>
+								{:else if isQueued}
+									<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+										{tx.categoryId ? categoryById.get(tx.categoryId)?.name ?? 'Categorized' : 'Queued'}
+									</span>
+								{:else if tx.isTransfer}
+									<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+										Transfer
+									</span>
+								{:else if isOffBudget}
+									<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
+										Tracked
+									</span>
+								{/if}
+							</div>
+
+							{#if !isQueued}
 								<div class="relative" data-tx-menu-container>
 									<button
 										type="button"
@@ -871,26 +1092,44 @@
 											<button
 												type="button"
 												role="menuitem"
-												data-testid="tx-menu-categorize"
+												data-testid="tx-menu-details"
 												onclick={() => {
 													openMenuTxId = null;
-													openPickerTxId = tx.id;
-													pickerFilter = '';
-													editingTxId = null;
+													onSelectTransaction?.(tx.id);
 												}}
 												class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
 											>
-												Categorize
+												View details
 											</button>
-											<button
-												type="button"
-												role="menuitem"
-												data-testid="tx-menu-edit"
-												onclick={() => startEditDetails(tx)}
-												class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
-											>
-												Edit details
-											</button>
+											{#if canCategorize}
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-categorize"
+													onclick={() => {
+														openMenuTxId = null;
+														openPickerTxId = tx.id;
+														pickerFilter = '';
+													}}
+													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
+												>
+													Categorize
+												</button>
+											{/if}
+											{#if canSplit}
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-split"
+													onclick={() => {
+														openMenuTxId = null;
+														onSelectTransaction?.(tx.id, { openSplit: true });
+													}}
+													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
+												>
+													{hasSplits ? 'Edit splits' : 'Split transaction'}
+												</button>
+											{/if}
 											<div class="my-1 border-t border-border"></div>
 											{#if confirmDeleteId === tx.id}
 												<div class="px-3 py-1.5 space-y-1.5">
@@ -931,193 +1170,26 @@
 										</div>
 									{/if}
 								</div>
-							</div>
+							{/if}
 						</div>
-					{:else}
-						<div class="group px-3.5 py-3 flex items-start justify-between gap-2.5 hover:bg-surface-hover/40 transition-colors">
-							<!-- Circular Date Badge + Merchant + Account -->
-							<div class="flex items-start gap-2.5 min-w-0 flex-1">
-								<div
-									class="w-9 h-9 rounded-full border border-border bg-subtle flex flex-col items-center justify-center shrink-0 leading-none"
-									aria-label={tx.transactionDate}
-								>
-									<span class="text-[9px] uppercase font-semibold text-accent-pop">
-										{badge.month}
-									</span>
-									<span class="text-xs font-bold text-ink-primary mt-0.5">
-										{badge.day}
-									</span>
-								</div>
-
-								<div class="min-w-0 flex-1">
-									<div class="flex items-center gap-1.5 flex-wrap">
-										<span
-											class="text-xs font-semibold truncate {isPending
-												? 'italic text-ink-secondary'
-												: 'text-ink-primary'}"
-										>
-											{displayMerchant}
-										</span>
-
-										{#if badgeKind === 'pending'}
-											<span
-												data-testid="tx-badge-pending"
-												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
-												title="Pending transaction"
-											>
-												Pending
-											</span>
-										{:else if badgeKind === 'new'}
-											<span
-												data-testid="tx-badge-new"
-												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop px-1.5 py-0.5 rounded"
-												title="Uncategorized transaction"
-											>
-												New
-											</span>
-										{/if}
-
-										{#if isQueued}
-											<span
-												class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
-											>
-												Queued
-											</span>
-										{/if}
-
-										{#if tx.settledDelta != null && tx.settledDelta !== 0}
-											<span
-												class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn border border-status-warn/30 px-1 py-0.5 rounded"
-											>
-												Δ {tx.settledDelta > 0 ? '+' : '-'}${Math.abs(tx.settledDelta).toFixed(2)}
-											</span>
-										{/if}
-									</div>
-
-									<div class="flex items-center gap-2 mt-0.5 text-[11px] text-ink-secondary">
-										<span class="truncate">{acct?.name ?? 'Account'}</span>
-										{#if tx.userNotes}
-											<span class="truncate text-ink-muted">· {tx.userNotes}</span>
-										{/if}
-									</div>
-								</div>
-							</div>
-
-							<!-- Amount + Static Pill + Optional Overflow Menu -->
-							<div class="shrink-0 flex items-start gap-1.5">
-								<div class="flex flex-col items-end gap-1">
-									<span
-										class="text-xs font-mono font-bold {isPending
-											? 'italic text-ink-secondary'
-											: tx.amount > 0
-												? 'text-status-good'
-												: 'text-ink-primary'}"
-									>
-										{formatCurrency(tx.amount)}
-									</span>
-
-									{#if isQueued}
-										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
-											{tx.categoryId ? categoryById.get(tx.categoryId)?.name ?? 'Categorized' : 'Queued'}
-										</span>
-									{:else if tx.isTransfer}
-										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
-											Transfer
-										</span>
-									{:else if isOffBudget}
-										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
-											Off-Budget
-										</span>
-									{:else if hasSplits}
-										<span class="text-[10px] rounded-full border border-border bg-subtle px-2 py-0.5 text-ink-secondary">
-											Split ({tx.splits?.length})
-										</span>
-									{/if}
-								</div>
-
-								{#if !isQueued}
-									<div class="relative" data-tx-menu-container>
-										<button
-											type="button"
-											data-testid="tx-row-menu-btn"
-											aria-label={`More actions for ${displayMerchant}`}
-											aria-haspopup="menu"
-											aria-expanded={isMenuOpen}
-											onclick={(e) => openRowMenu(tx.id, e)}
-											class="p-1 rounded-md text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
-										>
-											<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-												<circle cx="12" cy="5" r="1.75" />
-												<circle cx="12" cy="12" r="1.75" />
-												<circle cx="12" cy="19" r="1.75" />
-											</svg>
-										</button>
-
-										{#if isMenuOpen}
-											<div
-												role="menu"
-												tabindex="-1"
-												data-testid="tx-row-menu"
-												onclick={(e) => e.stopPropagation()}
-												onkeydown={(e) => e.stopPropagation()}
-												class="absolute right-0 top-full mt-1 z-30 w-44 rounded-xl border border-border bg-surface shadow-lg py-1 text-xs"
-											>
-												<button
-													type="button"
-													role="menuitem"
-													data-testid="tx-menu-edit"
-													onclick={() => startEditDetails(tx)}
-													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
-												>
-													Edit details
-												</button>
-												<div class="my-1 border-t border-border"></div>
-												{#if confirmDeleteId === tx.id}
-													<div class="px-3 py-1.5 space-y-1.5">
-														<p class="text-[11px] font-medium text-status-danger">
-															Delete this transaction?
-														</p>
-														<div class="flex items-center gap-1.5">
-															<button
-																type="button"
-																data-testid="tx-menu-confirm-delete"
-																disabled={isSaving}
-																onclick={() => void handleDelete(tx.id)}
-																class="flex-1 rounded-md bg-status-danger-bg text-status-danger px-2 py-1 text-[11px] font-semibold hover:opacity-90"
-															>
-																Confirm Delete
-															</button>
-															<button
-																type="button"
-																data-testid="tx-menu-cancel-delete"
-																onclick={() => (confirmDeleteId = null)}
-																class="rounded-md border border-border bg-subtle px-2 py-1 text-[11px] text-ink-secondary hover:text-ink-primary"
-															>
-																Cancel
-															</button>
-														</div>
-													</div>
-												{:else}
-													<button
-														type="button"
-														role="menuitem"
-														data-testid="tx-menu-delete"
-														onclick={() => (confirmDeleteId = tx.id)}
-														class="w-full text-left px-3 py-1.5 text-status-danger hover:bg-status-danger-bg transition-colors"
-													>
-														Delete transaction
-													</button>
-												{/if}
-											</div>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						</div>
-					{/if}
+					</div>
 
 					<!-- Inline Quick Category Picker -->
 					{#if isPickerOpen && canCategorize}
+						{@const txSuggestions = suggestionsByTxId[tx.id] ?? []}
+						{@const qPicker = pickerFilter.trim().toLowerCase()}
+						{@const visibleSuggestions = qPicker
+							? txSuggestions.filter(
+									(s) =>
+										s.name.toLowerCase().includes(qPicker) ||
+										(s.groupName ?? '').toLowerCase().includes(qPicker)
+								)
+							: txSuggestions}
+						{@const isExpenseTx = tx.amount < 0}
+						{@const showIncomeSection =
+							Boolean(onAssignTransactionToIncome) &&
+							filteredPickerIncomes.length > 0 &&
+							(!isExpenseTx || qPicker.length > 0 || showIncomeInPicker)}
 						<div
 							role="region"
 							aria-label={`Quick category picker for ${displayMerchant}`}
@@ -1128,14 +1200,29 @@
 								<span class="text-[11px] font-semibold text-ink-primary">
 									Sort into category
 								</span>
-								<button
-									type="button"
-									aria-label="Close category picker"
-									onclick={() => (openPickerTxId = null)}
-									class="text-[11px] text-ink-muted hover:text-ink-primary px-1"
-								>
-									✕
-								</button>
+								<div class="flex items-center gap-1.5">
+									{#if canSplit}
+										<button
+											type="button"
+											data-testid="quick-picker-split-btn"
+											onclick={() => {
+												openPickerTxId = null;
+												onSelectTransaction?.(tx.id, { openSplit: true });
+											}}
+											class="rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-accent-pop hover:bg-surface-hover"
+										>
+											Split
+										</button>
+									{/if}
+									<button
+										type="button"
+										aria-label="Close category picker"
+										onclick={() => (openPickerTxId = null)}
+										class="text-[11px] text-ink-muted hover:text-ink-primary px-1"
+									>
+										✕
+									</button>
+								</div>
 							</div>
 
 							<input
@@ -1146,14 +1233,47 @@
 								class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 							/>
 
-							<div class="max-h-44 overflow-y-auto space-y-2">
-								{#if filteredPickerGroups.length === 0 && (!onAssignTransactionToIncome || filteredPickerIncomes.length === 0)}
+							<div class="max-h-56 overflow-y-auto space-y-2">
+
+								{#if visibleSuggestions.length > 0}
+									<div class="space-y-1" data-testid="quick-picker-suggestions">
+										<p class="text-[10px] font-semibold uppercase tracking-wider text-accent-pop">
+											Suggested
+										</p>
+										<div class="flex flex-wrap gap-1.5">
+											{#each visibleSuggestions as sug (sug.categoryId ?? sug.plannedIncomeId ?? sug.name)}
+												<button
+													type="button"
+													data-testid="quick-suggestion-option"
+													disabled={isSaving}
+													onclick={() => {
+														if (sug.targetType === 'PLANNED_INCOME' && sug.plannedIncomeId) {
+															void handleIncomeSelect(tx.id, sug.plannedIncomeId);
+														} else if (sug.categoryId) {
+															void handleCategorySelect(tx.id, sug.categoryId);
+														}
+													}}
+													class="inline-flex items-center gap-1 rounded-full border border-accent-pop/40 bg-accent-tint/70 px-2.5 py-0.5 text-[11px] font-semibold text-ink-primary hover:bg-accent-tint transition-colors"
+												>
+													<span>{sug.name}</span>
+													{#if sug.reason}
+														<span class="text-[10px] font-normal text-ink-secondary">
+															· {sug.reason}
+														</span>
+													{/if}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								{#if filteredPickerGroups.length === 0 && !showIncomeSection && visibleSuggestions.length === 0}
 									<p class="text-[11px] text-ink-muted py-1 text-center">
 										No matching categories
 									</p>
 								{:else}
-									{#if onAssignTransactionToIncome && filteredPickerIncomes.length > 0}
-										<div class="space-y-1">
+									{#if showIncomeSection}
+										<div class="space-y-1" data-testid="quick-picker-income-section">
 											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
 												Income
 											</p>
@@ -1198,6 +1318,18 @@
 											</div>
 										</div>
 									{/each}
+									{#if isExpenseTx && !qPicker && !showIncomeInPicker && onAssignTransactionToIncome && incomes.length > 0}
+										<div class="pt-0.5">
+											<button
+												type="button"
+												data-testid="quick-picker-show-income-btn"
+												onclick={() => (showIncomeInPicker = true)}
+												class="text-[10px] font-medium text-ink-muted hover:text-accent-pop"
+											>
+												Show income options
+											</button>
+										</div>
+									{/if}
 								{/if}
 
 								{#if !isUnassigned}
@@ -1218,97 +1350,6 @@
 								{/if}
 							</div>
 						</div>
-					{/if}
-
-					<!-- Inline Edit Details Form -->
-					{#if isEditing && !isQueued}
-						<form
-							data-testid="tx-edit-form"
-							onsubmit={(e) => void handleEditSubmit(e, tx, canCategorize)}
-							class="mx-3.5 mb-3 rounded-xl border border-border bg-subtle p-2.5 space-y-2"
-						>
-							<div class="flex items-center justify-between">
-								<span class="text-[11px] font-semibold text-ink-primary">
-									Edit transaction details
-								</span>
-								<button
-									type="button"
-									aria-label="Close edit form"
-									onclick={() => (editingTxId = null)}
-									class="text-[11px] text-ink-muted hover:text-ink-primary px-1"
-								>
-									✕
-								</button>
-							</div>
-
-							<div>
-								<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-merchant-${tx.id}`}>
-									Merchant
-								</label>
-								<input
-									id={`edit-merchant-${tx.id}`}
-									aria-label="Edit merchant"
-									type="text"
-									required
-									bind:value={editMerchant}
-									class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-								/>
-							</div>
-
-							<div>
-								<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-notes-${tx.id}`}>
-									Notes
-								</label>
-								<input
-									id={`edit-notes-${tx.id}`}
-									aria-label="Edit notes"
-									type="text"
-									placeholder="Optional note..."
-									bind:value={editNotes}
-									class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-								/>
-							</div>
-
-							{#if canCategorize}
-								<div>
-									<label class="block text-[10px] text-ink-secondary mb-0.5" for={`edit-cat-${tx.id}`}>
-										Category
-									</label>
-									<select
-										id={`edit-cat-${tx.id}`}
-										aria-label="Edit category"
-										bind:value={editCategoryId}
-										class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-									>
-										<option value="">Uncategorized</option>
-										{#each groupedCategories as [grp, cats]}
-											<optgroup label={grp}>
-												{#each cats as cat}
-													<option value={cat.id}>{cat.name}</option>
-												{/each}
-											</optgroup>
-										{/each}
-									</select>
-								</div>
-							{/if}
-
-							<div class="flex justify-end gap-2 pt-1">
-								<button
-									type="button"
-									onclick={() => (editingTxId = null)}
-									class="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink-primary"
-								>
-									Cancel
-								</button>
-								<button
-									type="submit"
-									disabled={isSaving || !editMerchant.trim()}
-									class="rounded-md bg-accent-primary text-accent-primary-text px-2.5 py-1 text-[11px] font-semibold hover:opacity-90 disabled:opacity-50"
-								>
-									{isSaving ? 'Saving...' : 'Save changes'}
-								</button>
-							</div>
-						</form>
 					{/if}
 				</div>
 			{/each}

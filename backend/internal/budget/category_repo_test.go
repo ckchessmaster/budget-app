@@ -28,17 +28,34 @@ func TestSanitizeCategory(t *testing.T) {
 		}
 	})
 
-	t.Run("clears sweep target when rollover mode is not SWEEP", func(t *testing.T) {
+	t.Run("clears sweep target and held account when rollover mode is mismatched", func(t *testing.T) {
+		acctID := uuid.New()
 		c := &Category{
 			ID:                    id,
 			RolloverMode:          RolloverBalance,
 			SweepTargetCategoryID: &otherID,
+			HeldInAccountID:       &acctID,
 		}
 		if err := sanitizeCategory(c); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if c.SweepTargetCategoryID != nil {
 			t.Fatalf("expected SweepTargetCategoryID to be nil, got %v", c.SweepTargetCategoryID)
+		}
+		if c.HeldInAccountID == nil || *c.HeldInAccountID != acctID {
+			t.Fatalf("expected HeldInAccountID to be preserved for fund, got %v", c.HeldInAccountID)
+		}
+
+		sweepCat := &Category{
+			ID:              id,
+			RolloverMode:    RolloverSweep,
+			HeldInAccountID: &acctID,
+		}
+		if err := sanitizeCategory(sweepCat); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if sweepCat.HeldInAccountID != nil {
+			t.Fatalf("expected HeldInAccountID to be cleared for SWEEP category, got %v", sweepCat.HeldInAccountID)
 		}
 	})
 }

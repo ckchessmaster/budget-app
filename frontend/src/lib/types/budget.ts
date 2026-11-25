@@ -13,11 +13,13 @@ export interface CategoryBudget {
 	groupName: string;
 	rolloverMode: RolloverMode;
 	sweepTargetCategoryId: string | null;
+	heldInAccountId?: string | null;
 	targetAmount: number | null;
 	targetDate: string | null;
 	targetCadence: TargetCadence;
 	sortOrder: number;
 	originalPlanned: number;
+	carryoverBalance?: number;
 	effectiveTarget: number;
 	spentCleared: number;
 	spentPending: number;
@@ -56,10 +58,13 @@ export interface CreateCategoryPayload {
 	monthly_budget: number;
 	rollover_mode: RolloverMode;
 	sweep_target_category_id?: string | null;
+	held_in_account_id?: string | null;
 	target_amount?: number | null;
 	target_date?: string | null;
 	target_cadence: TargetCadence;
 	sort_order?: number;
+	starting_balance?: number;
+	year_month?: string;
 }
 
 export interface ReallocatePayload {

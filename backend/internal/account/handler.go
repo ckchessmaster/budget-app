@@ -103,9 +103,6 @@ func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isOnBudget := req.Type != Investment && req.Type != Loan
-	if req.IsOnBudget != nil {
-		isOnBudget = *req.IsOnBudget
-	}
 
 	acct := &Account{
 		ExternalAccountID:    req.ExternalAccountID,
@@ -180,9 +177,7 @@ func applyAccountUpdate(existing *Account, req UpdateAccountRequest) (decimal.De
 	if req.Type != nil {
 		existing.Type = *req.Type
 	}
-	if req.IsOnBudget != nil {
-		existing.IsOnBudget = *req.IsOnBudget
-	}
+	existing.IsOnBudget = existing.Type != Investment && existing.Type != Loan
 	if req.CardMode != nil {
 		existing.CardMode = *req.CardMode
 	}

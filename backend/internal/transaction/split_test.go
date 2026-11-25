@@ -219,6 +219,104 @@ func (s *stubTxRepo) Update(_ context.Context, _ pgx.Tx, t *Transaction) error {
 	return nil
 }
 func (s *stubTxRepo) Delete(_ context.Context, _ pgx.Tx, _ uuid.UUID) error { return nil }
+func (s *stubTxRepo) DeleteSplitsByParent(_ context.Context, _ pgx.Tx, _ uuid.UUID) error {
+	if s.tx != nil {
+		s.tx.Splits = nil
+	}
+	return nil
+}
+func (s *stubTxRepo) PropagateParentFieldsToSplits(_ context.Context, _ pgx.Tx, _ *Transaction) error {
+	return nil
+}
+
+func TestReplaceSplits_ValidationAndUnsplit(t *testing.T) {
+	txID := uuid.New()
+	cat1 := uuid.New()
+	cat2 := uuid.New()
+
+	t.Run("rejects fewer than 2 splits, sign mismatch, missing category, and sum mismatch", func(t *testing.T) {
+		repo := &stubTxRepo{
+			tx: &Transaction{
+				ID:          txID,
+				AccountID:   uuid.New(),
+				Amount:      decimal.NewFromFloat(-100.00),
+				MerchantRaw: "Target",
+			},
+		}
+		svc := NewService(repo, nil)
+		ctx := context.Background()
+
+		if _, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			Splits: []SplitItem{{Amount: decimal.NewFromFloat(-100.00), CategoryID: &cat1}},
+		}); !errors.Is(err, ErrSplitTooFewItems) {
+			t.Fatalf("expected ErrSplitTooFewItems, got %v", err)
+		}
+
+		if _, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			Splits: []SplitItem{
+				{Amount: decimal.NewFromFloat(-120.00), CategoryID: &cat1},
+				{Amount: decimal.NewFromFloat(20.00), CategoryID: &cat2},
+			},
+		}); !errors.Is(err, ErrSplitSignMismatch) {
+			t.Fatalf("expected ErrSplitSignMismatch, got %v", err)
+		}
+
+		if _, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			Splits: []SplitItem{
+				{Amount: decimal.NewFromFloat(-60.00), CategoryID: &cat1},
+				{Amount: decimal.NewFromFloat(-40.00)},
+			},
+		}); !errors.Is(err, ErrSplitCategoryRequired) {
+			t.Fatalf("expected ErrSplitCategoryRequired, got %v", err)
+		}
+
+		if _, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			Splits: []SplitItem{
+				{Amount: decimal.NewFromFloat(-60.00), CategoryID: &cat1},
+				{Amount: decimal.NewFromFloat(-39.00), CategoryID: &cat2},
+			},
+		}); !errors.Is(err, ErrSplitSumMismatch) {
+			t.Fatalf("expected ErrSplitSumMismatch, got %v", err)
+		}
+	})
+
+	t.Run("replaces splits and unsplits cleanly", func(t *testing.T) {
+		repo := &stubTxRepo{
+			tx: &Transaction{
+				ID:          txID,
+				AccountID:   uuid.New(),
+				Amount:      decimal.NewFromFloat(-100.00),
+				MerchantRaw: "Target",
+				CategoryID:  &cat1,
+			},
+		}
+		svc := NewService(repo, nil)
+		ctx := context.Background()
+
+		splitTx, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			Splits: []SplitItem{
+				{Amount: decimal.NewFromFloat(-60.00), CategoryID: &cat1, UserNotes: "Food"},
+				{Amount: decimal.NewFromFloat(-40.00), CategoryID: &cat2, UserNotes: "Home"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("ReplaceSplits failed: %v", err)
+		}
+		if splitTx.CategoryID != nil || len(splitTx.Splits) != 2 {
+			t.Fatalf("expected cleared parent category and 2 splits, got cat=%v len=%d", splitTx.CategoryID, len(splitTx.Splits))
+		}
+
+		unsplitTx, err := svc.ReplaceSplits(ctx, nil, txID, ReplaceSplitsRequest{
+			CategoryID: &cat1,
+		})
+		if err != nil {
+			t.Fatalf("Unsplit failed: %v", err)
+		}
+		if unsplitTx.CategoryID == nil || *unsplitTx.CategoryID != cat1 || len(unsplitTx.Splits) != 0 {
+			t.Fatalf("expected unsplit back to cat1 with 0 splits, got cat=%v len=%d", unsplitTx.CategoryID, len(unsplitTx.Splits))
+		}
+	})
+}
 
 func TestUpdateTransaction_CategoryAndClearCategory(t *testing.T) {
 	txID := uuid.New()

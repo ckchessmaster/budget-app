@@ -353,4 +353,43 @@ describe('CategoryRow', () => {
 		await fireEvent.change(select, { target: { value: 'Lifestyle' } });
 		expect(onMoveCategoryToGroup).toHaveBeenCalledWith('cat-org', 'Lifestyle');
 	});
+
+	it('renders Fund badge, prior/spent metadata, goal bar, and does not mark fund overspent when balance >= 0', () => {
+		const { getByTestId, queryByTestId, getByText } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-vac',
+					name: 'Vacation Fund',
+					groupName: 'Savings',
+					rolloverMode: 'ROLLOVER_BALANCE',
+					carryoverBalance: 1000,
+					targetAmount: 2000,
+					originalPlanned: 200,
+					effectiveTarget: 200,
+					spentCleared: 400,
+					spentPending: 0,
+					remaining: 800
+				},
+				heldInAccountName: 'Ally HYSA',
+				groupColor: {
+					name: 'Emerald',
+					stroke: '#10b981',
+					dotClass: 'bg-emerald-500',
+					textClass: 'text-emerald-600',
+					ringClass: 'ring-emerald-500/40'
+				},
+				embedded: true,
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(getByTestId('fund-badge').textContent?.trim()).toBe('Fund');
+		expect(getByText('in Ally HYSA')).toBeTruthy();
+		expect(getByTestId('fund-meta-line').textContent).toContain('Prior $1,000.00');
+		expect(getByTestId('fund-meta-line').textContent).toContain('Spent $400.00');
+		expect(queryByTestId('overspent-badge')).toBeNull();
+		expect(getByTestId('status-badge').textContent?.trim()).toBe('$800.00');
+		expect(getByTestId('fund-goal-progress-bar')).toBeTruthy();
+		expect(getByTestId('fund-goal-fill').getAttribute('style')).toContain('width: 40%');
+	});
 });

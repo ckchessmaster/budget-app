@@ -260,12 +260,7 @@ func (h *Handler) LinkAccounts(w http.ResponseWriter, r *http.Request) {
 				cardMode = account.PayInFull
 			}
 
-			isOnBudget := true
-			if m.IsOnBudget != nil {
-				isOnBudget = *m.IsOnBudget
-			} else if accType == account.Investment || accType == account.Loan {
-				isOnBudget = false
-			}
+			isOnBudget := accType != account.Investment && accType != account.Loan
 
 			bal := decimal.Zero
 			if m.Balance != "" {

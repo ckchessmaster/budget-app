@@ -5,7 +5,19 @@ export interface TransactionSplit {
 	id: string;
 	amount: number;
 	categoryId: string | null;
+	plannedIncomeId?: string | null;
 	userNotes: string | null;
+}
+
+export interface ReplaceSplitsPayload {
+	splits: Array<{
+		amount: number;
+		categoryId?: string | null;
+		plannedIncomeId?: string | null;
+		userNotes?: string;
+	}>;
+	categoryId?: string | null;
+	plannedIncomeId?: string | null;
 }
 
 export interface TransactionItemModel {
@@ -24,6 +36,9 @@ export interface TransactionItemModel {
 	userNotes?: string | null;
 	isCleared: boolean;
 	isTransfer?: boolean;
+	categorizedBy?: 'MANUAL' | 'RULE';
+	appliedRuleId?: string | null;
+	needsReview?: boolean;
 	syncStatus?: 'QUEUED' | 'SYNCING' | 'FAILED';
 	settledDelta?: number | null;
 	splits?: TransactionSplit[];
@@ -39,6 +54,7 @@ export interface UpdateTransactionPayload {
 	status?: TransactionStatus;
 	isCleared?: boolean;
 	amount?: number;
+	approveReview?: boolean;
 }
 
 export type AccountType = 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment' | 'loan';
@@ -61,7 +77,7 @@ export interface CreateAccountPayload {
 	name: string;
 	type: AccountType;
 	currentBalance: number;
-	isOnBudget: boolean;
+	isOnBudget?: boolean;
 	cardMode?: 'PAY_IN_FULL' | 'DEBT_PAYDOWN';
 	initialDebtBaseline?: number;
 	aprPercentage?: number;
@@ -85,12 +101,27 @@ export interface UpdateAccountPayload {
 	recordBalanceAdjustment?: boolean;
 }
 
+export interface ReservedFundItem {
+	categoryId: string;
+	name: string;
+	balance: number;
+}
+
+export interface AccountFundReservation {
+	accountId: string;
+	reservedTotal: number;
+	funds: ReservedFundItem[];
+}
+
 export interface SolvencyReport {
 	totalLiquidCash: number;
 	totalCreditCardDebt: number;
 	solvencyBuffer: number;
 	isFloatingDebt: boolean;
 	floatingDebtAmount: number;
+	totalReservedInFunds?: number;
+	unreservedCash?: number;
+	accountReservations?: AccountFundReservation[];
 }
 
 export interface CreateTransactionPayload {

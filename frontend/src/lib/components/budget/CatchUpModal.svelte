@@ -4,6 +4,7 @@
 
 <script lang="ts">
 	import type { CategoryBudget } from '$lib/types/budget';
+	import type { CategorizationSuggestion } from '$lib/types/categorization';
 	import type { AccountItem, TransactionItemModel } from '$lib/types/transaction';
 	import {
 		getReviewBadgeKind,
@@ -17,7 +18,10 @@
 		allTransactions?: TransactionItemModel[];
 		accounts: AccountItem[];
 		categories: CategoryBudget[];
+		suggestionsByTxId?: Record<string, CategorizationSuggestion[]>;
 		onCategorizeTransaction: (txId: string, categoryId: string) => Promise<void>;
+		onAssignTransactionToIncome?: (txId: string, incomeId: string) => Promise<void>;
+		onSplitTransaction?: (txId: string) => void;
 		onClose: () => void;
 	}
 
@@ -28,7 +32,10 @@
 		allTransactions = [],
 		accounts,
 		categories,
+		suggestionsByTxId = {},
 		onCategorizeTransaction,
+		onAssignTransactionToIncome,
+		onSplitTransaction,
 		onClose
 	}: Props = $props();
 
@@ -76,9 +83,40 @@
 	);
 	let currentItem = $derived(remainingItems[safeIndex] ?? null);
 
-	let suggestedCategories = $derived(
-		currentItem ? suggestCategoriesForTransaction(currentItem, categories, allTransactions, 6) : []
-	);
+	interface SuggestedOption {
+		key: string;
+		name: string;
+		reason?: string;
+		categoryId?: string;
+		plannedIncomeId?: string;
+	}
+
+	let suggestedOptions = $derived.by((): SuggestedOption[] => {
+		if (!currentItem) return [];
+		const backendList = suggestionsByTxId[currentItem.id];
+		if (backendList && backendList.length > 0) {
+			return backendList
+				.filter(
+					(s) =>
+						(s.targetType === 'CATEGORY' && Boolean(s.categoryId)) ||
+						(s.targetType === 'PLANNED_INCOME' &&
+							Boolean(s.plannedIncomeId) &&
+							Boolean(onAssignTransactionToIncome))
+				)
+				.map((s) => ({
+					key: s.categoryId ?? s.plannedIncomeId ?? s.name,
+					name: s.name,
+					reason: s.reason,
+					categoryId: s.categoryId ?? undefined,
+					plannedIncomeId: s.plannedIncomeId ?? undefined
+				}));
+		}
+		return suggestCategoriesForTransaction(currentItem, categories, allTransactions, 4).map((c) => ({
+			key: c.id,
+			name: c.name,
+			categoryId: c.id
+		}));
+	});
 
 	let groupedCategories = $derived.by(() => {
 		const groups = new Map<string, CategoryBudget[]>();
@@ -145,13 +183,17 @@
 		return val < 0 ? `-$${abs}` : `$${abs}`;
 	}
 
-	async function handleAssignCategory(categoryId: string) {
+	async function handleAssignOption(opt: { categoryId?: string; plannedIncomeId?: string }) {
 		if (!currentItem || isSaving) return;
 		const txId = currentItem.id;
 		isSaving = true;
 		errorMsg = null;
 		try {
-			await onCategorizeTransaction(txId, categoryId);
+			if (opt.plannedIncomeId && onAssignTransactionToIncome) {
+				await onAssignTransactionToIncome(txId, opt.plannedIncomeId);
+			} else if (opt.categoryId) {
+				await onCategorizeTransaction(txId, opt.categoryId);
+			}
 			const nextHandled = [...handledIds, txId];
 			handledIds = nextHandled;
 			showAllCategories = false;
@@ -167,6 +209,10 @@
 		} finally {
 			isSaving = false;
 		}
+	}
+
+	async function handleAssignCategory(categoryId: string) {
+		return handleAssignOption({ categoryId });
 	}
 
 	function handleSkipItem() {
@@ -422,15 +468,18 @@
 							</div>
 
 							<div class="flex flex-wrap gap-2">
-								{#each suggestedCategories as cat (cat.id)}
+								{#each suggestedOptions as opt (opt.key)}
 									<button
 										type="button"
 										data-testid="catchup-category-chip"
 										disabled={isSaving}
-										onclick={() => void handleAssignCategory(cat.id)}
-										class="rounded-full border border-border bg-subtle hover:bg-accent-tint hover:border-accent-pop hover:text-accent-pop px-3 py-1.5 text-xs font-medium text-ink-primary disabled:opacity-50 transition-colors"
+										onclick={() => void handleAssignOption(opt)}
+										class="inline-flex items-center gap-1 rounded-full border border-border bg-subtle hover:bg-accent-tint hover:border-accent-pop hover:text-accent-pop px-3 py-1.5 text-xs font-medium text-ink-primary disabled:opacity-50 transition-colors"
 									>
-										{cat.name}
+										<span>{opt.name}</span>
+										{#if opt.reason}
+											<span class="text-[10px] text-ink-secondary">· {opt.reason}</span>
+										{/if}
 									</button>
 								{/each}
 
@@ -444,6 +493,22 @@
 								>
 									{showAllCategories ? 'Less' : 'More...'}
 								</button>
+
+								{#if onSplitTransaction && currentItem && !currentItem.isTransfer}
+									<button
+										type="button"
+										data-testid="catchup-split-btn"
+										disabled={isSaving}
+										onclick={() => {
+											const id = currentItem.id;
+											onClose();
+											onSplitTransaction(id);
+										}}
+										class="rounded-full border border-border bg-surface hover:bg-surface-hover px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink-primary disabled:opacity-50 transition-colors"
+									>
+										Split
+									</button>
+								{/if}
 							</div>
 						</div>
 

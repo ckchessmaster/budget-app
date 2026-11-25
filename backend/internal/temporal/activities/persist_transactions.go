@@ -150,6 +150,13 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 
 		// Conflict Resolution Strategy 1: promote matching MANUAL_OFFLINE entry
 		if manualMatch := MatchIncomingBankToManual(incoming, manualPool); manualMatch.Matched {
+			var prevAmount decimal.Decimal
+			for _, m := range manualPool {
+				if m.ID == manualMatch.ManualTxID {
+					prevAmount = m.Amount
+					break
+				}
+			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE transactions
 				SET external_transaction_id = $2,
@@ -162,6 +169,9 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 			`, manualMatch.ManualTxID, dto.ID, status, isCleared, cleanName, amt); err != nil {
 				return result, err
 			}
+			if err := reconcileSplitsOnSettle(ctx, tx, input.SyncScope.WorkspaceID, manualMatch.ManualTxID, prevAmount, amt, status, isCleared, cleanName); err != nil {
+				return result, err
+			}
 			manualPool = removePoolItem(manualPool, manualMatch.ManualTxID)
 			result.ManualMatchedCount++
 			continue
@@ -171,6 +181,13 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		if status == "POSTED" {
 			if pendingMatch := MatchPostedToPending(incoming, pendingPool); pendingMatch.IsMatched {
 				var settledDelta *decimal.Decimal
+				var prevAmount decimal.Decimal
+				for _, p := range pendingPool {
+					if p.ID == pendingMatch.ExistingID {
+						prevAmount = p.Amount
+						break
+					}
+				}
 				if !pendingMatch.TipDelta.IsZero() {
 					d := pendingMatch.TipDelta.Round(2)
 					settledDelta = &d
@@ -185,6 +202,9 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 					    settled_delta = $5
 					WHERE id = $1
 				`, pendingMatch.ExistingID, dto.ID, amt, cleanName, settledDelta); err != nil {
+					return result, err
+				}
+				if err := reconcileSplitsOnSettle(ctx, tx, input.SyncScope.WorkspaceID, pendingMatch.ExistingID, prevAmount, amt, "POSTED", true, cleanName); err != nil {
 					return result, err
 				}
 				pendingPool = removePoolItem(pendingPool, pendingMatch.ExistingID)
@@ -255,4 +275,59 @@ func loadTxPool(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, cond stri
 		pool = append(pool, r)
 	}
 	return pool, rows.Err()
+}
+
+// reconcileSplitsOnSettle keeps split child rows consistent when a parent settles or is promoted.
+// If the settled amount changed (e.g. restaurant tip added), an uncategorized remainder split is
+// appended so child splits continue summing to the parent amount and the transaction re-enters To Review.
+func reconcileSplitsOnSettle(
+	ctx context.Context,
+	tx pgx.Tx,
+	workspaceID, parentID uuid.UUID,
+	prevAmount, newAmount decimal.Decimal,
+	status string,
+	isCleared bool,
+	cleanName string,
+) error {
+	var hasSplits bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM transactions
+			WHERE parent_transaction_id = $1 AND workspace_id = $2
+		)
+	`, parentID, workspaceID).Scan(&hasSplits); err != nil {
+		return err
+	}
+	if !hasSplits {
+		return nil
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE transactions
+		SET status = $3,
+		    is_cleared = $4,
+		    merchant_clean = COALESCE(NULLIF(merchant_clean, ''), $5)
+		WHERE parent_transaction_id = $1 AND workspace_id = $2
+	`, parentID, workspaceID, status, isCleared, cleanName); err != nil {
+		return err
+	}
+
+	diff := newAmount.Sub(prevAmount).Round(2)
+	if !diff.IsZero() {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO transactions (
+				workspace_id, account_id, parent_transaction_id, origin, status,
+				amount, merchant_raw, merchant_clean, category_id, transaction_date,
+				user_notes, is_cleared
+			)
+			SELECT workspace_id, account_id, id, origin, status,
+			       $3, merchant_raw, merchant_clean, NULL, transaction_date,
+			       'Settled amount adjustment', is_cleared
+			FROM transactions
+			WHERE id = $1 AND workspace_id = $2
+		`, parentID, workspaceID, diff); err != nil {
+			return err
+		}
+	}
+	return nil
 }

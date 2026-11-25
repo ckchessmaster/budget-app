@@ -19,6 +19,7 @@ var (
 	ErrInterlockAccountMissing  = errors.New("cannot convert to debt baseline without an associated credit card account")
 	ErrInterlockNotCreditCard   = errors.New("associated account is not a credit card")
 	ErrInvalidInterlockStatus   = errors.New("status must be one of PENDING, RESOLVED_KEEP_DEDUCTION, RESOLVED_CONVERT_TO_DEBT")
+	ErrInvalidHeldAccount       = errors.New("held_in_account_id must reference a checking, savings, or cash account in this workspace")
 )
 
 type RolloverMode string
@@ -37,6 +38,7 @@ type Category struct {
 	MonthlyBudget         decimal.Decimal  `json:"monthly_budget"`
 	RolloverMode          RolloverMode     `json:"rollover_mode"`
 	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
 	TargetAmount          *decimal.Decimal `json:"target_amount"`
 	TargetDate            *time.Time       `json:"target_date"`
 	TargetCadence         string           `json:"target_cadence"`

@@ -19,6 +19,7 @@ type Service interface {
 	GetTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error)
 	ListTransactions(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error)
 	UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID, req UpdateTransactionRequest) (*Transaction, error)
+	ReplaceSplits(ctx context.Context, tx pgx.Tx, id uuid.UUID, req ReplaceSplitsRequest) (*Transaction, error)
 	DeleteTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 }
 
@@ -170,6 +171,12 @@ func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSp
 				n := item.UserNotes
 				splitNotes = &n
 			}
+			var splitCatID, splitIncID *uuid.UUID
+			if item.PlannedIncomeID != nil && *item.PlannedIncomeID != uuid.Nil {
+				splitIncID = item.PlannedIncomeID
+			} else {
+				splitCatID = item.CategoryID
+			}
 			child := Transaction{
 				WorkspaceID:         parent.WorkspaceID,
 				AccountID:           parent.AccountID,
@@ -179,7 +186,8 @@ func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSp
 				Amount:              item.Amount.Round(2),
 				MerchantRaw:         parent.MerchantRaw,
 				MerchantClean:       parent.MerchantClean,
-				CategoryID:          item.CategoryID,
+				CategoryID:          splitCatID,
+				PlannedIncomeID:     splitIncID,
 				TransactionDate:     parent.TransactionDate,
 				UserNotes:           splitNotes,
 				IsCleared:           parent.IsCleared,
@@ -214,18 +222,33 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 		return nil, err
 	}
 
+	hasSplits := len(existing.Splits) > 0
 	oldAmount := existing.Amount
-	if req.ClearCategory {
-		existing.CategoryID = nil
-	} else if req.CategoryID != nil {
-		existing.CategoryID = req.CategoryID
-		existing.PlannedIncomeID = nil
+	assignmentChanged := false
+	if !hasSplits {
+		if req.ClearCategory {
+			existing.CategoryID = nil
+			assignmentChanged = true
+		} else if req.CategoryID != nil {
+			existing.CategoryID = req.CategoryID
+			existing.PlannedIncomeID = nil
+			assignmentChanged = true
+		}
+		if req.ClearPlannedIncome {
+			existing.PlannedIncomeID = nil
+			assignmentChanged = true
+		} else if req.PlannedIncomeID != nil {
+			existing.PlannedIncomeID = req.PlannedIncomeID
+			existing.CategoryID = nil
+			assignmentChanged = true
+		}
 	}
-	if req.ClearPlannedIncome {
-		existing.PlannedIncomeID = nil
-	} else if req.PlannedIncomeID != nil {
-		existing.PlannedIncomeID = req.PlannedIncomeID
-		existing.CategoryID = nil
+	if assignmentChanged {
+		existing.CategorizedBy = "MANUAL"
+		existing.AppliedRuleID = nil
+		existing.NeedsReview = false
+	} else if req.ApproveReview {
+		existing.NeedsReview = false
 	}
 	if req.MerchantClean != nil {
 		existing.MerchantClean = req.MerchantClean
@@ -240,11 +263,20 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 		existing.IsCleared = *req.IsCleared
 	}
 	if req.Amount != nil {
-		existing.Amount = req.Amount.Round(2)
+		nextAmt := req.Amount.Round(2)
+		if hasSplits && !nextAmt.Equal(oldAmount) {
+			return nil, ErrCannotSplitTransaction
+		}
+		existing.Amount = nextAmt
 	}
 
 	if err := s.repo.Update(ctx, tx, existing); err != nil {
 		return nil, err
+	}
+	if hasSplits {
+		if err := s.repo.PropagateParentFieldsToSplits(ctx, tx, existing); err != nil {
+			return nil, err
+		}
 	}
 
 	delta := existing.Amount.Sub(oldAmount)
@@ -255,6 +287,121 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	}
 
 	return existing, nil
+}
+
+// ReplaceSplits replaces the child split rows of a transaction atomically, or unsplits it
+// back to a single category/income assignment when req.Splits is empty.
+func (s *service) ReplaceSplits(ctx context.Context, tx pgx.Tx, id uuid.UUID, req ReplaceSplitsRequest) (*Transaction, error) {
+	parent, err := s.repo.GetByID(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if parent.ParentTransactionID != nil || parent.IsTransfer || parent.Amount.IsZero() {
+		return nil, ErrCannotSplitTransaction
+	}
+	if s.accountRepo != nil {
+		acct, acctErr := s.accountRepo.GetByID(ctx, tx, parent.AccountID)
+		if acctErr != nil {
+			return nil, acctErr
+		}
+		if !acct.IsOnBudget {
+			return nil, ErrCannotSplitTransaction
+		}
+	}
+
+	if len(req.Splits) == 0 {
+		if err := s.repo.DeleteSplitsByParent(ctx, tx, parent.ID); err != nil {
+			return nil, err
+		}
+		if req.PlannedIncomeID != nil && *req.PlannedIncomeID != uuid.Nil {
+			parent.PlannedIncomeID = req.PlannedIncomeID
+			parent.CategoryID = nil
+		} else if req.CategoryID != nil && *req.CategoryID != uuid.Nil {
+			parent.CategoryID = req.CategoryID
+			parent.PlannedIncomeID = nil
+		} else {
+			parent.CategoryID = nil
+			parent.PlannedIncomeID = nil
+		}
+		parent.CategorizedBy = "MANUAL"
+		parent.AppliedRuleID = nil
+		parent.NeedsReview = false
+		if err := s.repo.Update(ctx, tx, parent); err != nil {
+			return nil, err
+		}
+		parent.Splits = nil
+		return parent, nil
+	}
+
+	if len(req.Splits) < 2 {
+		return nil, ErrSplitTooFewItems
+	}
+
+	parentSign := parent.Amount.Sign()
+	for _, item := range req.Splits {
+		amt := item.Amount.Round(2)
+		if amt.IsZero() || amt.Sign() != parentSign {
+			return nil, ErrSplitSignMismatch
+		}
+		hasCat := item.CategoryID != nil && *item.CategoryID != uuid.Nil
+		hasInc := item.PlannedIncomeID != nil && *item.PlannedIncomeID != uuid.Nil
+		if hasCat == hasInc {
+			return nil, ErrSplitCategoryRequired
+		}
+	}
+
+	if err := ValidateSplits(parent.Amount, req.Splits); err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.DeleteSplitsByParent(ctx, tx, parent.ID); err != nil {
+		return nil, err
+	}
+
+	parent.CategoryID = nil
+	parent.PlannedIncomeID = nil
+	parent.CategorizedBy = "MANUAL"
+	parent.AppliedRuleID = nil
+	parent.NeedsReview = false
+	if err := s.repo.Update(ctx, tx, parent); err != nil {
+		return nil, err
+	}
+
+	parent.Splits = make([]Transaction, 0, len(req.Splits))
+	for _, item := range req.Splits {
+		var splitNotes *string
+		if item.UserNotes != "" {
+			n := item.UserNotes
+			splitNotes = &n
+		}
+		var catID, incID *uuid.UUID
+		if item.PlannedIncomeID != nil && *item.PlannedIncomeID != uuid.Nil {
+			incID = item.PlannedIncomeID
+		} else {
+			catID = item.CategoryID
+		}
+		child := Transaction{
+			WorkspaceID:         parent.WorkspaceID,
+			AccountID:           parent.AccountID,
+			ParentTransactionID: &parent.ID,
+			Origin:              parent.Origin,
+			Status:              parent.Status,
+			Amount:              item.Amount.Round(2),
+			MerchantRaw:         parent.MerchantRaw,
+			MerchantClean:       parent.MerchantClean,
+			CategoryID:          catID,
+			PlannedIncomeID:     incID,
+			TransactionDate:     parent.TransactionDate,
+			UserNotes:           splitNotes,
+			IsCleared:           parent.IsCleared,
+		}
+		if err := s.repo.Create(ctx, tx, &child); err != nil {
+			return nil, err
+		}
+		parent.Splits = append(parent.Splits, child)
+	}
+
+	return parent, nil
 }
 
 func (s *service) DeleteTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {

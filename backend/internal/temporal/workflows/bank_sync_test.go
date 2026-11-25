@@ -36,6 +36,7 @@ func TestBankSyncWorkflow_Unit(t *testing.T) {
 		}, nil).Once()
 		env.OnActivity(acts.DetectAndLinkTransfersActivity, mock.Anything, scope).Return(1, nil).Once()
 		env.OnActivity(acts.NormalizeMerchantsActivity, mock.Anything, scope).Return(3, nil).Once()
+		env.OnActivity(acts.ApplyCategorizationRulesActivity, mock.Anything, scope).Return(2, nil).Once()
 		env.OnActivity(acts.EvaluateNotificationsActivity, mock.Anything, scope).Return(notifications.EvaluationResult{
 			SpendingAlertsSent:  1,
 			StatementAlertsSent: 1,
@@ -53,7 +54,7 @@ func TestBankSyncWorkflow_Unit(t *testing.T) {
 		if err := env.GetWorkflowResult(&res); err != nil {
 			t.Fatalf("failed to decode workflow result: %v", err)
 		}
-		if res.FetchedCount != 4 || res.InsertedCount != 3 || res.SettledCount != 1 || res.TransfersLinked != 1 || res.NormalizedCount != 3 || res.NotificationsSent != 2 {
+		if res.FetchedCount != 4 || res.InsertedCount != 3 || res.SettledCount != 1 || res.TransfersLinked != 1 || res.NormalizedCount != 3 || res.AutoCategorizedCount != 2 || res.NotificationsSent != 2 {
 			t.Fatalf("unexpected BankSyncResult: %+v", res)
 		}
 		env.AssertExpectations(t)
@@ -81,6 +82,7 @@ func TestBankSyncWorkflow_Unit(t *testing.T) {
 		}, nil).Once()
 		env.OnActivity(acts.DetectAndLinkTransfersActivity, mock.Anything, scope).Return(0, nil).Once()
 		env.OnActivity(acts.NormalizeMerchantsActivity, mock.Anything, scope).Return(2, nil).Once()
+		env.OnActivity(acts.ApplyCategorizationRulesActivity, mock.Anything, scope).Return(0, nil).Once()
 		env.OnActivity(acts.EvaluateNotificationsActivity, mock.Anything, scope).Return(notifications.EvaluationResult{}, errors.New("push gateway down")).Times(3)
 
 		env.ExecuteWorkflow(BankSyncWorkflow, BankSyncInput{SyncScope: scope})

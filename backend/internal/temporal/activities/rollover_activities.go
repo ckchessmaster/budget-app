@@ -326,8 +326,8 @@ func loadSourceMonthCategoryStates(
 		),
 		cat_spend AS (
 			SELECT t.category_id,
-			       COALESCE(SUM(CASE WHEN t.status = 'POSTED' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_cleared,
-			       COALESCE(SUM(CASE WHEN t.status = 'PENDING' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_pending
+			       COALESCE(SUM(CASE WHEN t.status = 'POSTED' THEN -t.amount ELSE 0 END), 0) AS spent_cleared,
+			       COALESCE(SUM(CASE WHEN t.status = 'PENDING' THEN -t.amount ELSE 0 END), 0) AS spent_pending
 			FROM transactions t
 			INNER JOIN accounts a ON a.id = t.account_id
 			WHERE t.workspace_id = $3
@@ -420,14 +420,13 @@ func loadWorkspaceCategoryCCSpend(
 	targetMonth time.Time,
 ) (map[uuid.UUID][]budget.CCAccountSpend, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT t.category_id, t.account_id, COALESCE(SUM(-t.amount), 0) AS spent
+		SELECT t.category_id, t.account_id, GREATEST(0, COALESCE(SUM(-t.amount), 0)) AS spent
 		FROM transactions t
 		INNER JOIN accounts a ON a.id = t.account_id
 		WHERE t.workspace_id = $3
 		  AND a.workspace_id = $3
 		  AND t.category_id IS NOT NULL
 		  AND t.is_transfer = FALSE
-		  AND t.amount < 0
 		  AND a.is_on_budget = TRUE
 		  AND a.type = 'credit_card'
 		  AND t.transaction_date >= $1::date

@@ -27,6 +27,7 @@ import (
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
+	"github.com/ckchessmaster/budget-app/backend/internal/categorization"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
@@ -208,6 +209,9 @@ func (s *Server) setupRoutes() {
 
 			// Milestone 2: Zero-based budget engine & ledger routes
 			budget.RegisterRoutes(protected, s.pool)
+
+			// Categorization recommendations & rules
+			categorization.RegisterRoutes(protected, s.pool)
 
 			// Milestone 3: Accounts, solvency, debt paydown, and transactions
 			account.RegisterRoutes(protected, s.pool)

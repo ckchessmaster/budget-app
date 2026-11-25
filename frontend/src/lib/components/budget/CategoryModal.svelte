@@ -6,11 +6,13 @@
 		updateMonthlyPlanned
 	} from '$lib/api/budget';
 	import type { CategoryBudget, RolloverMode, TargetCadence } from '$lib/types/budget';
+	import type { AccountItem } from '$lib/types/transaction';
 
 	interface Props {
 		isOpen: boolean;
 		editingCategory: CategoryBudget | null;
 		allCategories: CategoryBudget[];
+		accounts?: AccountItem[];
 		availableGroups?: string[];
 		defaultGroupName?: string;
 		yearMonth?: string;
@@ -22,6 +24,7 @@
 		isOpen,
 		editingCategory,
 		allCategories,
+		accounts = [],
 		availableGroups = [],
 		defaultGroupName = 'Essentials',
 		yearMonth,
@@ -32,8 +35,10 @@
 	let name = $state('');
 	let groupName = $state('');
 	let monthlyBudget = $state('0.00');
-	let rolloverMode = $state<RolloverMode>('SWEEP');
+	let itemKind = $state<'EXPENSE' | 'FUND'>('EXPENSE');
+	let capAtGoal = $state(false);
 	let sweepTargetCategoryId = $state<string>('');
+	let heldInAccountId = $state<string>('');
 	let targetCadence = $state<TargetCadence>('NONE');
 	let targetAmount = $state('');
 	let targetDate = $state('');
@@ -41,24 +46,36 @@
 	let isSubmitting = $state(false);
 	let errorMsg = $state('');
 
+	let cashAccounts = $derived(
+		accounts.filter((a) => a.type === 'checking' || a.type === 'savings' || a.type === 'cash')
+	);
+
 	$effect(() => {
 		if (isOpen) {
 			if (editingCategory) {
 				name = editingCategory.name;
 				groupName = editingCategory.groupName;
 				monthlyBudget = editingCategory.originalPlanned.toFixed(2);
-				rolloverMode = editingCategory.rolloverMode;
+				itemKind = editingCategory.rolloverMode === 'SWEEP' ? 'EXPENSE' : 'FUND';
+				capAtGoal = editingCategory.rolloverMode === 'TARGET_CAP';
 				sweepTargetCategoryId = editingCategory.sweepTargetCategoryId ?? '';
+				heldInAccountId = editingCategory.heldInAccountId ?? '';
 				targetCadence = editingCategory.targetCadence ?? 'NONE';
 				targetAmount =
 					editingCategory.targetAmount != null ? editingCategory.targetAmount.toFixed(2) : '';
 				targetDate = editingCategory.targetDate ?? '';
+				startingBalance =
+					editingCategory.carryoverBalance != null
+						? editingCategory.carryoverBalance.toFixed(2)
+						: '0.00';
 			} else {
 				name = '';
 				groupName = defaultGroupName?.trim() || 'Essentials';
 				monthlyBudget = '0.00';
-				rolloverMode = 'SWEEP';
+				itemKind = 'EXPENSE';
+				capAtGoal = false;
 				sweepTargetCategoryId = '';
+				heldInAccountId = '';
 				targetCadence = 'NONE';
 				targetAmount = '';
 				targetDate = '';
@@ -85,6 +102,14 @@
 		return out;
 	});
 
+	let resolvedRolloverMode = $derived<RolloverMode>(
+		itemKind === 'EXPENSE'
+			? 'SWEEP'
+			: capAtGoal && Number(targetAmount) > 0
+				? 'TARGET_CAP'
+				: 'ROLLOVER_BALANCE'
+	);
+
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		isSubmitting = true;
@@ -94,21 +119,28 @@
 		const nextSortOrder =
 			editingCategory?.sortOrder ??
 			Math.max(-1, ...allCategories.map((c) => c.sortOrder)) + 1;
-		const startingVal = Number(startingBalance);
+		const parsedStarting = startingBalance.trim() === '' ? null : Number(startingBalance);
+		if (parsedStarting !== null && (!Number.isFinite(parsedStarting) || parsedStarting < 0)) {
+			errorMsg = 'Starting balance must be 0 or greater.';
+			isSubmitting = false;
+			return;
+		}
+
 		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
 			monthly_budget: plannedVal,
-			rollover_mode: rolloverMode,
+			rollover_mode: resolvedRolloverMode,
 			sweep_target_category_id:
-				rolloverMode === 'SWEEP' && sweepTargetCategoryId ? sweepTargetCategoryId : null,
+				resolvedRolloverMode === 'SWEEP' && sweepTargetCategoryId ? sweepTargetCategoryId : null,
+			held_in_account_id: itemKind === 'FUND' && heldInAccountId ? heldInAccountId : null,
 			target_cadence: targetCadence,
 			target_amount: targetAmount ? Number(targetAmount) : null,
 			target_date: targetDate ? targetDate : null,
 			sort_order: nextSortOrder,
-			...(!editingCategory && Number.isFinite(startingVal) && startingVal > 0
+			...(itemKind === 'FUND' && parsedStarting !== null
 				? {
-						starting_balance: startingVal,
+						starting_balance: Math.round(parsedStarting * 100) / 100,
 						...(yearMonth ? { year_month: yearMonth } : {})
 					}
 				: {})
@@ -214,10 +246,44 @@
 					</div>
 				</div>
 
-				<div class="grid grid-cols-2 gap-3">
+				<!-- Type Switch: Monthly Expense vs Fund / Savings Bucket -->
+				<div class="space-y-1.5">
+					<span class="block text-xs font-medium text-ink-secondary">Budget Type</span>
+					<div class="grid grid-cols-2 gap-1.5 rounded-xl border border-border bg-subtle p-1">
+						<button
+							type="button"
+							data-testid="cat-kind-expense"
+							onclick={() => (itemKind = 'EXPENSE')}
+							class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {itemKind === 'EXPENSE'
+								? 'bg-surface text-ink-primary shadow-xs border border-border'
+								: 'text-ink-secondary hover:text-ink-primary'}"
+						>
+							Monthly Expense
+						</button>
+						<button
+							type="button"
+							data-testid="cat-kind-fund"
+							onclick={() => (itemKind = 'FUND')}
+							class="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors {itemKind === 'FUND'
+								? 'bg-surface text-accent-pop shadow-xs border border-accent-pop/30'
+								: 'text-ink-secondary hover:text-ink-primary'}"
+						>
+							Fund / Savings Bucket
+						</button>
+					</div>
+					<p class="text-[11px] text-ink-muted">
+						{#if itemKind === 'EXPENSE'}
+							Resets each month — unspent funds return to Ready to Assign (or sweep to a chosen bucket).
+						{:else}
+							Carries a running balance month to month — reserve money here and spend from it anytime.
+						{/if}
+					</p>
+				</div>
+
+				<div class="grid {itemKind === 'FUND' ? 'grid-cols-2' : 'grid-cols-1'} gap-3">
 					<div>
 						<label for="cat-budget" class="block text-xs font-medium text-ink-secondary mb-1">
-							Monthly Budget ($)
+							{itemKind === 'FUND' ? 'Monthly Contribution ($)' : 'Monthly Budget ($)'}
 						</label>
 						<input
 							id="cat-budget"
@@ -229,52 +295,36 @@
 							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
 						/>
 					</div>
-					<div>
-						<label for="cat-rollover" class="flex items-center gap-1 text-xs font-medium text-ink-secondary mb-1">
-							<span>Rollover Mode</span>
-							<span
-								title="Sweep: leftover funds at month-end return to Ready to Assign (or a target category). Rollover Balance: leftover funds stay in this category next month. Target Cap: leftover funds roll over up to the monthly budget cap."
-								aria-label="Rollover Mode explanation"
-								class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-border text-[10px] text-ink-muted cursor-help"
-							>?</span>
-						</label>
-						<select
-							id="cat-rollover"
-							bind:value={rolloverMode}
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
-						>
-							<option value="SWEEP">Sweep</option>
-							<option value="ROLLOVER_BALANCE">Rollover Balance</option>
-							<option value="TARGET_CAP">Target Cap</option>
-						</select>
-						<p class="mt-1 text-[11px] text-ink-muted">
-							{#if rolloverMode === 'SWEEP'}
-								Leftover funds at month-end sweep out of this category.
-							{:else if rolloverMode === 'ROLLOVER_BALANCE'}
-								Leftover funds carry forward into next month's balance.
-							{:else}
-								Leftover funds carry forward up to the monthly budget cap.
-							{/if}
-						</p>
-					</div>
+
+					{#if itemKind === 'FUND'}
+						<div>
+							<label for="cat-starting-balance" class="block text-xs font-medium text-ink-secondary mb-1">
+								{editingCategory ? 'Prior Saved Balance ($)' : 'Starting Balance ($)'}
+							</label>
+							<input
+								id="cat-starting-balance"
+								type="number"
+								step="0.01"
+								min="0"
+								placeholder="0.00"
+								bind:value={startingBalance}
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+						</div>
+					{/if}
 				</div>
 
-				{#if rolloverMode === 'SWEEP' && sweepCandidates.length > 0}
+				{#if itemKind === 'EXPENSE' && sweepCandidates.length > 0}
 					<div>
 						<label for="cat-sweep-target" class="flex items-center gap-1 text-xs font-medium text-ink-secondary mb-1">
-							<span>Sweep Target Category (optional)</span>
-							<span
-								title="Where unspent funds go at month-end when Sweep is active. Leave as None to return them to Ready to Assign."
-								aria-label="Sweep Target Category explanation"
-								class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-border text-[10px] text-ink-muted cursor-help"
-							>?</span>
+							<span>Sweep Leftover To (optional)</span>
 						</label>
 						<select
 							id="cat-sweep-target"
 							bind:value={sweepTargetCategoryId}
 							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
 						>
-							<option value="">None (return to Ready to Assign)</option>
+							<option value="">Ready to Assign</option>
 							{#each sweepCandidates as cand}
 								<option value={cand.id}>{cand.groupName} — {cand.name}</option>
 							{/each}
@@ -282,22 +332,23 @@
 					</div>
 				{/if}
 
-				{#if !editingCategory && rolloverMode !== 'SWEEP'}
+				{#if itemKind === 'FUND'}
 					<div>
-						<label for="cat-starting-balance" class="block text-xs font-medium text-ink-secondary mb-1">
-							Starting Balance ($) <span class="text-ink-muted font-normal">(optional)</span>
+						<label for="cat-held-account" class="block text-xs font-medium text-ink-secondary mb-1">
+							Held in Account <span class="text-ink-muted font-normal">(optional)</span>
 						</label>
-						<input
-							id="cat-starting-balance"
-							type="number"
-							step="0.01"
-							min="0"
-							placeholder="0.00"
-							bind:value={startingBalance}
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-						/>
+						<select
+							id="cat-held-account"
+							bind:value={heldInAccountId}
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
+						>
+							<option value="">None (virtual bucket across all cash)</option>
+							{#each cashAccounts as acct (acct.id)}
+								<option value={acct.id}>{acct.name}</option>
+							{/each}
+						</select>
 						<p class="mt-1 text-[11px] text-ink-muted">
-							Sets the initial carryover balance for this sinking fund in the current month.
+							Track how much of a checking or savings account is reserved for this fund.
 						</p>
 					</div>
 				{/if}
@@ -320,7 +371,7 @@
 					</div>
 					<div>
 						<label for="cat-target-amt" class="block text-xs font-medium text-ink-secondary mb-1">
-							Target ($)
+							Goal Target ($)
 						</label>
 						<input
 							id="cat-target-amt"
@@ -344,6 +395,23 @@
 						/>
 					</div>
 				</div>
+
+				{#if itemKind === 'FUND' && Number(targetAmount) > 0}
+					<label
+						for="cat-cap-at-goal"
+						class="flex items-start gap-2 rounded-lg border border-border bg-subtle px-3 py-2 cursor-pointer"
+					>
+						<input
+							id="cat-cap-at-goal"
+							type="checkbox"
+							bind:checked={capAtGoal}
+							class="mt-0.5 rounded border-border bg-canvas accent-accent-pop"
+						/>
+						<span class="text-[11px] text-ink-secondary">
+							<strong class="text-ink-primary">Cap balance at goal target</strong> — stop adding monthly contributions once the fund reaches ${Number(targetAmount).toFixed(2)}.
+						</span>
+					</label>
+				{/if}
 
 				{#if errorMsg}
 					<p class="text-xs text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-lg px-3 py-2">

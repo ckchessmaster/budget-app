@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,6 +158,7 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		MonthlyBudget:         req.MonthlyBudget,
 		RolloverMode:          RolloverMode(req.RolloverMode),
 		SweepTargetCategoryID: req.SweepTargetCategoryID,
+		HeldInAccountID:       req.HeldInAccountID,
 		TargetAmount:          req.TargetAmount,
 		TargetDate:            targetDate,
 		TargetCadence:         req.TargetCadence,
@@ -164,16 +166,25 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		wsID, wsErr := db.ActiveWorkspaceID(r.Context(), tx)
+		if wsErr != nil {
+			return wsErr
+		}
+		if cat.RolloverMode != RolloverSweep && cat.HeldInAccountID != nil {
+			if err := validateHeldInAccount(r.Context(), tx, wsID, *cat.HeldInAccountID); err != nil {
+				return err
+			}
+		}
 		if err := h.catRepo.Create(r.Context(), tx, cat); err != nil {
 			return err
 		}
-		if req.StartingBalance != nil && req.StartingBalance.GreaterThan(decimal.Zero) {
+		if req.StartingBalance != nil && req.StartingBalance.GreaterThanOrEqual(decimal.Zero) && cat.RolloverMode != RolloverSweep {
 			_, err := tx.Exec(r.Context(), `
 				INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned, carryover_balance)
 				VALUES ($1, $2, $3::date, $4, $5)
 				ON CONFLICT (workspace_id, category_id, year_month)
 				DO UPDATE SET carryover_balance = EXCLUDED.carryover_balance
-			`, cat.WorkspaceID, cat.ID, startYM, cat.MonthlyBudget, *req.StartingBalance)
+			`, cat.WorkspaceID, cat.ID, startYM, cat.MonthlyBudget, req.StartingBalance.Round(2))
 			if err != nil {
 				return fmt.Errorf("failed to set starting balance: %w", err)
 			}
@@ -181,7 +192,7 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, ErrCyclicSweep) {
+		if errors.Is(err, ErrCyclicSweep) || errors.Is(err, ErrInvalidHeldAccount) {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -252,6 +263,23 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.StartingBalance != nil && req.StartingBalance.LessThan(decimal.Zero) {
+		writeErr(w, http.StatusBadRequest, "starting_balance must be >= 0")
+		return
+	}
+
+	var startYM time.Time
+	if req.YearMonth != nil && *req.YearMonth != "" {
+		parsedYM, err := time.Parse("2006-01", *req.YearMonth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid year_month format, expected YYYY-MM")
+			return
+		}
+		startYM = NormalizeYearMonth(parsedYM)
+	} else {
+		startYM = NormalizeYearMonth(time.Now().UTC())
+	}
+
 	cat := &Category{
 		ID:                    catID,
 		Name:                  req.Name,
@@ -259,6 +287,7 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		MonthlyBudget:         req.MonthlyBudget,
 		RolloverMode:          RolloverMode(req.RolloverMode),
 		SweepTargetCategoryID: req.SweepTargetCategoryID,
+		HeldInAccountID:       req.HeldInAccountID,
 		TargetAmount:          req.TargetAmount,
 		TargetDate:            targetDate,
 		TargetCadence:         req.TargetCadence,
@@ -266,14 +295,37 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-		return h.catRepo.Update(r.Context(), tx, cat)
+		wsID, wsErr := db.ActiveWorkspaceID(r.Context(), tx)
+		if wsErr != nil {
+			return wsErr
+		}
+		if cat.RolloverMode != RolloverSweep && cat.HeldInAccountID != nil {
+			if err := validateHeldInAccount(r.Context(), tx, wsID, *cat.HeldInAccountID); err != nil {
+				return err
+			}
+		}
+		if err := h.catRepo.Update(r.Context(), tx, cat); err != nil {
+			return err
+		}
+		if req.StartingBalance != nil && cat.RolloverMode != RolloverSweep {
+			_, err := tx.Exec(r.Context(), `
+				INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned, carryover_balance)
+				VALUES ($1, $2, $3::date, $4, $5)
+				ON CONFLICT (workspace_id, category_id, year_month)
+				DO UPDATE SET carryover_balance = EXCLUDED.carryover_balance
+			`, wsID, cat.ID, startYM, cat.MonthlyBudget, req.StartingBalance.Round(2))
+			if err != nil {
+				return fmt.Errorf("failed to update starting balance: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "category_not_found")
 			return
 		}
-		if errors.Is(err, ErrCyclicSweep) {
+		if errors.Is(err, ErrCyclicSweep) || errors.Is(err, ErrInvalidHeldAccount) {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -438,4 +490,25 @@ func (h *Handler) UpdateMonthlyPlanned(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func validateHeldInAccount(ctx context.Context, tx pgx.Tx, wsID, acctID uuid.UUID) error {
+	var acctType string
+	err := tx.QueryRow(ctx, `
+		SELECT type::text
+		FROM accounts
+		WHERE id = $1 AND workspace_id = $2
+	`, acctID, wsID).Scan(&acctType)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidHeldAccount
+		}
+		return fmt.Errorf("failed to validate held account: %w", err)
+	}
+	switch acctType {
+	case "checking", "savings", "cash":
+		return nil
+	default:
+		return ErrInvalidHeldAccount
+	}
 }

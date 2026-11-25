@@ -368,8 +368,16 @@ describe('transactionReview Catch Up helpers', () => {
 			[],
 			3
 		);
-		expect(traderJoesSuggestions).toHaveLength(3);
+		expect(traderJoesSuggestions).toHaveLength(1);
 		expect(traderJoesSuggestions[0].name).toBe('Groceries');
+
+		const unknownSuggestions = suggestCategoriesForTransaction(
+			{ ...catchUpItems[1], id: 'tx-unknown', merchantRaw: 'ZXQWQ UNKNOWN VENDOR' },
+			categories,
+			[],
+			3
+		);
+		expect(unknownSuggestions).toHaveLength(0);
 
 		const coffeeSuggestions = suggestCategoriesForTransaction(
 			catchUpItems[0],

@@ -95,4 +95,22 @@ describe('SolvencyPopover', () => {
 
 		expect(queryByTestId('solvency-popover-trigger')).toBeNull();
 	});
+
+	it('displays Reserved in Funds and Unreserved Cash when sinking funds hold reserves', async () => {
+		const { getByTestId, getByText } = render(SolvencyPopover, {
+			props: {
+				solvency: {
+					...healthySolvency,
+					totalReservedInFunds: 3000,
+					unreservedCash: 9304.8
+				}
+			}
+		});
+
+		await fireEvent.click(getByTestId('solvency-popover-trigger'));
+		expect(getByText('Reserved in Funds')).toBeTruthy();
+		expect(getByText('$3,000.00')).toBeTruthy();
+		expect(getByText('Unreserved Cash')).toBeTruthy();
+		expect(getByText('$9,304.80')).toBeTruthy();
+	});
 });

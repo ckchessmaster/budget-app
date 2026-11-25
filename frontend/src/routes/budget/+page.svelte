@@ -10,13 +10,19 @@
 		updateMonthlyPlanned
 	} from '$lib/api/budget';
 	import {
+		applySimilarCategorization,
+		fetchCategorizationSuggestions
+	} from '$lib/api/categorization';
+	import {
 		createTransaction,
 		deleteTransaction,
 		fetchAccounts,
 		fetchSolvencyReport,
 		fetchTransactions,
+		replaceTransactionSplits,
 		updateTransaction
 	} from '$lib/api/transactions';
+	import RuleModal from '$lib/components/settings/RuleModal.svelte';
 	import BudgetHeader from '$lib/components/budget/BudgetHeader.svelte';
 	import CategoryFocusPills, {
 		FOCUS_ALL,
@@ -48,7 +54,13 @@
 		SpendRecommendation
 	} from '$lib/types/budget';
 	import type {
+		ApplySimilarPayload,
+		CategorizationSuggestion,
+		CreateRulePayload
+	} from '$lib/types/categorization';
+	import type {
 		AccountItem,
+		ReplaceSplitsPayload,
 		SolvencyReport,
 		TransactionItemModel,
 		UpdateTransactionPayload
@@ -81,6 +93,10 @@
 	let accounts = $state<AccountItem[]>([]);
 	let solvency = $state<SolvencyReport | null>(null);
 	let recommendations = $state<SpendRecommendation[]>([]);
+	let suggestionsByTxId = $state<Record<string, CategorizationSuggestion[]>>({});
+
+	let isRuleModalOpen = $state(false);
+	let ruleModalPrefill = $state<Partial<CreateRulePayload> | null>(null);
 
 	let isLoading = $state(false);
 	let syncing = $state(false);
@@ -111,6 +127,7 @@
 	let reorderAnnouncement = $state('');
 	let announceTimer: ReturnType<typeof setTimeout> | null = null;
 	let selectedTransactionId = $state<string | null>(null);
+	let detailOpenSplitMode = $state(false);
 	let isDesktop = $state(
 		typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
 	);
@@ -149,6 +166,7 @@
 			if (typeof navigator !== 'undefined' && !navigator.onLine) {
 				isOffline = true;
 				recommendations = [];
+				suggestionsByTxId = {};
 				const [cachedAccts, cachedCats] = await Promise.all([
 					localDB.getCachedAccounts(),
 					localDB.getCachedCategories()
@@ -201,12 +219,13 @@
 			}
 
 			isOffline = false;
-			const [budgetRes, txRes, acctsRes, solvRes, recsRes] = await Promise.all([
+			const [budgetRes, txRes, acctsRes, solvRes, recsRes, sugRes] = await Promise.all([
 				fetchMonthBudget(month),
 				fetchTransactions({ month, limit: 200 }).catch(() => ({ items: [], total: 0 })),
 				fetchAccounts().catch(() => []),
 				fetchSolvencyReport().catch(() => null),
-				fetchSpendRecommendations(month).catch(() => [])
+				fetchSpendRecommendations(month).catch(() => []),
+				fetchCategorizationSuggestions(month).catch(() => ({}))
 			]);
 			if (seq !== loadSeq) return;
 
@@ -215,6 +234,7 @@
 			accounts = acctsRes;
 			solvency = solvRes;
 			recommendations = recsRes;
+			suggestionsByTxId = sugRes;
 
 			if (!hasAutoPromptedCatchUp && !silent) {
 				hasAutoPromptedCatchUp = true;
@@ -413,6 +433,7 @@
 			monthly_budget: cat.originalPlanned,
 			rollover_mode: cat.rolloverMode,
 			sweep_target_category_id: cat.sweepTargetCategoryId,
+			held_in_account_id: cat.heldInAccountId ?? null,
 			target_amount: cat.targetAmount,
 			target_date: cat.targetDate,
 			target_cadence: cat.targetCadence,
@@ -950,8 +971,12 @@
 		isGroupModalOpen = true;
 	}
 
-	function handleSelectTransaction(txId: string) {
+	function handleSelectTransaction(txId: string, opts?: { openSplit?: boolean }) {
 		selectedTransactionId = txId;
+		detailOpenSplitMode = Boolean(opts?.openSplit);
+		if (!isDesktop) {
+			isMobileDrawerOpen = false;
+		}
 	}
 
 	async function handleUpdatePlanned(catId: string, newPlanned: number) {
@@ -978,6 +1003,44 @@
 	async function handleUpdateTransaction(txId: string, payload: UpdateTransactionPayload) {
 		await updateTransaction(txId, payload);
 		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleReplaceSplits(txId: string, payload: ReplaceSplitsPayload) {
+		await replaceTransactionSplits(txId, payload);
+		detailOpenSplitMode = false;
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleApproveReview(txId: string) {
+		await updateTransaction(txId, { approveReview: true });
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleApplySimilar(payload: ApplySimilarPayload): Promise<number> {
+		const count = await applySimilarCategorization(payload);
+		await loadWorkspace(currentMonth, true);
+		return count;
+	}
+
+	function handleCreateRuleFromTx(
+		tx: TransactionItemModel,
+		opts?: { categoryId?: string | null; plannedIncomeName?: string | null }
+	) {
+		const incomeName =
+			opts?.plannedIncomeName ??
+			(tx.plannedIncomeId
+				? budgetData?.incomes.find((i) => i.id === tx.plannedIncomeId)?.name ?? null
+				: null);
+		ruleModalPrefill = {
+			matchType: 'CONTAINS',
+			merchantPattern: tx.merchantClean?.trim() || tx.merchantRaw,
+			accountId: tx.accountId,
+			direction: tx.amount < 0 ? 'EXPENSE' : tx.amount > 0 ? 'INFLOW' : 'ANY',
+			categoryId: incomeName ? null : opts?.categoryId ?? tx.categoryId ?? null,
+			plannedIncomeName: incomeName,
+			applyNow: true
+		};
+		isRuleModalOpen = true;
 	}
 
 	async function handleCreateTransaction(payload: {
@@ -1227,6 +1290,7 @@
 									groupName={group.groupName}
 									color={group.color}
 									categories={group.cats}
+									{accountById}
 									{displayMode}
 									{transactionsByCategory}
 									{draggingCategoryId}
@@ -1279,11 +1343,21 @@
 					account={accountById.get(selectedTransaction.accountId) ?? null}
 					categories={budgetData?.categories ?? []}
 					incomes={budgetData?.incomes ?? []}
-					onClose={() => (selectedTransactionId = null)}
+					suggestions={suggestionsByTxId[selectedTransaction.id] ?? []}
+					initialSplitMode={detailOpenSplitMode}
+					onClose={() => {
+						selectedTransactionId = null;
+						detailOpenSplitMode = false;
+					}}
 					onUpdateTransaction={handleUpdateTransaction}
+					onReplaceSplits={handleReplaceSplits}
+					onApproveReview={handleApproveReview}
+					onCreateRule={handleCreateRuleFromTx}
 					onDeleteTransaction={handleDeleteTransaction}
 				/>
-			{:else}
+			{/if}
+
+			<div class="flex-1 min-h-0 flex flex-col {selectedTransaction ? 'hidden' : ''}">
 				<div class="px-4 py-3 border-b border-border bg-subtle flex items-center justify-between shrink-0">
 					<h2 class="text-xs font-bold uppercase tracking-wider text-ink-primary">Transactions</h2>
 					{#if toReviewCount > 0}
@@ -1301,13 +1375,18 @@
 						{accounts}
 						categories={budgetData?.categories ?? []}
 						incomes={budgetData?.incomes ?? []}
+						{suggestionsByTxId}
 						{isOffline}
 						syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 						{activeCategoryFilterId}
 						onClearCategoryFilter={() => (activeCategoryFilterId = null)}
+						onSelectTransaction={handleSelectTransaction}
 						onCreateTransaction={handleCreateTransaction}
 						onCategorizeTransaction={handleCategorizeTransaction}
 						onAssignTransactionToIncome={handleAssignTransactionToIncome}
+						onApproveReview={handleApproveReview}
+						onCreateRule={handleCreateRuleFromTx}
+						onApplySimilar={handleApplySimilar}
 						onUpdateTransaction={handleUpdateTransaction}
 						onDeleteTransaction={handleDeleteTransaction}
 						onSyncNow={handleSyncNow}
@@ -1315,7 +1394,7 @@
 						onTransactionDragEnd={() => (draggingTxId = null)}
 					/>
 				</div>
-			{/if}
+			</div>
 		</aside>
 	</div>
 </div>
@@ -1333,13 +1412,18 @@
 		{accounts}
 		categories={budgetData?.categories ?? []}
 		incomes={budgetData?.incomes ?? []}
+		{suggestionsByTxId}
 		{isOffline}
 		syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 		{activeCategoryFilterId}
 		onClearCategoryFilter={() => (activeCategoryFilterId = null)}
+		onSelectTransaction={handleSelectTransaction}
 		onCreateTransaction={handleCreateTransaction}
 		onCategorizeTransaction={handleCategorizeTransaction}
 		onAssignTransactionToIncome={handleAssignTransactionToIncome}
+		onApproveReview={handleApproveReview}
+		onCreateRule={handleCreateRuleFromTx}
+		onApplySimilar={handleApplySimilar}
 		onUpdateTransaction={handleUpdateTransaction}
 		onDeleteTransaction={handleDeleteTransaction}
 		onSyncNow={handleSyncNow}
@@ -1364,6 +1448,7 @@
 	isOpen={isCategoryModalOpen}
 	{editingCategory}
 	allCategories={budgetData?.categories ?? []}
+	{accounts}
 	availableGroups={allGroupNames}
 	defaultGroupName={modalDefaultGroup}
 	yearMonth={currentMonth}
@@ -1428,8 +1513,16 @@
 				account={accountById.get(selectedTransaction.accountId) ?? null}
 				categories={budgetData?.categories ?? []}
 				incomes={budgetData?.incomes ?? []}
-				onClose={() => (selectedTransactionId = null)}
+				suggestions={suggestionsByTxId[selectedTransaction.id] ?? []}
+				initialSplitMode={detailOpenSplitMode}
+				onClose={() => {
+					selectedTransactionId = null;
+					detailOpenSplitMode = false;
+				}}
 				onUpdateTransaction={handleUpdateTransaction}
+				onReplaceSplits={handleReplaceSplits}
+				onApproveReview={handleApproveReview}
+				onCreateRule={handleCreateRuleFromTx}
 				onDeleteTransaction={handleDeleteTransaction}
 			/>
 		</div>
@@ -1443,8 +1536,21 @@
 	allTransactions={transactions}
 	{accounts}
 	categories={budgetData?.categories ?? []}
+	{suggestionsByTxId}
 	onCategorizeTransaction={handleCategorizeTransaction}
+	onAssignTransactionToIncome={(txId, incId) => handleAssignTransactionToIncome(txId, incId)}
+	onSplitTransaction={(txId) => handleSelectTransaction(txId, { openSplit: true })}
 	onClose={() => (isCatchUpModalOpen = false)}
+/>
+
+<RuleModal
+	isOpen={isRuleModalOpen}
+	prefill={ruleModalPrefill}
+	categories={budgetData?.categories ?? []}
+	incomes={budgetData?.incomes ?? []}
+	{accounts}
+	onClose={() => (isRuleModalOpen = false)}
+	onSaved={() => void loadWorkspace(currentMonth, true)}
 />
 
 <style>
