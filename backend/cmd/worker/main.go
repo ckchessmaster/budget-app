@@ -77,6 +77,14 @@ func main() {
 	pushSvc := notifications.NewWebPushService(pool, vapidCfg, nil)
 	notifEval := notifications.NewEvaluator(pool, pushSvc)
 
+	// Both the demo activities and the sync activities need the bridge address the API
+	// serves. The chart sets this in the shared ConfigMap; the fallback only matters for a
+	// local run where the worker and the API share a host.
+	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
+	if mockBaseURL == "" {
+		mockBaseURL = demo.DefaultMockBridgeBaseURL
+	}
+
 	w := worker.New(c, temporalinternal.TaskQueue, worker.Options{})
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
 	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
@@ -88,6 +96,9 @@ func main() {
 		Client:                simplefin.NewClient(nil),
 		Vault:                 vault,
 		NotificationEvaluator: notifEval,
+		// A demo sandbox stores the bridge address it was seeded with, so a sync has to
+		// rebase it onto this worker's own view of the bridge before dialing.
+		MockBaseURL: mockBaseURL,
 	})
 	w.RegisterActivity(&activities.RolloverActivities{
 		Pool: pool,
@@ -97,13 +108,6 @@ func main() {
 		Client: simplefin.NewClient(nil),
 		Vault:  vault,
 	})
-	// The worker builds demo access URLs, so it needs the same bridge address the API
-	// dials. The chart sets this in the shared ConfigMap; the fallback only matters for a
-	// local run where the worker and the API share a host.
-	mockBaseURL := os.Getenv("MOCK_SIMPLEFIN_BASE_URL")
-	if mockBaseURL == "" {
-		mockBaseURL = demo.DefaultMockBridgeBaseURL
-	}
 	w.RegisterActivity(&activities.DemoActivities{
 		Pool:        pool,
 		Vault:       vault,

@@ -170,6 +170,13 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
    refuses to render a loopback `MOCK_SIMPLEFIN_BASE_URL` while the worker is separate, because
    that fails inside the workflow rather than at install time. The bridge is deliberately kept
    off the ingress; narrowing it further is #129.
+   Note the render guard only checks the worker's environment. The bridge address is also
+   baked into `simplefin_connections.encrypted_access_url` when a demo sandbox is seeded, so
+   that row is a snapshot of a deployment: a renamed release, a moved namespace, or a sandbox
+   seeded before the worker split leaves every sync dialing the worker's own loopback, which
+   looks like a broken bridge and retries forever. `FetchSimpleFINDataActivity` rebases any
+   stored `/mock-simplefin/` URL onto the worker's `MOCK_SIMPLEFIN_BASE_URL`
+   (`rebaseMockBridgeURL`), keeping the path and credential pair. Never rewrite a real bank URL.
 7. **Workflow IDs embed the workspace ID.** `handleBankSyncStatus` authorizes a status read by
    checking that the ID contains the caller's workspace. Preserve that invariant for any new
    workflow, or fix the authorization deliberately rather than by accident.

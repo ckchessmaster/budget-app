@@ -152,6 +152,32 @@ func TestFetchSimpleFINDataActivityIsScopedToTheSyncUser(t *testing.T) {
 		}
 	})
 
+	// The row above is the shape a demo sandbox has after the sync worker moved into its
+	// own Deployment: the loopback bridge address is what got stored, and the address the
+	// worker can actually dial is configuration. Syncing that sandbox has to use the
+	// latter without waiting for someone to re-seed it.
+	t.Run("a demo row seeded with a stale bridge address dials the configured one", func(t *testing.T) {
+		client := &recordingClient{}
+		activities := &BankActivities{
+			Pool:        appPool,
+			Client:      client,
+			Vault:       vault,
+			MockBaseURL: "http://budget-app-budget-app-backend-bridge:8090",
+		}
+
+		if _, err := activities.FetchSimpleFINDataActivity(ctx, temporalinternal.SyncScope{
+			WorkspaceID: ownerWS,
+			UserID:      ownerID,
+		}); err != nil {
+			t.Fatalf("fetch activity returned an error: %v", err)
+		}
+
+		want := "http://budget-app-budget-app-backend-bridge:8090/mock-simplefin/anything/accounts"
+		if len(client.calls) != 1 || client.calls[0] != want {
+			t.Fatalf("expected exactly one fetch of %q, got %v", want, client.calls)
+		}
+	})
+
 	t.Run("another tenant cannot read the stored access url", func(t *testing.T) {
 		client := &recordingClient{}
 		activities := &BankActivities{Pool: appPool, Client: client, Vault: vault}
