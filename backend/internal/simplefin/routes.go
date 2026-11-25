@@ -9,9 +9,11 @@ import (
 // RegisterRoutes wires the SimpleFIN endpoints. The vault is injected rather than read
 // from the environment here so a missing master key stops the process at boot instead of
 // surfacing later as an undecryptable stored access URL.
-func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, vault crypto.Vault) {
-	client := NewClient(nil)
-	h := NewHandler(pool, client, vault)
+//
+// claim starts the durable token exchange and may be nil only on an install that has no
+// Temporal; the claim endpoint answers 503 rather than falling back to an inline call.
+func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, vault crypto.Vault, claim ClaimWorkflow) {
+	h := NewHandler(pool, vault, claim)
 
 	r.Route("/api/v1/bank/simplefin", func(r chi.Router) {
 		r.Post("/claim", h.ClaimToken)

@@ -31,13 +31,33 @@ export interface BankSyncResult {
 	warnings?: string[];
 }
 
-export interface BankSyncStatusResponse {
+/** Status of any workflow the API can start. The endpoint is shared, so `result` is
+ *  whatever the workflow returned and each caller narrows it with its own type. */
+export interface WorkflowStatus<T> {
 	workflow_id: string;
 	status: 'RUNNING' | 'RETRYING' | 'COMPLETED' | 'FAILED';
 	attempt?: number;
 	last_error?: string;
-	result?: BankSyncResult;
+	result?: T;
 }
+
+export type BankSyncStatusResponse = WorkflowStatus<BankSyncResult>;
+
+/** What a claim returns before the bank has actually been called. */
+export interface ClaimAcceptedResponse {
+	workflow_id: string;
+	status: string;
+}
+
+export interface SimpleFINClaimResult {
+	connection_id: string;
+	accounts: SimpleFINDiscoveredAccount[];
+	accounts_discovered: number;
+	warnings?: string[];
+}
+
+const CLAIM_POLL_INTERVAL_MS = 1000;
+const CLAIM_POLL_TIMEOUT_MS = 180_000;
 
 async function authHeaders(): Promise<HeadersInit> {
 	const headers: Record<string, string> = {
@@ -50,7 +70,40 @@ async function authHeaders(): Promise<HeadersInit> {
 	return headers;
 }
 
-export async function claimSimpleFINToken(setupToken: string): Promise<SimpleFINDiscoveredAccount[]> {
+/**
+ * Exchange a SimpleFIN setup token for the accounts behind it.
+ *
+ * The claim is no longer one long HTTP request. The API stages the token, starts a
+ * Temporal workflow and answers 202, so a slow or rate-limited bank cannot hold the
+ * browser's request open and a 429 is retried by the worker using the bank's own
+ * Retry-After instead of being thrown at the user. This function drives that handoff:
+ * it polls until the workflow settles and resolves with the discovered accounts.
+ */
+export async function claimSimpleFINToken(
+	setupToken: string,
+	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
+): Promise<SimpleFINDiscoveredAccount[]> {
+	const started = await startSimpleFINClaim(setupToken);
+
+	const deadline = Date.now() + CLAIM_POLL_TIMEOUT_MS;
+	while (Date.now() < deadline) {
+		const status = await fetchWorkflowStatus<SimpleFINClaimResult>(started.workflow_id);
+		onProgress?.(status);
+
+		if (status.status === 'COMPLETED') {
+			return Array.isArray(status.result?.accounts) ? status.result.accounts : [];
+		}
+		if (status.status === 'FAILED') {
+			throw new Error(status.last_error || 'SimpleFIN claim failed');
+		}
+		await sleep(CLAIM_POLL_INTERVAL_MS);
+	}
+
+	throw new Error('Timed out waiting for the SimpleFIN claim to finish');
+}
+
+/** Start the durable claim. Returns as soon as the API has accepted the work. */
+export async function startSimpleFINClaim(setupToken: string): Promise<ClaimAcceptedResponse> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/simplefin/claim`, {
 		method: 'POST',
@@ -61,8 +114,23 @@ export async function claimSimpleFINToken(setupToken: string): Promise<SimpleFIN
 		const err = await res.json().catch(() => ({}));
 		throw new Error(err.error || `Failed to claim SimpleFIN token (${res.status})`);
 	}
-	const data = await res.json();
-	return Array.isArray(data.accounts) ? data.accounts : [];
+	return res.json();
+}
+
+export async function fetchWorkflowStatus<T>(workflowId: string): Promise<WorkflowStatus<T>> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/bank/workflow-status/${encodeURIComponent(workflowId)}`, {
+		headers: await authHeaders()
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(err.error || `Failed to fetch workflow status (${res.status})`);
+	}
+	return res.json();
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function linkSimpleFINAccounts(accounts: LinkAccountMapping[]): Promise<void> {

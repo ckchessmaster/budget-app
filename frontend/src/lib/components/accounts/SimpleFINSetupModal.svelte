@@ -20,6 +20,9 @@
 	let mappings = $state<LinkAccountMapping[]>([]);
 	let loading = $state(false);
 	let errorMsg = $state<string | null>(null);
+	// The claim is a Temporal workflow now, so it can sit in RETRYING while the bank
+	// catches up. Surfacing that beats a silent spinner the user assumes is broken.
+	let progressMsg = $state<string | null>(null);
 
 	function reset() {
 		step = 1;
@@ -27,6 +30,7 @@
 		discovered = [];
 		mappings = [];
 		errorMsg = null;
+		progressMsg = null;
 		loading = false;
 	}
 
@@ -41,7 +45,17 @@
 		loading = true;
 		errorMsg = null;
 		try {
-			const accounts = await claimSimpleFINToken(setupToken.trim());
+			const accounts = await claimSimpleFINToken(setupToken.trim(), (status) => {
+				if (status.status === 'RETRYING') {
+					const attempt = status.attempt ?? 2;
+					progressMsg = status.last_error
+						? `Bank is slow or rate limited — retrying (attempt ${attempt}): ${status.last_error}`
+						: `Bank is slow or rate limited — retrying (attempt ${attempt})...`;
+				} else {
+					progressMsg = 'Contacting your bank...';
+				}
+			});
+			progressMsg = null;
 			discovered = accounts;
 			mappings = accounts.map((a) => ({
 				external_account_id: a.id,
@@ -52,6 +66,7 @@
 			}));
 			step = 2;
 		} catch (err) {
+			progressMsg = null;
 			errorMsg = err instanceof Error ? err.message : 'Failed to claim token';
 		} finally {
 			loading = false;
@@ -114,6 +129,13 @@
 							Your access URL is encrypted with AES-256-GCM before storage.
 						</p>
 					</div>
+
+					{#if progressMsg}
+						<p class="text-[11px] text-ink-secondary flex items-center gap-1.5" role="status">
+							<span class="inline-block w-1.5 h-1.5 rounded-full bg-accent-pop animate-pulse"></span>
+							{progressMsg}
+						</p>
+					{/if}
 
 					<div class="flex justify-end gap-2">
 						<button

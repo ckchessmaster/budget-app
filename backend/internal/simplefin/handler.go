@@ -1,13 +1,17 @@
 package simplefin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
@@ -15,6 +19,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 )
+
+// ClaimWorkflow starts the durable SimpleFIN claim for a workspace and returns its
+// workflow id.
+//
+// It is an interface rather than a direct call into the Temporal packages because the
+// claim activities import this package for its client; importing them back would close a
+// cycle. The server wires the concrete starter in.
+type ClaimWorkflow interface {
+	Start(ctx context.Context, scope temporalinternal.SyncScope) (string, error)
+}
 
 type ClaimTokenRequest struct {
 	SetupToken string `json:"setup_token"`
@@ -33,17 +47,20 @@ type LinkAccountsRequest struct {
 	Accounts []LinkAccountMapping `json:"accounts"`
 }
 
+// Handler owns the SimpleFIN HTTP surface. It deliberately holds no simplefin.Client:
+// nothing in a request path may dial a bank. The only outbound work here is starting a
+// workflow.
 type Handler struct {
-	pool   *pgxpool.Pool
-	client Client
-	vault  crypto.Vault
+	pool  *pgxpool.Pool
+	vault crypto.Vault
+	claim ClaimWorkflow
 }
 
-func NewHandler(pool *pgxpool.Pool, client Client, vault crypto.Vault) *Handler {
+func NewHandler(pool *pgxpool.Pool, vault crypto.Vault, claim ClaimWorkflow) *Handler {
 	return &Handler{
-		pool:   pool,
-		client: client,
-		vault:  vault,
+		pool:  pool,
+		vault: vault,
+		claim: claim,
 	}
 }
 
@@ -57,6 +74,14 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// ClaimToken stages a SimpleFIN setup token and starts the workflow that exchanges it.
+//
+// It used to claim the token and fetch the account list inline, against a 30-second HTTP
+// client. That meant the browser held a request open for as long as the bank took, a
+// failure after a successful claim left a spent token with nothing retrying it, and a 429
+// was handed straight to the user to click again. Now this returns 202 with a workflow id
+// and the caller polls the shared status endpoint, so the bank can take as long as it
+// needs and the retry happens with the bank's own Retry-After.
 func (h *Handler) ClaimToken(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
 	if err != nil {
@@ -65,65 +90,79 @@ func (h *Handler) ClaimToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ClaimTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SetupToken == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.SetupToken) == "" {
 		writeErr(w, http.StatusBadRequest, "setup_token is required")
 		return
 	}
-
-	accessURL, err := h.client.ClaimSetupToken(r.Context(), req.SetupToken)
-	if err != nil {
-		if errors.Is(err, ErrInvalidSetupToken) {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		var rlErr *RateLimitError
-		if errors.As(err, &rlErr) {
-			writeErr(w, http.StatusTooManyRequests, rlErr.Error())
-			return
-		}
-		writeErr(w, http.StatusBadGateway, "failed_to_claim_simplefin_token")
+	if h.claim == nil {
+		slog.Error("simplefin claim requested but no workflow starter is configured")
+		writeErr(w, http.StatusServiceUnavailable, "temporal_unavailable")
 		return
 	}
 
-	encryptedAccessURL, err := h.vault.Encrypt(accessURL)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_encrypt_credentials")
-		return
-	}
-
-	encryptedClaimToken, err := h.vault.Encrypt(req.SetupToken)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_encrypt_credentials")
-		return
-	}
-
+	var wsID uuid.UUID
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-		wsID, err := db.ActiveWorkspaceID(r.Context(), tx)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(r.Context(), `
-			INSERT INTO simplefin_connections (workspace_id, encrypted_claim_token, encrypted_access_url)
-			VALUES ($1, $2, $3)
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		return txErr
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "workspace_not_found")
+		return
+	}
+
+	// The setup token never travels as a workflow argument: Temporal records inputs in
+	// history, which operators can read and which outlives the token. It is sealed here
+	// and picked up by the worker from this row instead.
+	sealed, err := h.vault.Encrypt(strings.TrimSpace(req.SetupToken))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed_to_encrypt_credentials")
+		return
+	}
+
+	// Staging leaves encrypted_access_url alone on purpose. A claim that never completes
+	// therefore costs nothing: the workspace keeps whatever connection it already had,
+	// and the demo status check still reports it as disconnected until an access URL lands.
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(r.Context(), `
+			INSERT INTO simplefin_connections (workspace_id, encrypted_claim_token, pending_claim_token)
+			VALUES ($1, $2, $2)
 			ON CONFLICT (workspace_id) DO UPDATE
-			SET encrypted_claim_token = EXCLUDED.encrypted_claim_token,
-			    encrypted_access_url = EXCLUDED.encrypted_access_url
-		`, wsID, encryptedClaimToken, encryptedAccessURL)
+			SET pending_claim_token = EXCLUDED.pending_claim_token
+		`, wsID, sealed)
 		return err
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "failed_to_store_connection")
+		writeErr(w, http.StatusInternalServerError, "failed_to_stage_connection")
 		return
 	}
 
-	data, err := h.client.FetchData(r.Context(), accessURL, time.Now().UTC().AddDate(0, 0, -7))
+	workflowID, err := h.claim.Start(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID})
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "failed_to_fetch_simplefin_accounts")
+		slog.Error("failed to start simplefin claim workflow",
+			"workspace_id", wsID, "error", err)
+		// The staged token is inert, but leaving it behind would make the next claim look
+		// like a retry of this one. Best-effort cleanup on a context the request cannot
+		// cancel.
+		clearCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if clearErr := db.WithWorkspaceTx(clearCtx, h.pool, userID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(clearCtx, `
+				UPDATE simplefin_connections SET pending_claim_token = NULL
+				WHERE workspace_id = $1
+			`, wsID)
+			return err
+		}); clearErr != nil {
+			slog.Warn("failed to clear staged simplefin claim token",
+				"workspace_id", wsID, "error", clearErr)
+		}
+		writeErr(w, http.StatusBadGateway, "failed_to_start_claim")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"accounts": data.Accounts,
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"workflow_id": workflowID,
+		"status":      "accepted",
 	})
 }
 

@@ -58,7 +58,7 @@ cluster.
 
 ### What is orchestrated today
 
-Two workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
+Three workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
 
 - `BankSyncWorkflow` in
   [`backend/internal/temporal/workflows/bank_sync.go`](backend/internal/temporal/workflows/bank_sync.go):
@@ -70,6 +70,15 @@ Two workflows are registered on task queue `budget-sync-queue` in namespace `bud
   [`backend/internal/temporal/workflows/month_end.go`](backend/internal/temporal/workflows/month_end.go):
   per-workspace month-end rollover (`month-end-rollover-<workspaceID>`, `0 0 1 * *` UTC) running
   inside `SyncScope` for `FORCE RLS`.
+- `SimpleFINClaimWorkflow` in
+  [`backend/internal/temporal/workflows/simplefin_claim.go`](backend/internal/temporal/workflows/simplefin_claim.go):
+  exchanges a staged setup token for an access URL, then lists the accounts behind it.
+  `POST /api/v1/bank/simplefin/claim` returns 202 with a workflow id and the browser polls
+  `GET /api/v1/bank/workflow-status/{workflow_id}`, which serves every workflow and passes the
+  result through as raw JSON.
+
+Claim and fetch are separate activities because a claim token is single-use at the bank: one
+activity doing both would re-claim on every fetch retry.
 
 Triggers for bank sync are `POST /api/v1/bank/sync-now`, the demo simulator's `syncNow` flag, and
 a per-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
@@ -137,6 +146,15 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
 10. **Never put credentials in workflow inputs, results, or error strings.** SimpleFIN access
     URLs are bearer credentials and Temporal history is readable by operators and retained for
     the retention window.
+
+    This includes the setup token, which is why it is not a workflow argument anywhere. The API
+    seals it into `simplefin_connections.pending_claim_token`, starts the workflow with a scope
+    alone, and the worker reads it back from there and clears it in the same statement that
+    writes the access URL. That also makes the claim idempotent — a late retry finds nothing
+    pending instead of spending a token twice — and leaves a working connection intact when a
+    new claim fails. If you need to pass a secret to a workflow, stage it and pass the scope;
+    do not add a token field to an input struct. `TestSimpleFINClaimWorkflowInputCarriesNoCredential`
+    fails if one appears.
 
 ### Verifying a Temporal change
 

@@ -32,7 +32,7 @@ func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, scope t
 	// stays outside the transaction so a slow bank never holds a pooled connection open.
 	if err := db.WithWorkspaceTx(ctx, a.Pool, scope.UserID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			SELECT encrypted_access_url, last_synced_at
+			SELECT COALESCE(encrypted_access_url, ''), last_synced_at
 			FROM simplefin_connections
 			WHERE workspace_id = $1
 		`, scope.WorkspaceID).Scan(&encryptedAccessURL, &lastSyncedAt)
