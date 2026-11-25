@@ -11,6 +11,7 @@ import (
 
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
+	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,14 +23,25 @@ type Handler struct {
 	pool      *pgxpool.Pool
 	svc       Service
 	evaluator notifications.Evaluator
+
+	// replay starts the durable offline replay. An interface rather than a call into the
+	// workflow packages: those import this package's service through the replay activity,
+	// so importing them back here would close a cycle. The server wires in the starter.
+	replay ReplayWorkflow
 }
 
-func NewHandler(pool *pgxpool.Pool, svc Service, evaluator ...notifications.Evaluator) *Handler {
+// ReplayWorkflow submits a queued batch to Temporal and returns the workflow id that will
+// carry its verdicts.
+type ReplayWorkflow interface {
+	Start(ctx context.Context, scope temporalinternal.SyncScope, items []temporalinternal.ReplayItem) (string, error)
+}
+
+func NewHandler(pool *pgxpool.Pool, svc Service, replay ReplayWorkflow, evaluator ...notifications.Evaluator) *Handler {
 	var eval notifications.Evaluator
 	if len(evaluator) > 0 {
 		eval = evaluator[0]
 	}
-	return &Handler{pool: pool, svc: svc, evaluator: eval}
+	return &Handler{pool: pool, svc: svc, replay: replay, evaluator: eval}
 }
 
 func (h *Handler) triggerNotificationEval(ctx context.Context, workspaceID, userID uuid.UUID) {
@@ -228,6 +240,25 @@ func (h *Handler) DeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// maxSyncRequestBodyBytes bounds the submitted batch on the way in.
+//
+// The item cap alone is not a bound: an entry can carry a long notes field. Rejecting an
+// absurd body at the edge is cheaper than decoding it, and far cheaper than discovering the
+// problem after the batch has been accepted into a workflow.
+const maxSyncRequestBodyBytes = 1 << 20
+
+// SyncOfflineTransactions queues a batch of offline-created transactions in Temporal.
+//
+// It used to apply them in a loop inside the request and return 207 with a per-item verdict.
+// That made the browser the durable store for a partially applied batch: close the tab and
+// the remainder was gone, and an item lost to a deadlock had to be retried by whoever
+// happened to notice. Now the request only has to survive long enough to hand the batch over,
+// and the verdicts are read from the workflow.
+//
+// The response is 202 plus a workflow id. Per-item outcomes come from
+// GET /api/v1/transactions/workflow-status/{workflow_id}, which reports the workflow result
+// as raw JSON: applied client ids, and rejected ones with a reason and whether they are worth
+// sending again.
 func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
 	if err != nil {
@@ -236,74 +267,67 @@ func (h *Handler) SyncOfflineTransactions(w http.ResponseWriter, r *http.Request
 	}
 
 	var req SyncTransactionsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSyncRequestBodyBytes))
+	if err := decoder.Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
 
-	results := make([]SyncItemResult, 0, len(req.Items))
-	hasFailures := false
-	var syncedWorkspaceID uuid.UUID
+	if len(req.Items) == 0 {
+		writeErr(w, http.StatusBadRequest, "empty_batch")
+		return
+	}
+	if len(req.Items) > temporalinternal.MaxReplayBatchItems {
+		// The alternative is a workflow whose input exceeds the message limit, which
+		// fails inside the worker where the client cannot see why.
+		writeErr(w, http.StatusRequestEntityTooLarge, "batch_too_large")
+		return
+	}
 
-	for _, item := range req.Items {
-		txDate, parseErr := time.Parse("2006-01-02", item.TransactionDate)
-		if parseErr != nil {
-			if t2, err2 := time.Parse(time.RFC3339, item.TransactionDate); err2 == nil {
-				txDate = t2
-			} else {
-				txDate = time.Now().UTC()
-			}
+	items := make([]temporalinternal.ReplayItem, 0, len(req.Items))
+	for i, raw := range req.Items {
+		item, itemErr := raw.replayItem()
+		if itemErr != nil {
+			// Nothing in the batch is safe to apply without a key to report its
+			// outcome against, so this rejects the request rather than the item.
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error": ErrClientKeyRequired.Error(),
+				"index": i,
+			})
+			return
 		}
-
-		isCleared := false
-		var createdID uuid.UUID
-		var createdWSID uuid.UUID
-		txErr := db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-			created, err := h.svc.CreateTransaction(r.Context(), tx, CreateSplitTransactionRequest{
-				AccountID:       item.AccountID,
-				TotalAmount:     item.Amount,
-				MerchantRaw:     item.MerchantRaw,
-				CategoryID:      item.CategoryID,
-				Origin:          OriginManualOffline,
-				Status:          StatusPending,
-				TransactionDate: txDate,
-				UserNotes:       item.UserNotes,
-				IsCleared:       &isCleared,
-			})
-			if err != nil {
-				return err
-			}
-			createdID = created.ID
-			createdWSID = created.WorkspaceID
-			return nil
-		})
-		if txErr != nil {
-			hasFailures = true
-			results = append(results, SyncItemResult{
-				LocalID: item.LocalID,
-				Status:  "failed",
-				Error:   txErr.Error(),
-			})
-		} else {
-			if syncedWorkspaceID == uuid.Nil {
-				syncedWorkspaceID = createdWSID
-			}
-			idCopy := createdID
-			results = append(results, SyncItemResult{
-				LocalID:       item.LocalID,
-				Status:        "synced",
-				TransactionID: &idCopy,
-			})
-		}
+		items = append(items, item)
 	}
 
-	if syncedWorkspaceID != uuid.Nil {
-		h.triggerNotificationEval(r.Context(), syncedWorkspaceID, userID)
+	if h.replay == nil {
+		slog.Error("offline replay requested but no replay workflow is configured")
+		writeErr(w, http.StatusServiceUnavailable, "temporal_unavailable")
+		return
 	}
 
-	status := http.StatusOK
-	if hasFailures {
-		status = http.StatusMultiStatus
+	var wsID uuid.UUID
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		return txErr
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "workspace_not_found")
+		return
 	}
-	writeJSON(w, status, SyncTransactionsResponse{Results: results})
+
+	workflowID, err := h.replay.Start(r.Context(),
+		temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID}, items)
+	if err != nil {
+		slog.Error("failed to start offline replay workflow",
+			"workspace_id", wsID, "item_count", len(items), "error", err)
+		writeErr(w, http.StatusBadGateway, "failed_to_start_offline_replay")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, SyncAcceptedResponse{
+		WorkflowID: workflowID,
+		Status:     "accepted",
+		ItemCount:  len(items),
+	})
 }

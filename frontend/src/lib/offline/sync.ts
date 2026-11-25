@@ -4,19 +4,86 @@ import { BudgetLocalDB } from './db';
 
 export const SYNC_TAG = 'sync-transactions';
 
-export interface SyncFlushResult {
-	syncedCount: number;
-	failedCount: number;
+/**
+ * A replay batch is a handful of single-row inserts, so it normally resolves on the first
+ * poll. The ceiling exists for the case where the worker is backed up: leaving the queue
+ * intact is always the right answer, because the server dedupes on client_id.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_POLL_TIMEOUT_MS = 60_000;
+
+export interface SyncFlushOptions {
+	pollIntervalMs?: number;
+	pollTimeoutMs?: number;
 }
 
+export interface ReplayRejection {
+	localId: string;
+	reason: string;
+	message?: string;
+	/** True when the server gave up on a transient condition: worth sending again. */
+	retryable: boolean;
+}
+
+export interface SyncFlushResult {
+	syncedCount: number;
+	/** Items the server rejected for a reason the user has to fix. */
+	failedCount: number;
+	/** Items still queued, either because the batch never resolved or the server asked for a resend. */
+	queuedCount: number;
+	workflowId?: string;
+	rejections: ReplayRejection[];
+}
+
+interface RejectedItem {
+	client_id: string;
+	reason?: string;
+	message?: string;
+	retryable?: boolean;
+}
+
+interface ReplayResult {
+	applied?: string[];
+	rejected?: RejectedItem[];
+	warnings?: string[];
+}
+
+interface WorkflowStatus {
+	workflow_id: string;
+	status: 'RUNNING' | 'RETRYING' | 'COMPLETED' | 'FAILED';
+	result?: ReplayResult;
+	last_error?: string;
+	error?: string;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function emptyResult(workflowId?: string): SyncFlushResult {
+	return { syncedCount: 0, failedCount: 0, queuedCount: 0, workflowId, rejections: [] };
+}
+
+/**
+ * Hands the queued batch to the durable replay workflow and drains the local queue from its
+ * verdicts.
+ *
+ * The request no longer waits for the rows to exist. POST /api/v1/transactions/sync answers
+ * 202 with a workflow id, and every item is settled here by its client_id: applied means
+ * delete it from the queue, terminally rejected means keep it and show why, retryable means
+ * keep it and try again later. Nothing is ever dropped because a poll ran out of patience —
+ * resending an already-applied item is a no-op on the server, which is the entire point of
+ * moving this into a workflow.
+ */
 export async function flushOfflineQueue(
 	db: BudgetLocalDB = new BudgetLocalDB(),
 	apiBaseUrl?: string,
-	token?: string | null
+	token?: string | null,
+	options: SyncFlushOptions = {}
 ): Promise<SyncFlushResult> {
 	const pending = await db.getPendingQueue();
 	if (pending.length === 0) {
-		return { syncedCount: 0, failedCount: 0 };
+		return emptyResult();
 	}
 
 	const baseUrl = apiBaseUrl ?? getAppConfig().apiBaseUrl;
@@ -40,7 +107,7 @@ export async function flushOfflineQueue(
 			headers,
 			body: JSON.stringify({
 				items: pending.map((item) => ({
-					local_id: item.localId,
+					client_id: item.localId,
 					account_id: item.accountId,
 					amount: item.amount,
 					merchant_raw: item.merchantRaw,
@@ -57,38 +124,115 @@ export async function flushOfflineQueue(
 		throw err;
 	}
 
-	if (res.status !== 200 && res.status !== 207) {
+	if (res.status !== 202) {
 		for (const item of pending) {
 			await db.updateSyncStatus(item.localId, 'FAILED');
 		}
 		throw new Error(`Offline sync failed (${res.status})`);
 	}
 
-	const payload = (await res.json()) as {
-		results?: Array<{ local_id: string; status: 'synced' | 'failed' }>;
-	};
+	const accepted = (await res.json().catch(() => ({}))) as { workflow_id?: string };
+	if (!accepted.workflow_id) {
+		for (const item of pending) {
+			await db.updateSyncStatus(item.localId, 'QUEUED');
+		}
+		throw new Error('Offline sync accepted no batch');
+	}
+
+	const workflowId = accepted.workflow_id;
+	const status = await pollWorkflowStatus(baseUrl, headers, workflowId, options);
+
+	if (!status || status.status === 'RUNNING' || status.status === 'RETRYING') {
+		// Timed out, or the status endpoint is unreachable. The batch may still be
+		// running, so the queue goes back to QUEUED rather than FAILED: the next flush
+		// resends it and the server ignores whatever already landed.
+		for (const item of pending) {
+			await db.updateSyncStatus(item.localId, 'QUEUED');
+		}
+		return { ...emptyResult(workflowId), queuedCount: pending.length };
+	}
+
+	if (status.status === 'FAILED') {
+		// The workflow itself died (a refused batch, an exhausted run timeout). No item
+		// is known to have landed, so all of them stay queued.
+		for (const item of pending) {
+			await db.updateSyncStatus(item.localId, 'QUEUED');
+		}
+		return { ...emptyResult(workflowId), queuedCount: pending.length };
+	}
+
+	const applied = new Set(status.result?.applied ?? []);
+	const rejected = new Map((status.result?.rejected ?? []).map((r) => [r.client_id, r]));
 
 	let syncedCount = 0;
 	let failedCount = 0;
+	let queuedCount = 0;
+	const rejections: ReplayRejection[] = [];
 
-	if (Array.isArray(payload.results)) {
-		for (const result of payload.results) {
-			if (result.status === 'synced') {
-				await db.markSynced(result.local_id);
-				syncedCount++;
-			} else {
-				await db.updateSyncStatus(result.local_id, 'FAILED');
-				failedCount++;
-			}
-		}
-	} else {
-		for (const item of pending) {
+	for (const item of pending) {
+		if (applied.has(item.localId)) {
 			await db.markSynced(item.localId);
 			syncedCount++;
+			continue;
+		}
+
+		const rejection = rejected.get(item.localId);
+		if (rejection && rejection.retryable === false) {
+			await db.updateSyncStatus(item.localId, 'FAILED');
+			failedCount++;
+			rejections.push({
+				localId: item.localId,
+				reason: rejection.reason ?? 'rejected',
+				message: rejection.message,
+				retryable: false
+			});
+			continue;
+		}
+
+		// Retryable, or simply absent from the verdict: keep it and send it again.
+		await db.updateSyncStatus(item.localId, 'QUEUED');
+		queuedCount++;
+		if (rejection) {
+			rejections.push({
+				localId: item.localId,
+				reason: rejection.reason ?? 'replay_attempts_exhausted',
+				message: rejection.message,
+				retryable: true
+			});
 		}
 	}
 
-	return { syncedCount, failedCount };
+	return { syncedCount, failedCount, queuedCount, workflowId, rejections };
+}
+
+async function pollWorkflowStatus(
+	baseUrl: string,
+	headers: HeadersInit,
+	workflowId: string,
+	options: SyncFlushOptions
+): Promise<WorkflowStatus | null> {
+	const intervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+	const deadline = Date.now() + (options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS);
+
+	while (Date.now() < deadline) {
+		try {
+			const res = await fetch(
+				`${baseUrl}/api/v1/transactions/workflow-status/${encodeURIComponent(workflowId)}`,
+				{ headers }
+			);
+			if (res.ok) {
+				const status = (await res.json()) as WorkflowStatus;
+				if (status.status === 'COMPLETED' || status.status === 'FAILED') {
+					return status;
+				}
+			}
+		} catch {
+			// A dropped poll is not a lost batch. Keep asking until the deadline.
+		}
+		await sleep(intervalMs);
+	}
+
+	return null;
 }
 
 export async function requestBackgroundSync(): Promise<void> {

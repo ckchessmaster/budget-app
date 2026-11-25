@@ -152,6 +152,30 @@ describe('BudgetLocalDB', () => {
 		expect(pendingAfter.map((t) => t.localId)).toEqual(['local-1', 'local-3']);
 	});
 
+	it('re-picks items left in SYNCING by a tab that closed mid-flight', async () => {
+		// The replay is asynchronous, so SYNCING is no longer transient within a single
+		// request. An item stranded in that state must be offered again: the server
+		// dedupes on the client id, so a resend confirms it instead of duplicating it.
+		const db = new BudgetLocalDB(createMockIDBFactory());
+		const statuses = ['QUEUED', 'SYNCING', 'FAILED'] as const;
+
+		for (const [index, syncStatus] of statuses.entries()) {
+			await db.queueTransaction({
+				localId: `local-${index}`,
+				accountId: 'acct-1',
+				amount: -5,
+				merchantRaw: 'Cafe',
+				categoryId: null,
+				transactionDate: '2026-11-18',
+				syncStatus,
+				createdAt: 1000 + index
+			});
+		}
+
+		const pending = await db.getPendingQueue();
+		expect(pending.map((t) => t.localId)).toEqual(['local-0', 'local-1', 'local-2']);
+	});
+
 	it('caches and retrieves accounts and categories', async () => {
 		const db = new BudgetLocalDB(createMockIDBFactory());
 		await db.cacheAccounts([

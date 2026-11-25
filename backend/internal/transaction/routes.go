@@ -7,11 +7,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, evaluator ...notifications.Evaluator) {
+// RegisterRoutes mounts the transaction API. replay starts the durable offline sync; the
+// server passes a Temporal starter, or nil to make that endpoint report
+// temporal_unavailable rather than pretend the batch was queued.
+func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, replay ReplayWorkflow, evaluator ...notifications.Evaluator) {
 	txRepo := NewRepo()
 	acctRepo := account.NewRepo()
 	svc := NewService(txRepo, acctRepo)
-	h := NewHandler(pool, svc, evaluator...)
+	h := NewHandler(pool, svc, replay, evaluator...)
 
 	r.Route("/api/v1/transactions", func(r chi.Router) {
 		r.Get("/", h.ListTransactions)

@@ -188,12 +188,23 @@ func TestSplitTransactionIntegration(t *testing.T) {
 }
 
 type stubTxRepo struct {
-	tx *Transaction
+	tx      *Transaction
+	creates int
 }
 
-func (s *stubTxRepo) Create(_ context.Context, _ pgx.Tx, _ *Transaction) error { return nil }
+func (s *stubTxRepo) Create(_ context.Context, _ pgx.Tx, t *Transaction) error {
+	s.creates++
+	return nil
+}
 func (s *stubTxRepo) GetByID(_ context.Context, _ pgx.Tx, id uuid.UUID) (*Transaction, error) {
 	if s.tx == nil || s.tx.ID != id {
+		return nil, ErrTransactionNotFound
+	}
+	copyTx := *s.tx
+	return &copyTx, nil
+}
+func (s *stubTxRepo) GetByClientID(_ context.Context, _ pgx.Tx, clientID string) (*Transaction, error) {
+	if s.tx == nil || s.tx.ClientID == nil || *s.tx.ClientID != clientID {
 		return nil, ErrTransactionNotFound
 	}
 	copyTx := *s.tx

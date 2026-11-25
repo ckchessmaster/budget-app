@@ -107,6 +107,15 @@ export class BudgetLocalDB {
 		await done;
 	}
 
+	/**
+	 * Everything that still owes the server a write.
+	 *
+	 * SYNCING is included deliberately. The replay is asynchronous now, so an item can be
+	 * left in that state by a tab that closed mid-flight, and an item nothing ever picks up
+	 * again is a transaction that silently never syncs. Re-sending one is safe: the server
+	 * dedupes on the client id, so an item that already landed is confirmed rather than
+	 * duplicated.
+	 */
 	async getPendingQueue(): Promise<OfflineTransaction[]> {
 		const db = await this.open();
 		const idbTx = db.transaction(STORE_TX_QUEUE, 'readonly');
@@ -115,7 +124,12 @@ export class BudgetLocalDB {
 		const all = await reqToPromise(store.getAll() as IDBRequest<OfflineTransaction[]>);
 		await done;
 		return all
-			.filter((item) => item.syncStatus === 'QUEUED' || item.syncStatus === 'FAILED')
+			.filter(
+				(item) =>
+					item.syncStatus === 'QUEUED' ||
+					item.syncStatus === 'FAILED' ||
+					item.syncStatus === 'SYNCING'
+			)
 			.sort((a, b) => a.createdAt - b.createdAt);
 	}
 

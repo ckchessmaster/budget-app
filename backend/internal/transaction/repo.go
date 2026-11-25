@@ -35,12 +35,24 @@ var (
 	ErrMissingAccountID    = errors.New("account_id is required")
 )
 
+// Machine-readable rejection codes for a queued offline item. The durable replay reports
+// them to the browser so it can ask the user to fix one specific entry instead of retrying
+// it forever, so these strings are part of the wire contract rather than prose.
+const (
+	ReasonInvalidTransactionDate = "invalid_transaction_date"
+	ReasonEmptyMerchant          = "empty_merchant"
+	ReasonMissingAccountID       = "missing_account_id"
+	ReasonUnknownAccount         = "unknown_account"
+	ReasonUnknownCategory        = "unknown_category"
+)
+
 type Transaction struct {
 	ID                          uuid.UUID        `json:"id"`
 	WorkspaceID                 uuid.UUID        `json:"workspace_id"`
 	AccountID                   uuid.UUID        `json:"account_id"`
 	ParentTransactionID         *uuid.UUID       `json:"parent_transaction_id"`
 	ExternalTransactionID       *string          `json:"external_transaction_id"`
+	ClientID                    *string          `json:"client_id,omitempty"`
 	Origin                      Origin           `json:"origin"`
 	Status                      Status           `json:"status"`
 	Amount                      decimal.Decimal  `json:"amount"`
@@ -75,6 +87,10 @@ type CreateSplitTransactionRequest struct {
 	UserNotes       string          `json:"user_notes,omitempty"`
 	IsCleared       *bool           `json:"is_cleared,omitempty"`
 	Splits          []SplitItem     `json:"splits,omitempty"`
+
+	// ClientID is the offline queue's idempotency key. It is empty on every synchronous
+	// path, where the request itself is the once-only boundary.
+	ClientID string `json:"client_id,omitempty"`
 }
 
 type UpdateTransactionRequest struct {
@@ -99,6 +115,7 @@ type TransactionFilter struct {
 type Repo interface {
 	Create(ctx context.Context, tx pgx.Tx, t *Transaction) error
 	GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error)
+	GetByClientID(ctx context.Context, tx pgx.Tx, clientID string) (*Transaction, error)
 	List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error)
 	Update(ctx context.Context, tx pgx.Tx, t *Transaction) error
 	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
@@ -136,32 +153,47 @@ func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 		INSERT INTO transactions (
 			id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 			origin, status, amount, merchant_raw, merchant_clean, category_id,
-			transfer_linked_transaction_id, transaction_date, user_notes, is_cleared
+			transfer_linked_transaction_id, transaction_date, user_notes, is_cleared, client_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING is_transfer, created_at
 	`,
 		t.ID, t.WorkspaceID, t.AccountID, t.ParentTransactionID, t.ExternalTransactionID,
 		string(t.Origin), string(t.Status), t.Amount.Round(2), t.MerchantRaw, t.MerchantClean, t.CategoryID,
 		t.TransferLinkedTransactionID, t.TransactionDate.UTC().Format("2006-01-02"), t.UserNotes, t.IsCleared,
+		t.ClientID,
 	).Scan(&t.IsTransfer, &t.CreatedAt)
 }
 
 func (r *pgRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error) {
+	return r.getBy(ctx, tx, "id = $1", id)
+}
+
+// GetByClientID resolves a queued offline item to the transaction that already carries its
+// idempotency key. Only parent rows are considered: a split child inherits its parent's key
+// space and must never be mistaken for the item itself.
+func (r *pgRepo) GetByClientID(ctx context.Context, tx pgx.Tx, clientID string) (*Transaction, error) {
+	return r.getBy(ctx, tx, "client_id = $1 AND parent_transaction_id IS NULL", clientID)
+}
+
+// getBy is the single-row read behind every transaction lookup. The workspace filter comes
+// from the RLS session rather than the caller so no lookup path can forget it.
+func (r *pgRepo) getBy(ctx context.Context, tx pgx.Tx, predicate string, args ...any) (*Transaction, error) {
 	wsID, err := db.ActiveWorkspaceID(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	var t Transaction
 	var originStr, statusStr string
-	err = tx.QueryRow(ctx, `
+	queryArgs := append(args, wsID)
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id,
 		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
-		WHERE id = $1 AND workspace_id = $2
-	`, id, wsID).Scan(
+		WHERE %s AND workspace_id = $%d
+	`, predicate, len(queryArgs)), queryArgs...).Scan(
 		&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
 		&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID,
 		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.TransactionDate, &t.UserNotes,

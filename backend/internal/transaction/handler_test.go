@@ -88,7 +88,8 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 			next.ServeHTTP(w, req.WithContext(reqCtx))
 		})
 	})
-	RegisterRoutes(r, appPool, eval)
+	replayStub := &recordingReplay{id: "offline-replay-test"}
+	RegisterRoutes(r, appPool, replayStub, eval)
 
 	// 1. POST /api/v1/transactions crossing 80% triggers 1 alert
 	body1 := `{"account_id":"` + checkingID.String() + `","total_amount":"-85.00","merchant_raw":"Bistro","category_id":"` + catID.String() + `","transaction_date":"` + now.Format(time.RFC3339) + `"}`
@@ -122,7 +123,9 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 		t.Fatalf("expected cooldown to suppress alert on PATCH, got %d total alerts", len(pushStub.sent))
 	}
 
-	// 3. Reset cooldown, then POST /api/v1/transactions/sync triggers evaluator once for the batch
+	// 3. Reset cooldown, then POST /api/v1/transactions/sync. The batch is handed to the
+	//    replay workflow, which owns the notification pass now; the request itself must not
+	//    evaluate alerts, because it no longer knows whether any item landed.
 	if err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, "DELETE FROM notification_cooldowns WHERE workspace_id = $1", wsID)
 		return err
@@ -134,11 +137,14 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 	reqSync := httptest.NewRequest(http.MethodPost, "/api/v1/transactions/sync", strings.NewReader(syncBody))
 	recSync := httptest.NewRecorder()
 	r.ServeHTTP(recSync, reqSync)
-	if recSync.Code != http.StatusOK {
-		t.Fatalf("POST /api/v1/transactions/sync status = %d body=%s, want 200", recSync.Code, recSync.Body.String())
+	if recSync.Code != http.StatusAccepted {
+		t.Fatalf("POST /api/v1/transactions/sync status = %d body=%s, want 202", recSync.Code, recSync.Body.String())
 	}
-	if len(pushStub.sent) != 2 {
-		t.Fatalf("expected sync endpoint to trigger notification evaluation, got %d total alerts", len(pushStub.sent))
+	if replayStub.itemCount() != 1 {
+		t.Fatalf("sync handed %d items to the replay workflow, want 1", replayStub.itemCount())
+	}
+	if len(pushStub.sent) != 1 {
+		t.Fatalf("sync must not evaluate notifications inline any more; got %d alerts", len(pushStub.sent))
 	}
 
 	// 4. Evaluator failure never fails transaction creation HTTP response
@@ -149,7 +155,7 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 			next.ServeHTTP(w, req.WithContext(reqCtx))
 		})
 	})
-	RegisterRoutes(rFail, appPool, failingEvaluator{})
+	RegisterRoutes(rFail, appPool, &recordingReplay{id: "offline-replay-fail"}, failingEvaluator{})
 
 	bodyFail := `{"account_id":"` + checkingID.String() + `","total_amount":"-10.00","merchant_raw":"Late Night Diner","category_id":"` + catID.String() + `","transaction_date":"` + now.Format(time.RFC3339) + `"}`
 	reqFail := httptest.NewRequest(http.MethodPost, "/api/v1/transactions", strings.NewReader(bodyFail))
