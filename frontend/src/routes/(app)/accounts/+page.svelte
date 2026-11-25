@@ -20,10 +20,19 @@
 	let editingAccount = $state<AccountItem | null>(null);
 	let statusMessage = $state<string | null>(null);
 
-	let onBudgetAccounts = $derived(accounts.filter((a) => a.isOnBudget));
-	let offBudgetAccounts = $derived(accounts.filter((a) => !a.isOnBudget));
-	let onBudgetTotal = $derived(onBudgetAccounts.reduce((sum, a) => sum + a.currentBalance, 0));
-	let offBudgetTotal = $derived(offBudgetAccounts.reduce((sum, a) => sum + a.currentBalance, 0));
+	let cashAndCreditAccounts = $derived(
+		accounts.filter((a) => a.type !== 'investment' && a.type !== 'loan')
+	);
+	let trackingAccounts = $derived(
+		accounts.filter((a) => a.type === 'investment' || a.type === 'loan')
+	);
+	let cashAndCreditTotal = $derived(
+		cashAndCreditAccounts.reduce((sum, a) => sum + a.currentBalance, 0)
+	);
+	let trackingTotal = $derived(trackingAccounts.reduce((sum, a) => sum + a.currentBalance, 0));
+	let reservationByAccountId = $derived(
+		new Map((solvency?.accountReservations ?? []).map((r) => [r.accountId, r]))
+	);
 	let linkedSimpleFINIds = $derived(
 		accounts.map((a) => a.externalAccountId).filter((id): id is string => Boolean(id))
 	);
@@ -113,47 +122,88 @@
 </script>
 
 {#snippet accountCard(acct: AccountItem)}
+	{@const reservation = reservationByAccountId.get(acct.id)}
+	{@const unreservedBalance = reservation ? acct.currentBalance - reservation.reservedTotal : null}
 	<div
 		role="button"
 		tabindex="0"
 		onclick={() => openEditAccount(acct)}
 		onkeydown={(e) => handleCardKeydown(e, acct)}
-		class="group cursor-pointer bg-surface border border-border hover:border-accent-pop/50 rounded-xl p-4 flex items-center justify-between gap-3 shadow-xs transition-colors"
+		class="group cursor-pointer bg-surface border border-border hover:border-accent-pop/50 rounded-xl p-4 space-y-2.5 shadow-xs transition-colors"
 	>
-		<div class="min-w-0">
-			<div class="flex flex-wrap items-center gap-2">
-				<h3 class="text-sm font-semibold text-ink-primary group-hover:text-accent-pop transition-colors truncate">
-					{acct.name}
-				</h3>
-				<span class="text-[11px] uppercase px-1.5 py-0.5 rounded bg-subtle text-ink-secondary">
-					{acct.type.replace('_', ' ')}
-				</span>
-				<span
-					class="text-[10px] font-medium px-1.5 py-0.5 rounded border {acct.externalAccountId
-						? 'bg-accent-tint text-accent-pop border-accent-pop/30'
-						: 'bg-subtle text-ink-secondary border-border'}"
-				>
-					{acct.externalAccountId ? 'SimpleFIN' : 'Manual'}
-				</span>
-				<span class="text-[11px] text-ink-muted opacity-0 group-hover:opacity-100 transition-opacity">
-					Edit
+		<div class="flex items-center justify-between gap-3">
+			<div class="min-w-0">
+				<div class="flex flex-wrap items-center gap-2">
+					<h3 class="text-sm font-semibold text-ink-primary group-hover:text-accent-pop transition-colors truncate">
+						{acct.name}
+					</h3>
+					<span class="text-[11px] uppercase px-1.5 py-0.5 rounded bg-subtle text-ink-secondary">
+						{acct.type.replace('_', ' ')}
+					</span>
+					<span
+						class="text-[10px] font-medium px-1.5 py-0.5 rounded border {acct.externalAccountId
+							? 'bg-accent-tint text-accent-pop border-accent-pop/30'
+							: 'bg-subtle text-ink-secondary border-border'}"
+					>
+						{acct.externalAccountId ? 'SimpleFIN' : 'Manual'}
+					</span>
+					<span class="text-[11px] text-ink-muted opacity-0 group-hover:opacity-100 transition-opacity">
+						Edit
+					</span>
+				</div>
+				<p class="text-xs text-ink-secondary mt-1">
+					{#if acct.type === 'investment' || acct.type === 'loan'}
+						Balance Tracked
+					{:else if acct.type === 'credit_card'}
+						{acct.cardMode === 'DEBT_PAYDOWN' ? 'Debt Paydown' : 'Pay In Full'}
+					{:else}
+						In Monthly Budget
+					{/if}
+					{#if (acct.type === 'credit_card' || acct.type === 'loan') && acct.aprPercentage > 0}
+						• {acct.aprPercentage.toFixed(2)}% APR
+					{/if}
+				</p>
+			</div>
+			<div class="text-right shrink-0">
+				<span class="text-base font-mono font-semibold {acct.currentBalance < 0 ? 'text-status-danger' : 'text-status-good'}">
+					{fmtMoney(acct.currentBalance)}
 				</span>
 			</div>
-			<p class="text-xs text-ink-secondary mt-1">
-				{acct.isOnBudget ? 'On Budget' : 'Off Budget'}
-				{#if acct.type === 'credit_card'}
-					• {acct.cardMode === 'DEBT_PAYDOWN' ? 'Debt Paydown' : 'Pay In Full'}
-				{/if}
-				{#if (acct.type === 'credit_card' || acct.type === 'loan') && acct.aprPercentage > 0}
-					• {acct.aprPercentage.toFixed(2)}% APR
-				{/if}
-			</p>
 		</div>
-		<div class="text-right shrink-0">
-			<span class="text-base font-mono font-semibold {acct.currentBalance < 0 ? 'text-status-danger' : 'text-status-good'}">
-				{fmtMoney(acct.currentBalance)}
-			</span>
-		</div>
+
+		{#if reservation && reservation.funds.length > 0}
+			<div
+				data-testid="account-fund-reservations"
+				class="pt-2.5 border-t border-border/80 space-y-1.5 text-xs"
+			>
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<span class="text-ink-secondary">
+						Reserved in Funds:
+						<strong class="font-mono text-ink-primary">{fmtMoney(reservation.reservedTotal)}</strong>
+					</span>
+					<span
+						class="font-mono font-semibold {unreservedBalance !== null && unreservedBalance < 0
+							? 'text-status-danger'
+							: 'text-status-good'}"
+					>
+						Unreserved: {fmtMoney(unreservedBalance ?? 0)}
+					</span>
+				</div>
+				{#if unreservedBalance !== null && unreservedBalance < -0.005}
+					<p class="text-[11px] font-medium text-status-danger bg-status-danger-bg rounded-md px-2 py-1">
+						Over-reserved by {fmtMoney(Math.abs(unreservedBalance))} — reserved funds exceed this account's balance.
+					</p>
+				{/if}
+				<div class="flex flex-wrap gap-1.5 pt-0.5">
+					{#each reservation.funds as fund (fund.categoryId)}
+						<span class="inline-flex items-center gap-1 rounded-full bg-subtle border border-border px-2 py-0.5 text-[11px] text-ink-secondary">
+							<span>{fund.name}:</span>
+							<span class="font-mono font-medium text-ink-primary">{fmtMoney(fund.balance)}</span>
+						</span>
+					{/each}
+				</div>
+			</div>
+		{/if}
 	</div>
 {/snippet}
 
@@ -162,7 +212,7 @@
 		<div>
 			<h2 class="text-xl font-bold text-ink-primary">Accounts</h2>
 			<p class="text-xs text-ink-secondary">
-				On-budget cash, manual tracking accounts, credit card modes, and SimpleFIN links
+				Cash &amp; credit accounts, reserved sinking funds, investment/loan tracking, and SimpleFIN links
 			</p>
 		</div>
 
@@ -228,36 +278,36 @@
 		</div>
 	{:else}
 		<div class="space-y-6">
-			{#if onBudgetAccounts.length > 0}
+			{#if cashAndCreditAccounts.length > 0}
 				<section class="space-y-2.5">
 					<div class="flex items-center justify-between px-1">
 						<h3 class="text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-							On-Budget Accounts ({onBudgetAccounts.length})
+							Cash &amp; Credit Accounts ({cashAndCreditAccounts.length})
 						</h3>
-						<span class="text-xs font-mono font-medium {onBudgetTotal < 0 ? 'text-status-danger' : 'text-status-good'}">
-							Net: {fmtMoney(onBudgetTotal)}
+						<span class="text-xs font-mono font-medium {cashAndCreditTotal < 0 ? 'text-status-danger' : 'text-status-good'}">
+							Net: {fmtMoney(cashAndCreditTotal)}
 						</span>
 					</div>
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-						{#each onBudgetAccounts as acct (acct.id)}
+						{#each cashAndCreditAccounts as acct (acct.id)}
 							{@render accountCard(acct)}
 						{/each}
 					</div>
 				</section>
 			{/if}
 
-			{#if offBudgetAccounts.length > 0}
+			{#if trackingAccounts.length > 0}
 				<section class="space-y-2.5">
 					<div class="flex items-center justify-between px-1">
 						<h3 class="text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-							Off-Budget (Tracking) Accounts ({offBudgetAccounts.length})
+							Investments &amp; Loans ({trackingAccounts.length})
 						</h3>
-						<span class="text-xs font-mono font-medium {offBudgetTotal < 0 ? 'text-status-danger' : 'text-ink-primary'}">
-							Net: {fmtMoney(offBudgetTotal)}
+						<span class="text-xs font-mono font-medium {trackingTotal < 0 ? 'text-status-danger' : 'text-ink-primary'}">
+							Net: {fmtMoney(trackingTotal)}
 						</span>
 					</div>
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-						{#each offBudgetAccounts as acct (acct.id)}
+						{#each trackingAccounts as acct (acct.id)}
 							{@render accountCard(acct)}
 						{/each}
 					</div>

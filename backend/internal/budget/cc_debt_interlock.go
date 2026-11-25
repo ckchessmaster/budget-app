@@ -338,14 +338,13 @@ func (s *pgCCDebtInterlockService) LoadCategoryCCSpendByMonth(
 	nextYM := ym.AddDate(0, 1, 0)
 
 	rows, err := tx.Query(ctx, `
-		SELECT t.category_id, t.account_id, COALESCE(SUM(-t.amount), 0) AS spent
+		SELECT t.category_id, t.account_id, GREATEST(0, COALESCE(SUM(-t.amount), 0)) AS spent
 		FROM transactions t
 		INNER JOIN accounts a ON a.id = t.account_id
 		WHERE t.workspace_id = $3
 		  AND a.workspace_id = $3
 		  AND t.category_id IS NOT NULL
 		  AND t.is_transfer = FALSE
-		  AND t.amount < 0
 		  AND a.is_on_budget = TRUE
 		  AND a.type = 'credit_card'
 		  AND t.transaction_date >= $1::date

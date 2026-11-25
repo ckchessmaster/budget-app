@@ -162,17 +162,24 @@ describe('TransactionsPanel', () => {
 		expect(queryByText('Delete')).toBeNull();
 	});
 
-	it('opens inline quick category picker on row click and categorizes transaction', async () => {
+	it('opens inline quick category picker on pill click, fires onSelectTransaction on row click, and categorizes transaction', async () => {
 		const onCategorizeTransaction = vi.fn().mockResolvedValue(undefined);
+		const onSelectTransaction = vi.fn();
 
 		const { getByText, getByTestId, queryByTestId, getByLabelText, getAllByTestId } = render(
 			TransactionsPanel,
 			{
-				props: baseProps({ onCategorizeTransaction })
+				props: baseProps({ onCategorizeTransaction, onSelectTransaction })
 			}
 		);
 
+		// Clicking the row (merchant) opens Transaction Details instead of category picker
 		await fireEvent.click(getByText('Tiktok Shop'));
+		expect(onSelectTransaction).toHaveBeenCalledWith('tx-new');
+		expect(queryByTestId('quick-category-picker')).toBeNull();
+
+		// Clicking the category pill opens inline quick category picker
+		await fireEvent.click(getByLabelText('Category for Tiktok Shop'));
 		expect(getByTestId('quick-category-picker')).toBeTruthy();
 
 		// Filter categories inside picker
@@ -188,35 +195,23 @@ describe('TransactionsPanel', () => {
 		await waitFor(() => expect(queryByTestId('quick-category-picker')).toBeNull());
 	});
 
-	it('supports overflow row menu for editing details and deleting a transaction', async () => {
-		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
+	it('supports overflow row menu for viewing details, splitting, and deleting a transaction', async () => {
+		const onSelectTransaction = vi.fn();
 		const onDeleteTransaction = vi.fn().mockResolvedValue(undefined);
 
-		const { getByLabelText, getByTestId, getByRole, queryByTestId } = render(
-			TransactionsPanel,
-			{
-				props: baseProps({ onUpdateTransaction, onDeleteTransaction })
-			}
-		);
+		const { getByLabelText, getByTestId } = render(TransactionsPanel, {
+			props: baseProps({ onSelectTransaction, onDeleteTransaction })
+		});
 
-		// Open overflow menu for Tiktok Shop -> Edit details
+		// Open overflow menu for Tiktok Shop -> View details & Split transaction
 		await fireEvent.click(getByLabelText('More actions for Tiktok Shop'));
 		expect(getByTestId('tx-row-menu')).toBeTruthy();
-		await fireEvent.click(getByTestId('tx-menu-edit'));
+		await fireEvent.click(getByTestId('tx-menu-details'));
+		expect(onSelectTransaction).toHaveBeenCalledWith('tx-new');
 
-		expect(getByTestId('tx-edit-form')).toBeTruthy();
-		await fireEvent.input(getByLabelText('Edit merchant'), { target: { value: 'TikTok Shop Clean' } });
-		await fireEvent.input(getByLabelText('Edit notes'), { target: { value: 'Birthday gift' } });
-		await fireEvent.click(getByRole('button', { name: 'Save changes' }));
-
-		await waitFor(() =>
-			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-new', {
-				merchantClean: 'TikTok Shop Clean',
-				userNotes: 'Birthday gift',
-				clearCategory: true
-			})
-		);
-		await waitFor(() => expect(queryByTestId('tx-edit-form')).toBeNull());
+		await fireEvent.click(getByLabelText('More actions for Tiktok Shop'));
+		await fireEvent.click(getByTestId('tx-menu-split'));
+		expect(onSelectTransaction).toHaveBeenCalledWith('tx-new', { openSplit: true });
 
 		// Open overflow menu for Trader Joes -> Delete transaction -> Confirm Delete
 		await fireEvent.click(getByLabelText('More actions for Trader Joes'));
@@ -299,7 +294,7 @@ describe('TransactionsPanel', () => {
 			}
 		];
 
-		const { getByRole, getByText, getByTestId, queryByText } = render(TransactionsPanel, {
+		const { getByRole, getByText, getByTestId, getByLabelText, queryByText } = render(TransactionsPanel, {
 			props: baseProps({
 				transactions: txWithIncome,
 				incomes,
@@ -312,8 +307,10 @@ describe('TransactionsPanel', () => {
 		expect(getByRole('tab', { name: 'All (4)' })).toBeTruthy();
 		expect(queryByText('Transfer From Venmo')).toBeNull();
 
-		// Assign Tiktok Shop to Unplanned Income via quick picker
-		await fireEvent.click(getByText('Tiktok Shop'));
+		// Assign Tiktok Shop (an expense) to Unplanned Income via the "Show income options" override
+		await fireEvent.click(getByLabelText('Category for Tiktok Shop'));
+		expect(queryByText('Unplanned Income')).toBeNull();
+		await fireEvent.click(getByTestId('quick-picker-show-income-btn'));
 		await fireEvent.click(getByTestId('quick-income-option'));
 		await waitFor(() =>
 			expect(onAssignTransactionToIncome).toHaveBeenCalledWith('tx-new', 'inc-unplanned')
@@ -322,5 +319,132 @@ describe('TransactionsPanel', () => {
 		// All tab renders Income pill
 		await fireEvent.click(getByRole('tab', { name: 'All (4)' }));
 		expect(getByText('Income: Unplanned Income')).toBeTruthy();
+	});
+
+	it('renders top suggestions, shows income first on inflows, shows post-categorize bar, and supports Approve/Auto badges', async () => {
+		const incomes: PlannedIncome[] = [
+			{
+				id: 'inc-pay',
+				workspaceId: 'ws-1',
+				yearMonth: '2026-11-01',
+				name: 'Primary Paycheck',
+				amount: 2500,
+				createdAt: '2026-11-01T00:00:00Z'
+			}
+		];
+		const onCategorizeTransaction = vi.fn().mockResolvedValue(undefined);
+		const onAssignTransactionToIncome = vi.fn().mockResolvedValue(undefined);
+		const onApproveReview = vi.fn().mockResolvedValue(undefined);
+		const onCreateRule = vi.fn();
+		const onApplySimilar = vi.fn().mockResolvedValue(1);
+
+		const extraTxs: TransactionItemModel[] = [
+			...transactions,
+			{
+				id: 'tx-new-2',
+				accountId: 'acct-checking',
+				origin: 'BANK_FEED',
+				status: 'POSTED',
+				amount: -19.0,
+				merchantRaw: 'Tiktok Shop Order 2',
+				categoryId: null,
+				transactionDate: '2026-11-19',
+				isCleared: true,
+				isTransfer: false
+			},
+			{
+				id: 'tx-inflow',
+				accountId: 'acct-checking',
+				origin: 'BANK_FEED',
+				status: 'POSTED',
+				amount: 2500,
+				merchantRaw: 'ACME PAYROLL',
+				categoryId: null,
+				transactionDate: '2026-11-19',
+				isCleared: true,
+				isTransfer: false
+			},
+			{
+				id: 'tx-rule-review',
+				accountId: 'acct-checking',
+				origin: 'BANK_FEED',
+				status: 'POSTED',
+				amount: -12.0,
+				merchantRaw: 'Starbucks',
+				categoryId: 'cat-dining',
+				categorizedBy: 'RULE',
+				needsReview: true,
+				transactionDate: '2026-11-19',
+				isCleared: true,
+				isTransfer: false
+			},
+			{
+				id: 'tx-rule-auto',
+				accountId: 'acct-checking',
+				origin: 'BANK_FEED',
+				status: 'POSTED',
+				amount: -15.99,
+				merchantRaw: 'Netflix',
+				categoryId: 'cat-dining',
+				categorizedBy: 'RULE',
+				needsReview: false,
+				transactionDate: '2026-11-15',
+				isCleared: true,
+				isTransfer: false
+			}
+		];
+
+		const { getByTestId, getByLabelText, getByRole, getByText } = render(TransactionsPanel, {
+			props: baseProps({
+				transactions: extraTxs,
+				incomes,
+				suggestionsByTxId: {
+					'tx-new': [
+						{
+							targetType: 'CATEGORY',
+							categoryId: 'cat-dining',
+							name: 'Dining Out',
+							score: 0.9,
+							reason: 'Used 3×'
+						}
+					]
+				},
+				onCategorizeTransaction,
+				onAssignTransactionToIncome,
+				onApproveReview,
+				onCreateRule,
+				onApplySimilar
+			})
+		});
+
+		// Rule-flagged transaction shows Review badge and Approve button
+		expect(getByTestId('tx-badge-review')).toBeTruthy();
+		await fireEvent.click(getByTestId('tx-approve-review-btn'));
+		await waitFor(() => expect(onApproveReview).toHaveBeenCalledWith('tx-rule-review'));
+
+		// Inflow shows Income section immediately without needing Show income toggle
+		await fireEvent.click(getByLabelText('Category for ACME PAYROLL'));
+		expect(getByTestId('quick-picker-income-section')).toBeTruthy();
+
+		// Expense opens Suggested section and triggers post-categorize bar
+		await fireEvent.click(getByLabelText('Category for Tiktok Shop'));
+		expect(getByTestId('quick-picker-suggestions').textContent).toContain('Dining Out');
+		expect(getByTestId('quick-picker-suggestions').textContent).toContain('Used 3×');
+
+		await fireEvent.click(getByTestId('quick-suggestion-option'));
+		await waitFor(() => expect(onCategorizeTransaction).toHaveBeenCalledWith('tx-new', 'cat-dining'));
+
+		const actionBar = getByTestId('post-categorize-action-bar');
+		expect(actionBar.textContent).toContain('Apply to 1 other');
+		await fireEvent.click(getByTestId('post-cat-apply-similar-btn'));
+		await waitFor(() => expect(onApplySimilar).toHaveBeenCalledTimes(1));
+
+		await fireEvent.click(getByTestId('post-cat-always-rule-btn'));
+		expect(onCreateRule).toHaveBeenCalledTimes(1);
+
+		// Auto-categorized without review shows Auto badge in All tab
+		await fireEvent.click(getByRole('tab', { name: /All/ }));
+		expect(getByText('Netflix')).toBeTruthy();
+		expect(getByTestId('tx-badge-auto')).toBeTruthy();
 	});
 });

@@ -129,6 +129,24 @@
 							{fmtSigned(solvency.solvencyBuffer)}
 						</span>
 					</div>
+					{#if (solvency.totalReservedInFunds ?? 0) > 0}
+						<div class="flex items-center justify-between gap-2 pt-1">
+							<span class="text-ink-secondary">Reserved in Funds</span>
+							<span class="font-mono font-medium text-ink-primary">
+								{fmtSigned(solvency.totalReservedInFunds ?? 0)}
+							</span>
+						</div>
+						<div class="flex items-center justify-between gap-2">
+							<span class="font-medium text-ink-primary">Unreserved Cash</span>
+							<span
+								class="font-mono font-bold {(solvency.unreservedCash ?? 0) < 0
+									? 'text-status-danger'
+									: 'text-status-good'}"
+							>
+								{fmtSigned(solvency.unreservedCash ?? 0)}
+							</span>
+						</div>
+					{/if}
 				</div>
 
 				<div class="border-t border-border mt-3 pt-2.5">

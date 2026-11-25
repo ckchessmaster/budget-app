@@ -132,10 +132,38 @@ func TestAccountServiceValidation(t *testing.T) {
 			Name:           "Household Cash",
 			Type:           Cash,
 			CurrentBalance: decimal.NewFromFloat(120.00),
-			IsOnBudget:     true,
 		}
 		if err := ValidateAccount(a); err != nil {
 			t.Fatalf("unexpected error for cash account: %v", err)
+		}
+		if !a.IsOnBudget {
+			t.Fatalf("expected cash account to derive IsOnBudget = true")
+		}
+	})
+
+	t.Run("derives IsOnBudget strictly from account type", func(t *testing.T) {
+		inv := &Account{Name: "401k", Type: Investment, IsOnBudget: true}
+		if err := ValidateAccount(inv); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if inv.IsOnBudget {
+			t.Fatalf("expected investment account to derive IsOnBudget = false")
+		}
+
+		loan := &Account{Name: "Mortgage", Type: Loan, IsOnBudget: true}
+		if err := ValidateAccount(loan); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if loan.IsOnBudget {
+			t.Fatalf("expected loan account to derive IsOnBudget = false")
+		}
+
+		sav := &Account{Name: "Savings", Type: Savings, IsOnBudget: false}
+		if err := ValidateAccount(sav); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !sav.IsOnBudget {
+			t.Fatalf("expected savings account to derive IsOnBudget = true")
 		}
 	})
 }

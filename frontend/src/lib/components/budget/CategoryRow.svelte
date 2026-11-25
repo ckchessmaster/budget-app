@@ -1,12 +1,17 @@
 <script lang="ts">
-	import type { InlineActivityItem } from '$lib/types/budget';
+	import type { InlineActivityItem, RolloverMode } from '$lib/types/budget';
 	import { isFixedCategory } from '$lib/utils/budgetCategoryKind';
+	import type { GroupColor } from '$lib/utils/budgetColors';
 	import InlineActivityDrawer from './InlineActivityDrawer.svelte';
 
 	export interface CategoryRowItem {
 		id: string;
 		name: string;
 		groupName?: string;
+		rolloverMode?: RolloverMode;
+		heldInAccountId?: string | null;
+		targetAmount?: number | null;
+		carryoverBalance?: number;
 		kind?: 'fixed' | 'variable';
 		originalPlanned: number;
 		effectiveTarget: number;
@@ -24,6 +29,8 @@
 		category: CategoryRowItem;
 		displayMode?: 'remaining' | 'spent';
 		embedded?: boolean;
+		groupColor?: GroupColor;
+		heldInAccountName?: string | null;
 		transactions?: InlineActivityItem[];
 		draggingCategoryId?: string | null;
 		draggingGroupName?: string | null;
@@ -53,6 +60,8 @@
 		category,
 		displayMode = 'remaining',
 		embedded = false,
+		groupColor,
+		heldInAccountName = null,
 		transactions = [],
 		draggingCategoryId = null,
 		draggingGroupName = null,
@@ -104,10 +113,19 @@
 	});
 
 	let totalSpent = $derived(category.spentCleared + category.spentPending);
-	let isOverspent = $derived(category.remaining < 0 || totalSpent > category.effectiveTarget);
+	let isFund = $derived(
+		category.rolloverMode !== undefined && category.rolloverMode !== 'SWEEP'
+	);
+	let priorSaved = $derived(category.carryoverBalance ?? 0);
+	let isOverspent = $derived(
+		isFund ? category.remaining < 0 : category.remaining < 0 || totalSpent > category.effectiveTarget
+	);
 
 	let isFixed = $derived(
-		category.kind ? category.kind === 'fixed' : isFixedCategory(category.name, category.groupName)
+		!isFund &&
+			(category.kind
+				? category.kind === 'fixed'
+				: isFixedCategory(category.name, category.groupName))
 	);
 	let isFixedPaid = $derived(
 		totalSpent > 0 && (category.effectiveTarget <= 0 || totalSpent >= category.effectiveTarget - 0.005)
@@ -115,7 +133,7 @@
 
 	let statusColor = $derived.by(() => {
 		if (isOverspent) return 'red';
-		if (isFixed) return 'green';
+		if (isFixed || isFund) return 'green';
 		if (category.effectiveTarget <= 0) return totalSpent > 0 ? 'red' : 'green';
 		const ratio = totalSpent / category.effectiveTarget;
 		if (ratio > 0.8) return 'amber';
@@ -126,15 +144,23 @@
 		Math.max(category.effectiveTarget, category.originalPlanned, totalSpent, 1)
 	);
 
-	let clearedPct = $derived(Math.min(100, (category.spentCleared / barScale) * 100));
+	let clearedPct = $derived(Math.min(100, Math.max(0, (category.spentCleared / barScale) * 100)));
 	let pendingPct = $derived(
-		Math.min(100 - clearedPct, (category.spentPending / barScale) * 100)
+		Math.min(100 - clearedPct, Math.max(0, (category.spentPending / barScale) * 100))
 	);
 	let showOriginalTick = $derived(
 		Math.abs(category.originalPlanned - category.effectiveTarget) > 0.005 &&
 			category.originalPlanned > 0
 	);
 	let tickPct = $derived(Math.min(100, (category.originalPlanned / barScale) * 100));
+	let fundGoalPct = $derived(
+		isFund && category.targetAmount && category.targetAmount > 0
+			? Math.max(0, Math.min(100, (category.remaining / category.targetAmount) * 100))
+			: 0
+	);
+	let fundGoalMet = $derived(
+		isFund && category.targetAmount != null && category.targetAmount > 0 && category.remaining >= category.targetAmount
+	);
 
 	function fmt(n: number): string {
 		const abs = Math.abs(n).toLocaleString('en-US', {
@@ -272,6 +298,9 @@
 			await onDropTransaction(txId, category.id);
 		}
 	}}
+	style={embedded && groupColor && !isTxDragOver && categoryDropPosition === null
+		? `background-color: ${groupColor.stroke}0a;`
+		: undefined}
 	class="relative {embedded
 		? ''
 		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 overflow-hidden'} transition-[background-color,opacity,box-shadow] duration-150 {isTxDragOver
@@ -376,8 +405,21 @@
 						{category.name}
 					</span>
 
-					{#if !organizeMode && (isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick)}
+					{#if !organizeMode && (isFixed || isFund || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick)}
 						<div class="flex flex-wrap items-center gap-1.5">
+							{#if isFund}
+								<span
+									data-testid="fund-badge"
+									class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-accent-tint text-accent-pop border border-accent-pop/25"
+								>
+									Fund
+								</span>
+								{#if heldInAccountName}
+									<span class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium bg-subtle text-ink-secondary border border-border">
+										in {heldInAccountName}
+									</span>
+								{/if}
+							{/if}
 							{#if isFixed}
 								<span
 									data-testid="fixed-status-badge"
@@ -571,8 +613,47 @@
 			{/if}
 		</div>
 
-		<!-- Slim Progress Bar (Variable Categories Only) -->
-		{#if !organizeMode && !isFixed}
+		{#if !organizeMode && isFund && (priorSaved > 0 || totalSpent !== 0)}
+			<div
+				data-testid="fund-meta-line"
+				class="mt-1 ml-5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-secondary"
+			>
+				{#if priorSaved > 0}
+					<span>Prior {fmt(priorSaved)}</span>
+				{/if}
+				{#if totalSpent > 0}
+					<span>{priorSaved > 0 ? '· ' : ''}Spent {fmt(totalSpent)}</span>
+				{:else if totalSpent < 0}
+					<span class="text-status-good">{priorSaved > 0 ? '· ' : ''}+{fmt(Math.abs(totalSpent))} credit</span>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Goal Progress Bar (Funds with Target) or Slim Spend Bar (Variable Expenses) -->
+		{#if !organizeMode && isFund && category.targetAmount && category.targetAmount > 0}
+			<div class="mt-2 ml-5 space-y-1">
+				<div class="flex items-center justify-between text-[10px] font-mono text-ink-secondary">
+					<span>{fmt(category.remaining)} saved</span>
+					<span>Goal: {fmt(category.targetAmount)}</span>
+				</div>
+				<div
+					data-testid="fund-goal-progress-bar"
+					class="relative h-1.5 overflow-hidden rounded-full bg-subtle"
+				>
+					<div
+						data-testid="fund-goal-fill"
+						class="absolute inset-y-0 left-0 transition-all duration-300 {isOverspent
+							? 'bg-status-danger'
+							: fundGoalMet
+								? 'bg-status-good'
+								: 'bg-accent-pop'}"
+						style="width: {fundGoalPct}%; {!isOverspent && !fundGoalMet && groupColor
+							? `background-color: ${groupColor.stroke};`
+							: ''}"
+					></div>
+				</div>
+			</div>
+		{:else if !organizeMode && !isFixed && !isFund}
 			<div
 				data-testid="variable-progress-bar"
 				class="mt-2 ml-5 relative h-1.5 overflow-hidden rounded-full bg-subtle"
@@ -585,7 +666,9 @@
 						: statusColor === 'amber'
 							? 'bg-status-warn'
 							: 'bg-accent-pop'}"
-					style="width: {clearedPct}%"
+					style="width: {clearedPct}%; {statusColor === 'green' && groupColor
+						? `background-color: ${groupColor.stroke};`
+						: ''}"
 				></div>
 
 				<!-- Layer 2: Striped pending spend -->

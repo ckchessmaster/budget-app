@@ -52,8 +52,8 @@ describe('AccountModal', () => {
 		mockDeleteAccount.mockReset();
 	});
 
-	it('applies smart on-budget defaults when changing account type', async () => {
-		const { getByLabelText } = render(AccountModal, {
+	it('shows balance-tracked note for investment and loan types without on-budget toggle', async () => {
+		const { getByLabelText, queryByLabelText, getByTestId, queryByTestId } = render(AccountModal, {
 			props: {
 				open: true,
 				editingAccount: null,
@@ -64,22 +64,18 @@ describe('AccountModal', () => {
 		});
 
 		const typeSelect = getByLabelText('Account Type') as HTMLSelectElement;
-		const onBudgetCheckbox = getByLabelText(/On-Budget Account/i) as HTMLInputElement;
-
 		expect(typeSelect.value).toBe('checking');
-		expect(onBudgetCheckbox.checked).toBe(true);
-
-		await fireEvent.change(typeSelect, { target: { value: 'cash' } });
-		expect(onBudgetCheckbox.checked).toBe(true);
+		expect(queryByLabelText(/On-Budget Account/i)).toBeNull();
+		expect(queryByTestId('account-tracking-note')).toBeNull();
 
 		await fireEvent.change(typeSelect, { target: { value: 'investment' } });
-		expect(onBudgetCheckbox.checked).toBe(false);
+		expect(getByTestId('account-tracking-note')).toBeTruthy();
 
 		await fireEvent.change(typeSelect, { target: { value: 'loan' } });
-		expect(onBudgetCheckbox.checked).toBe(false);
+		expect(getByTestId('account-tracking-note')).toBeTruthy();
 
 		await fireEvent.change(typeSelect, { target: { value: 'savings' } });
-		expect(onBudgetCheckbox.checked).toBe(true);
+		expect(queryByTestId('account-tracking-note')).toBeNull();
 	});
 
 	it('stores credit card Amount Owed as negative balance and supports overpaid credit toggle', async () => {

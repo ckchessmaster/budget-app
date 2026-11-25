@@ -34,6 +34,7 @@ var rlsProtectedTables = []string{
 	"month_end_rollover_runs",
 	"credit_card_debt_interlocks",
 	"monthly_rollover_adjustments",
+	"categorization_rules",
 }
 
 // TestRLSPoliciesTerminateWithoutRecursion guards the row-security policy chain: scanning

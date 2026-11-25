@@ -16,18 +16,20 @@ type BankSyncInput struct {
 }
 
 type BankSyncResult struct {
-	FetchedCount       int      `json:"fetched_count"`
-	InsertedCount      int      `json:"inserted_count"`
-	SettledCount       int      `json:"settled_count"`
-	ManualMatchedCount int      `json:"manual_matched_count"`
-	TransfersLinked    int      `json:"transfers_linked"`
-	NormalizedCount    int      `json:"normalized_count"`
-	NotificationsSent  int      `json:"notifications_sent,omitempty"`
-	Warnings           []string `json:"warnings,omitempty"`
+	FetchedCount         int      `json:"fetched_count"`
+	InsertedCount        int      `json:"inserted_count"`
+	SettledCount         int      `json:"settled_count"`
+	ManualMatchedCount   int      `json:"manual_matched_count"`
+	TransfersLinked      int      `json:"transfers_linked"`
+	NormalizedCount      int      `json:"normalized_count"`
+	AutoCategorizedCount int      `json:"auto_categorized_count,omitempty"`
+	NotificationsSent    int      `json:"notifications_sent,omitempty"`
+	Warnings             []string `json:"warnings,omitempty"`
 }
 
 // BankSyncWorkflow orchestrates fetching SimpleFIN data, persisting/reconciling transactions,
-// detecting cross-account transfers, normalizing merchant names, and evaluating alert triggers.
+// detecting cross-account transfers, normalizing merchant names, applying categorization rules,
+// and evaluating alert triggers.
 func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResult, error) {
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
@@ -65,6 +67,11 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 		return nil, err
 	}
 
+	var autoCategorized int
+	if err := workflow.ExecuteActivity(ctx, bankActivities.ApplyCategorizationRulesActivity, input.SyncScope).Get(ctx, &autoCategorized); err != nil {
+		return nil, err
+	}
+
 	warnings := append([]string(nil), persistRes.Warnings...)
 	notifCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
@@ -82,13 +89,14 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 	}
 
 	return &BankSyncResult{
-		FetchedCount:       persistRes.FetchedCount,
-		InsertedCount:      persistRes.InsertedCount,
-		SettledCount:       persistRes.SettledCount,
-		ManualMatchedCount: persistRes.ManualMatchedCount,
-		TransfersLinked:    linked,
-		NormalizedCount:    normalized,
-		NotificationsSent:  notifRes.TotalSent(),
-		Warnings:           warnings,
+		FetchedCount:         persistRes.FetchedCount,
+		InsertedCount:        persistRes.InsertedCount,
+		SettledCount:         persistRes.SettledCount,
+		ManualMatchedCount:   persistRes.ManualMatchedCount,
+		TransfersLinked:      linked,
+		NormalizedCount:      normalized,
+		AutoCategorizedCount: autoCategorized,
+		NotificationsSent:    notifRes.TotalSent(),
+		Warnings:             warnings,
 	}, nil
 }

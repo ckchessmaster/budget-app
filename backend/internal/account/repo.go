@@ -110,6 +110,10 @@ func ValidateAccount(a *Account) error {
 		return ErrInvalidStatementDueDay
 	}
 
+	// Budget participation is derived strictly from account type: cash & credit accounts
+	// are always in-budget; investment & loan accounts are balance-tracked only.
+	a.IsOnBudget = a.Type != Investment && a.Type != Loan
+
 	return nil
 }
 

@@ -26,19 +26,29 @@ export function mapOfflineQueuedToTransactions(
 		}));
 }
 
+export function hasUncategorizedSplit(tx: TransactionItemModel): boolean {
+	return Boolean(
+		tx.splits &&
+			tx.splits.length > 0 &&
+			tx.splits.some((s) => s.categoryId === null && !s.plannedIncomeId)
+	);
+}
+
 /**
- * Returns true for uncategorized on-budget non-transfer, non-split transactions.
+ * Returns true for uncategorized on-budget non-transfer transactions (including splits with an uncategorized remainder).
  */
 export function isNewTransaction(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
 ): boolean {
-	if (tx.categoryId !== null) return false;
-	if (tx.plannedIncomeId) return false;
 	if (tx.isTransfer) return false;
-	if (tx.splits && tx.splits.length > 0) return false;
 	const acct = accountById.get(tx.accountId);
 	if (acct && !acct.isOnBudget) return false;
+	if (tx.splits && tx.splits.length > 0) {
+		return hasUncategorizedSplit(tx);
+	}
+	if (tx.categoryId !== null) return false;
+	if (tx.plannedIncomeId) return false;
 	return true;
 }
 
@@ -50,13 +60,20 @@ export function isPendingTransaction(tx: TransactionItemModel): boolean {
 }
 
 /**
- * Combined To Review predicate: uncategorized on-budget items or pending/queued items.
+ * Combined To Review predicate: uncategorized on-budget items, pending/queued items,
+ * or auto-categorized items flagged for review.
  */
 export function isToReviewTransaction(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
 ): boolean {
-	return isNewTransaction(tx, accountById) || isPendingTransaction(tx);
+	if (isPendingTransaction(tx)) return true;
+	if (isNewTransaction(tx, accountById)) return true;
+	if (tx.needsReview && !tx.isTransfer) {
+		const acct = accountById.get(tx.accountId);
+		if (!acct || acct.isOnBudget) return true;
+	}
+	return false;
 }
 
 /**
@@ -65,9 +82,13 @@ export function isToReviewTransaction(
 export function getReviewBadgeKind(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
-): 'pending' | 'new' | null {
+): 'pending' | 'review' | 'new' | null {
 	if (isPendingTransaction(tx)) return 'pending';
 	if (isNewTransaction(tx, accountById)) return 'new';
+	if (tx.needsReview && !tx.isTransfer) {
+		const acct = accountById.get(tx.accountId);
+		if (!acct || acct.isOnBudget) return 'review';
+	}
 	return null;
 }
 
@@ -201,12 +222,6 @@ export function suggestCategoriesForTransaction(
 				}
 			}
 		}
-	}
-
-	// 3. Fallback fill from categories in given order
-	for (const cat of categories) {
-		if (result.length >= maxSuggestions) break;
-		pushCategory(cat);
 	}
 
 	return result;

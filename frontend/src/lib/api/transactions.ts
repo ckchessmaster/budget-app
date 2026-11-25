@@ -4,6 +4,7 @@ import type {
 	AccountItem,
 	CreateAccountPayload,
 	CreateTransactionPayload,
+	ReplaceSplitsPayload,
 	SolvencyReport,
 	TransactionItemModel,
 	UpdateAccountPayload,
@@ -45,12 +46,16 @@ function mapTransaction(raw: any): TransactionItemModel {
 		userNotes: raw.user_notes ?? null,
 		isCleared: Boolean(raw.is_cleared),
 		isTransfer: Boolean(raw.is_transfer),
+		categorizedBy: raw.categorized_by === 'RULE' ? 'RULE' : 'MANUAL',
+		appliedRuleId: raw.applied_rule_id ?? null,
+		needsReview: Boolean(raw.needs_review),
 		settledDelta: raw.settled_delta != null ? num(raw.settled_delta) : null,
 		splits: Array.isArray(raw.splits)
 			? raw.splits.map((s: any) => ({
 					id: s.id,
 					amount: num(s.amount),
 					categoryId: s.category_id ?? null,
+					plannedIncomeId: s.planned_income_id ?? null,
 					userNotes: s.user_notes ?? null
 				}))
 			: undefined
@@ -135,6 +140,7 @@ export async function updateTransaction(
 	if (payload.status !== undefined) body.status = payload.status;
 	if (payload.isCleared !== undefined) body.is_cleared = payload.isCleared;
 	if (payload.amount !== undefined) body.amount = payload.amount;
+	if (payload.approveReview !== undefined) body.approve_review = payload.approveReview;
 
 	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
@@ -144,6 +150,34 @@ export async function updateTransaction(
 	if (!res.ok) {
 		const errBody = await res.json().catch(() => ({}));
 		throw new Error(errBody.error || `Failed to update transaction (${res.status})`);
+	}
+	return mapTransaction(await res.json());
+}
+
+export async function replaceTransactionSplits(
+	id: string,
+	payload: ReplaceSplitsPayload
+): Promise<TransactionItemModel> {
+	const { apiBaseUrl } = getAppConfig();
+	const body: Record<string, unknown> = {
+		splits: payload.splits.map((s) => ({
+			amount: s.amount,
+			category_id: s.categoryId ?? null,
+			planned_income_id: s.plannedIncomeId ?? null,
+			user_notes: s.userNotes ?? ''
+		}))
+	};
+	if (payload.categoryId !== undefined) body.category_id = payload.categoryId;
+	if (payload.plannedIncomeId !== undefined) body.planned_income_id = payload.plannedIncomeId;
+
+	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/${encodeURIComponent(id)}/splits`, {
+		method: 'PUT',
+		headers: await authHeaders(),
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to update transaction splits (${res.status})`);
 	}
 	return mapTransaction(await res.json());
 }
@@ -267,6 +301,21 @@ export async function fetchSolvencyReport(): Promise<SolvencyReport> {
 		totalCreditCardDebt: num(raw.total_credit_card_debt),
 		solvencyBuffer: num(raw.solvency_buffer),
 		isFloatingDebt: Boolean(raw.is_floating_debt),
-		floatingDebtAmount: num(raw.floating_debt_amount)
+		floatingDebtAmount: num(raw.floating_debt_amount),
+		totalReservedInFunds: num(raw.total_reserved_in_funds),
+		unreservedCash: raw.unreserved_cash != null ? num(raw.unreserved_cash) : num(raw.solvency_buffer),
+		accountReservations: Array.isArray(raw.account_reservations)
+			? raw.account_reservations.map((ar: any) => ({
+					accountId: ar.account_id,
+					reservedTotal: num(ar.reserved_total),
+					funds: Array.isArray(ar.funds)
+						? ar.funds.map((f: any) => ({
+								categoryId: f.category_id,
+								name: f.name,
+								balance: num(f.balance)
+							}))
+						: []
+				}))
+			: []
 	};
 }

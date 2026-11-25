@@ -40,8 +40,6 @@
 
 	let name = $state('');
 	let type = $state<AccountType>('checking');
-	let isOnBudget = $state(true);
-	let isOnBudgetDirty = $state(false);
 	let balanceInput = $state('0.00');
 	let isCreditOverpaid = $state(false);
 	let recordBalanceAdjustment = $state(false);
@@ -60,13 +58,10 @@
 	let isEditing = $derived(editingAccount !== null);
 	let isLinked = $derived(Boolean(editingAccount?.externalAccountId));
 	let isDebtAccount = $derived(type === 'credit_card' || type === 'loan');
+	let isTrackingType = $derived(type === 'investment' || type === 'loan');
 
 	function round2(n: number): number {
 		return Math.round((n + Number.EPSILON) * 100) / 100;
-	}
-
-	function defaultOnBudgetForType(t: AccountType): boolean {
-		return t !== 'investment' && t !== 'loan';
 	}
 
 	let computedBalance = $derived.by(() => {
@@ -110,12 +105,10 @@
 		confirmDelete = false;
 		confirmUnlink = false;
 		recordBalanceAdjustment = false;
-		isOnBudgetDirty = false;
 
 		if (acct) {
 			name = acct.name;
 			type = acct.type;
-			isOnBudget = acct.isOnBudget;
 			if (acct.type === 'credit_card' || acct.type === 'loan') {
 				isCreditOverpaid = acct.currentBalance > 0;
 				balanceInput = Math.abs(acct.currentBalance).toFixed(2);
@@ -132,7 +125,6 @@
 		} else {
 			name = '';
 			type = 'checking';
-			isOnBudget = true;
 			balanceInput = '0.00';
 			isCreditOverpaid = false;
 			cardMode = 'PAY_IN_FULL';
@@ -191,9 +183,6 @@
 	}
 
 	function handleTypeChange() {
-		if (!isEditing && !isOnBudgetDirty) {
-			isOnBudget = defaultOnBudgetForType(type);
-		}
 		if (type !== 'credit_card' && type !== 'loan') {
 			isCreditOverpaid = false;
 		}
@@ -244,7 +233,7 @@
 					name: trimmedName,
 					type,
 					currentBalance: computedBalance,
-					isOnBudget,
+					isOnBudget: !isTrackingType,
 					cardMode: type === 'credit_card' ? cardMode : 'PAY_IN_FULL',
 					aprPercentage: type === 'credit_card' || type === 'loan' ? round2(parsedApr) : 0,
 					statementDueDay: type === 'credit_card' ? parsedDueDay : null,
@@ -259,7 +248,7 @@
 				const payload: UpdateAccountPayload = {
 					name: trimmedName,
 					type,
-					isOnBudget,
+					isOnBudget: !isTrackingType,
 					aprPercentage: type === 'credit_card' || type === 'loan' ? round2(parsedApr) : 0
 				};
 
@@ -440,24 +429,14 @@
 				</div>
 			</div>
 
-			<label
-				for="acct-on-budget"
-				class="flex items-start gap-2.5 rounded-lg border border-border bg-subtle p-3 cursor-pointer"
-			>
-				<input
-					id="acct-on-budget"
-					type="checkbox"
-					bind:checked={isOnBudget}
-					onchange={() => (isOnBudgetDirty = true)}
-					class="mt-0.5 rounded border-border bg-canvas accent-accent-pop"
-				/>
-				<div>
-					<span class="block text-xs font-medium text-ink-primary">On-Budget Account</span>
-					<span class="block text-[11px] text-ink-secondary">
-						Include in monthly budget spending &amp; solvency buffer. Uncheck for off-budget tracking.
-					</span>
-				</div>
-			</label>
+			{#if isTrackingType}
+				<p
+					data-testid="account-tracking-note"
+					class="rounded-lg border border-border bg-subtle px-3 py-2 text-[11px] text-ink-secondary"
+				>
+					Tracked for balance and net worth — internal transactions stay out of your monthly budget review. Payments from checking or credit cards still count in your budget.
+				</p>
+			{/if}
 
 			{#if isLinked && editingAccount}
 				<div class="rounded-lg border border-border bg-subtle p-3.5 space-y-2.5">

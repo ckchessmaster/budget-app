@@ -124,14 +124,13 @@ func ComputeSpendRecommendations(
 	spendRows, err := tx.Query(ctx, `
 		SELECT t.category_id,
 		       date_trunc('month', t.transaction_date)::date AS spend_month,
-		       COALESCE(SUM(-t.amount), 0) AS total_spent
+		       GREATEST(0, COALESCE(SUM(-t.amount), 0)) AS total_spent
 		FROM transactions t
 		INNER JOIN accounts a ON a.id = t.account_id
 		WHERE t.workspace_id = $1
 		  AND a.workspace_id = $1
 		  AND t.category_id IS NOT NULL
 		  AND t.is_transfer = FALSE
-		  AND t.amount < 0
 		  AND a.is_on_budget = TRUE
 		  AND t.transaction_date >= $2::date
 		  AND t.transaction_date < $3::date

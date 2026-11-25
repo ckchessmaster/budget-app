@@ -2,11 +2,13 @@
 	import CategoryRow from './CategoryRow.svelte';
 	import { GROUP_COLOR_PALETTE, groupSlug, type GroupColor } from '$lib/utils/budgetColors';
 	import type { CategoryBudget, InlineActivityItem } from '$lib/types/budget';
+	import type { AccountItem } from '$lib/types/transaction';
 
 	interface Props {
 		groupName: string;
 		color: GroupColor;
 		categories: CategoryBudget[];
+		accountById?: Map<string, AccountItem>;
 		displayMode: 'remaining' | 'spent';
 		highlighted?: boolean;
 		transactionsByCategory?: Map<string, InlineActivityItem[]>;
@@ -52,6 +54,7 @@
 		groupName,
 		color,
 		categories,
+		accountById,
 		displayMode,
 		highlighted = false,
 		transactionsByCategory,
@@ -425,6 +428,8 @@
 						category={cat}
 						{displayMode}
 						embedded={true}
+						groupColor={color}
+						heldInAccountName={cat.heldInAccountId ? (accountById?.get(cat.heldInAccountId)?.name ?? null) : null}
 						transactions={transactionsByCategory?.get(cat.id) ?? []}
 						{draggingCategoryId}
 						{draggingGroupName}

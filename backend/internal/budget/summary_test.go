@@ -92,6 +92,23 @@ func TestAggregateMonthSummary(t *testing.T) {
 			t.Fatalf("ReadyToAssign = %s, want 50.00", summary.ReadyToAssign.StringFixed(2))
 		}
 	})
+
+	t.Run("negative spent (refunds exceeding outflows) increases remaining without unbalancing", func(t *testing.T) {
+		summary := aggregateMonthSummary(nov, decimal.NewFromInt(1000), decimal.Zero, []categoryMonthAmounts{
+			{
+				CarryoverBalance: decimal.NewFromInt(500),
+				EffectiveTarget:  decimal.NewFromInt(100),
+				SpentCleared:     decimal.NewFromInt(-50),
+				SpentPending:     decimal.Zero,
+			},
+		})
+		if summary.TotalSpentCleared.StringFixed(2) != "-50.00" {
+			t.Fatalf("TotalSpentCleared = %s, want -50.00", summary.TotalSpentCleared.StringFixed(2))
+		}
+		if summary.IsUnbalanced {
+			t.Fatalf("expected IsUnbalanced = false")
+		}
+	})
 }
 
 func TestComputeMonthSummaryIntegration(t *testing.T) {

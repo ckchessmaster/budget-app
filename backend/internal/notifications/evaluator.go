@@ -264,8 +264,8 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			),
 			cat_spend AS (
 				SELECT t.category_id,
-				       COALESCE(SUM(CASE WHEN t.status = 'POSTED' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_cleared,
-				       COALESCE(SUM(CASE WHEN t.status = 'PENDING' AND t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS spent_pending
+				       COALESCE(SUM(CASE WHEN t.status = 'POSTED' THEN -t.amount ELSE 0 END), 0) AS spent_cleared,
+				       COALESCE(SUM(CASE WHEN t.status = 'PENDING' THEN -t.amount ELSE 0 END), 0) AS spent_pending
 				FROM transactions t
 				INNER JOIN accounts a ON a.id = t.account_id
 				WHERE t.workspace_id = $3

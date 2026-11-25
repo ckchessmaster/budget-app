@@ -63,13 +63,15 @@ func (a *BankActivities) DetectAndLinkTransfersActivity(ctx context.Context, sco
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT id, account_id, amount, merchant_raw, transaction_date
-		FROM transactions
-		WHERE workspace_id = $1
-		  AND parent_transaction_id IS NULL
-		  AND transfer_linked_transaction_id IS NULL
-		  AND transaction_date >= CURRENT_DATE - INTERVAL '30 days'
-		ORDER BY transaction_date ASC
+		SELECT t.id, t.account_id, t.amount, t.merchant_raw, t.transaction_date
+		FROM transactions t
+		INNER JOIN accounts a ON a.id = t.account_id AND a.workspace_id = t.workspace_id
+		WHERE t.workspace_id = $1
+		  AND t.parent_transaction_id IS NULL
+		  AND t.transfer_linked_transaction_id IS NULL
+		  AND a.is_on_budget = TRUE
+		  AND t.transaction_date >= CURRENT_DATE - INTERVAL '30 days'
+		ORDER BY t.transaction_date ASC
 	`, scope.WorkspaceID)
 	if err != nil {
 		return 0, err
