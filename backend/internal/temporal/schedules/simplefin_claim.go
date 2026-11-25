@@ -35,3 +35,18 @@ func (s SimpleFINClaimStarter) Start(ctx context.Context, scope temporalinternal
 	}
 	return run.GetID(), nil
 }
+
+func (s SimpleFINClaimStarter) Discover(ctx context.Context, scope temporalinternal.SyncScope) (string, error) {
+	if s.Client == nil {
+		return "", fmt.Errorf("temporal client is not configured")
+	}
+
+	run, err := s.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:        fmt.Sprintf("simplefin-discover-%s-%d", scope.WorkspaceID.String(), time.Now().UTC().UnixNano()),
+		TaskQueue: temporalinternal.TaskQueue,
+	}, workflows.SimpleFINDiscoverWorkflow, workflows.SimpleFINClaimInput{SyncScope: scope})
+	if err != nil {
+		return "", err
+	}
+	return run.GetID(), nil
+}

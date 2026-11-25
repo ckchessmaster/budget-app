@@ -89,6 +89,7 @@ func main() {
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
 	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterWorkflow(workflows.SimpleFINClaimWorkflow)
+	w.RegisterWorkflow(workflows.SimpleFINDiscoverWorkflow)
 	w.RegisterWorkflow(workflows.DemoResetWorkflow)
 	w.RegisterWorkflow(workflows.OfflineReplayWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
