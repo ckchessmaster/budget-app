@@ -21,8 +21,8 @@ func (r *CreatePlannedIncomeRequest) Validate() error {
 	if len(name) < 1 || len(name) > 150 {
 		return fmt.Errorf("name must be between 1 and 150 characters")
 	}
-	if !r.Amount.GreaterThan(decimal.Zero) {
-		return ErrInvalidAmount
+	if r.Amount.LessThan(decimal.Zero) {
+		return ErrNegativeAmount
 	}
 	return nil
 }

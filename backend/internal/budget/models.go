@@ -12,6 +12,7 @@ var (
 	ErrNotFound                 = errors.New("resource not found")
 	ErrCyclicSweep              = errors.New("sweep_target_category_id cannot reference the category itself")
 	ErrInvalidAmount            = errors.New("amount must be greater than zero")
+	ErrNegativeAmount           = errors.New("amount must be zero or greater")
 	ErrSameCategoryTransfer     = errors.New("from_category_id and to_category_id cannot be identical")
 	ErrInterlockAlreadyResolved = errors.New("credit card debt interlock is already resolved")
 	ErrInvalidInterlockAction   = errors.New("action must be KEEP_DEDUCTION or CONVERT_TO_DEBT")

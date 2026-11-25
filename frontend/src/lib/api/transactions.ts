@@ -40,6 +40,7 @@ function mapTransaction(raw: any): TransactionItemModel {
 		merchantRaw: raw.merchant_raw,
 		merchantClean: raw.merchant_clean ?? null,
 		categoryId: raw.category_id ?? null,
+		plannedIncomeId: raw.planned_income_id ?? null,
 		transactionDate: String(raw.transaction_date).slice(0, 10),
 		userNotes: raw.user_notes ?? null,
 		isCleared: Boolean(raw.is_cleared),
@@ -123,6 +124,11 @@ export async function updateTransaction(
 		body.clear_category = true;
 	} else if (payload.categoryId !== undefined) {
 		body.category_id = payload.categoryId;
+	}
+	if (payload.clearPlannedIncome) {
+		body.clear_planned_income = true;
+	} else if (payload.plannedIncomeId !== undefined) {
+		body.planned_income_id = payload.plannedIncomeId;
 	}
 	if (payload.merchantClean !== undefined) body.merchant_clean = payload.merchantClean;
 	if (payload.userNotes !== undefined) body.user_notes = payload.userNotes;

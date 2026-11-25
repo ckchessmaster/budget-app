@@ -130,6 +130,10 @@ export function formatSimpleFINClaimError(
 	if (lower.includes('timed out')) {
 		return 'SimpleFIN took too long to respond. Your bank may be slow right now — check SimpleFIN Bridge or try again in a moment.';
 	}
+	const gatewayMatch = rawMessage.match(/\((502|503|504|520|522|524)\)/);
+	if (gatewayMatch) {
+		return `Temporary connection hiccup reaching the server (HTTP ${gatewayMatch[1]}). Please try again in a moment.`;
+	}
 	if (lower.includes('setup_token is required')) {
 		return 'Paste a SimpleFIN Setup Token before continuing.';
 	}

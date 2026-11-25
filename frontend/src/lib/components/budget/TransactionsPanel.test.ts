@@ -1,7 +1,7 @@
 import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import TransactionsPanel from './TransactionsPanel.svelte';
-import type { CategoryBudget } from '$lib/types/budget';
+import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
 import type { AccountItem, TransactionItemModel } from '$lib/types/transaction';
 
 const accounts: AccountItem[] = [
@@ -267,5 +267,60 @@ describe('TransactionsPanel', () => {
 			merchantRaw: 'Whole Foods',
 			categoryId: 'cat-groc'
 		});
+	});
+
+	it('excludes income-assigned transactions from To Review and supports quick income assignment', async () => {
+		const incomes: PlannedIncome[] = [
+			{
+				id: 'inc-unplanned',
+				workspaceId: 'ws-1',
+				yearMonth: '2026-11-01',
+				name: 'Unplanned Income',
+				amount: 0,
+				createdAt: '2026-11-01T00:00:00Z'
+			}
+		];
+		const onAssignTransactionToIncome = vi.fn().mockResolvedValue(undefined);
+
+		const txWithIncome: TransactionItemModel[] = [
+			...transactions,
+			{
+				id: 'tx-venmo',
+				accountId: 'acct-checking',
+				origin: 'BANK_FEED',
+				status: 'POSTED',
+				amount: 86,
+				merchantRaw: 'Transfer From Venmo',
+				categoryId: null,
+				plannedIncomeId: 'inc-unplanned',
+				transactionDate: '2026-11-20',
+				isCleared: true,
+				isTransfer: false
+			}
+		];
+
+		const { getByRole, getByText, getByTestId, queryByText } = render(TransactionsPanel, {
+			props: baseProps({
+				transactions: txWithIncome,
+				incomes,
+				onAssignTransactionToIncome
+			})
+		});
+
+		// Income-assigned posted transaction is NOT in To Review (still 2)
+		expect(getByRole('tab', { name: 'To Review (2)' })).toBeTruthy();
+		expect(getByRole('tab', { name: 'All (4)' })).toBeTruthy();
+		expect(queryByText('Transfer From Venmo')).toBeNull();
+
+		// Assign Tiktok Shop to Unplanned Income via quick picker
+		await fireEvent.click(getByText('Tiktok Shop'));
+		await fireEvent.click(getByTestId('quick-income-option'));
+		await waitFor(() =>
+			expect(onAssignTransactionToIncome).toHaveBeenCalledWith('tx-new', 'inc-unplanned')
+		);
+
+		// All tab renders Income pill
+		await fireEvent.click(getByRole('tab', { name: 'All (4)' }));
+		expect(getByText('Income: Unplanned Income')).toBeTruthy();
 	});
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { CategoryBudget } from '$lib/types/budget';
+	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
 	import type {
 		AccountItem,
 		TransactionItemModel,
@@ -10,6 +10,7 @@
 		transaction: TransactionItemModel;
 		account: AccountItem | null;
 		categories: CategoryBudget[];
+		incomes?: PlannedIncome[];
 		variant?: 'panel' | 'modal';
 		onClose: () => void;
 		onUpdateTransaction?: (txId: string, payload: UpdateTransactionPayload) => Promise<void>;
@@ -20,6 +21,7 @@
 		transaction,
 		account,
 		categories,
+		incomes = [],
 		variant = 'panel',
 		onClose,
 		onUpdateTransaction,
@@ -50,6 +52,7 @@
 	);
 
 	let categoryById = $derived(new Map(categories.map((c) => [c.id, c])));
+	let incomeById = $derived(new Map(incomes.map((i) => [i.id, i])));
 	let groupedCategories = $derived.by(() => {
 		const groups = new Map<string, CategoryBudget[]>();
 		for (const cat of categories) {
@@ -61,12 +64,14 @@
 	});
 
 	$effect(() => {
-		const key = `${transaction.id}|${transaction.merchantClean ?? ''}|${transaction.userNotes ?? ''}|${transaction.categoryId ?? ''}`;
+		const key = `${transaction.id}|${transaction.merchantClean ?? ''}|${transaction.userNotes ?? ''}|${transaction.categoryId ?? ''}|${transaction.plannedIncomeId ?? ''}`;
 		if (key !== lastHydratedKey) {
 			lastHydratedKey = key;
 			editMerchant = transaction.merchantClean?.trim() || transaction.merchantRaw;
 			editNotes = transaction.userNotes ?? '';
-			editCategoryId = transaction.categoryId ?? '';
+			editCategoryId = transaction.plannedIncomeId
+				? `income:${transaction.plannedIncomeId}`
+				: transaction.categoryId ?? '';
 			confirmDelete = false;
 			errorMsg = null;
 		}
@@ -114,10 +119,15 @@
 				userNotes: editNotes.trim()
 			};
 			if (canCategorize) {
-				if (editCategoryId) {
+				if (editCategoryId.startsWith('income:')) {
+					payload.plannedIncomeId = editCategoryId.slice('income:'.length);
+					payload.clearCategory = true;
+				} else if (editCategoryId) {
 					payload.categoryId = editCategoryId;
+					payload.clearPlannedIncome = true;
 				} else {
 					payload.clearCategory = true;
+					payload.clearPlannedIncome = true;
 				}
 			}
 			await onUpdateTransaction(transaction.id, payload);
@@ -263,6 +273,9 @@
 								</li>
 							{/each}
 						</ul>
+					{:else if transaction.plannedIncomeId}
+						{@const inc = incomeById.get(transaction.plannedIncomeId)}
+						<span>Income — {inc ? inc.name : 'Assigned Income'}</span>
 					{:else if transaction.categoryId}
 						{@const cat = categoryById.get(transaction.categoryId)}
 						<span>{cat ? `${cat.groupName} — ${cat.name}` : transaction.categoryName ?? 'Categorized'}</span>
@@ -312,6 +325,13 @@
 								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 							>
 								<option value="">Uncategorized</option>
+								{#if incomes.length > 0}
+									<optgroup label="Income">
+										{#each incomes as inc (inc.id)}
+											<option value={`income:${inc.id}`}>{inc.name}</option>
+										{/each}
+									</optgroup>
+								{/if}
 								{#each groupedCategories as [grp, cats] (grp)}
 									<optgroup label={grp}>
 										{#each cats as cat (cat.id)}

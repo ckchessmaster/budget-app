@@ -58,11 +58,23 @@ export interface SimpleFINClaimResult {
 
 const CLAIM_POLL_INTERVAL_MS = 1000;
 const CLAIM_POLL_TIMEOUT_MS = 180_000;
+const DISCOVER_RETRY_DELAYS_MS = [400, 1000];
+const MAX_CONSECUTIVE_POLL_ERRORS = 4;
+const TRANSIENT_GATEWAY_STATUSES = new Set([502, 503, 504, 520, 522, 524]);
 
-async function authHeaders(): Promise<HeadersInit> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json'
-	};
+function isTransientGatewayStatus(status: number): boolean {
+	return TRANSIENT_GATEWAY_STATUSES.has(status);
+}
+
+function isTransientFetchError(err: unknown): boolean {
+	return err instanceof TypeError;
+}
+
+async function authHeaders(includeJsonContentType = true): Promise<HeadersInit> {
+	const headers: Record<string, string> = {};
+	if (includeJsonContentType) {
+		headers['Content-Type'] = 'application/json';
+	}
 	const token = await auth.getValidToken();
 	if (token) {
 		headers['Authorization'] = `Bearer ${token}`;
@@ -85,8 +97,28 @@ async function pollSimpleFINAccountsWorkflow(
 	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
 ): Promise<SimpleFINDiscoveredAccount[]> {
 	const deadline = Date.now() + CLAIM_POLL_TIMEOUT_MS;
+	let consecutiveTransientErrors = 0;
+
 	while (Date.now() < deadline) {
-		const status = await fetchWorkflowStatus<SimpleFINClaimResult>(workflowId);
+		let status: WorkflowStatus<SimpleFINClaimResult>;
+		try {
+			status = await fetchWorkflowStatus<SimpleFINClaimResult>(workflowId);
+			consecutiveTransientErrors = 0;
+		} catch (err) {
+			const transient =
+				(err instanceof WorkflowStatusError && isTransientGatewayStatus(err.status)) ||
+				isTransientFetchError(err);
+			if (!transient) {
+				throw err;
+			}
+			consecutiveTransientErrors += 1;
+			if (consecutiveTransientErrors > MAX_CONSECUTIVE_POLL_ERRORS || Date.now() >= deadline) {
+				throw err;
+			}
+			await sleep(CLAIM_POLL_INTERVAL_MS);
+			continue;
+		}
+
 		onProgress?.(status);
 
 		if (status.status === 'COMPLETED') {
@@ -117,15 +149,41 @@ export async function discoverSimpleFINAccounts(
 	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
 ): Promise<SimpleFINDiscoveredAccount[]> {
 	const { apiBaseUrl } = getAppConfig();
-	const res = await fetch(`${apiBaseUrl}/api/v1/bank/simplefin/discover`, {
-		method: 'POST',
-		headers: await authHeaders()
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({}));
-		throw new Error(err.error || `Failed to discover SimpleFIN accounts (${res.status})`);
+	let started: ClaimAcceptedResponse | null = null;
+
+	for (let attempt = 0; attempt <= DISCOVER_RETRY_DELAYS_MS.length; attempt++) {
+		try {
+			const res = await fetch(`${apiBaseUrl}/api/v1/bank/simplefin/discover`, {
+				method: 'POST',
+				headers: await authHeaders(false)
+			});
+			if (res.ok) {
+				started = await res.json();
+				break;
+			}
+
+			const retryDelay = DISCOVER_RETRY_DELAYS_MS[attempt];
+			if (isTransientGatewayStatus(res.status) && retryDelay !== undefined) {
+				await sleep(retryDelay);
+				continue;
+			}
+
+			const err = await res.json().catch(() => ({}));
+			throw new Error(err.error || `Failed to discover SimpleFIN accounts (${res.status})`);
+		} catch (err) {
+			const retryDelay = DISCOVER_RETRY_DELAYS_MS[attempt];
+			if (isTransientFetchError(err) && retryDelay !== undefined) {
+				await sleep(retryDelay);
+				continue;
+			}
+			throw err;
+		}
 	}
-	const started: ClaimAcceptedResponse = await res.json();
+
+	if (!started) {
+		throw new Error('Failed to discover SimpleFIN accounts');
+	}
+
 	return pollSimpleFINAccountsWorkflow(started.workflow_id, 'SimpleFIN account discovery failed', onProgress);
 }
 
@@ -161,7 +219,7 @@ export class WorkflowStatusError extends Error {
 export async function fetchWorkflowStatus<T>(workflowId: string): Promise<WorkflowStatus<T>> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/workflow-status/${encodeURIComponent(workflowId)}`, {
-		headers: await authHeaders()
+		headers: await authHeaders(false)
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));
@@ -195,7 +253,7 @@ export async function disconnectSimpleFIN(unlinkAccounts = false): Promise<void>
 	const qs = unlinkAccounts ? '?unlink_accounts=true' : '';
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/simplefin${qs}`, {
 		method: 'DELETE',
-		headers: await authHeaders()
+		headers: await authHeaders(false)
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));
@@ -207,7 +265,7 @@ export async function triggerBankSyncNow(): Promise<TriggerBankSyncResponse> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/sync-now`, {
 		method: 'POST',
-		headers: await authHeaders()
+		headers: await authHeaders(false)
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));
@@ -219,7 +277,7 @@ export async function triggerBankSyncNow(): Promise<TriggerBankSyncResponse> {
 export async function fetchBankSyncStatus(workflowId: string): Promise<BankSyncStatusResponse> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/bank/sync-status/${encodeURIComponent(workflowId)}`, {
-		headers: await authHeaders()
+		headers: await authHeaders(false)
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({}));

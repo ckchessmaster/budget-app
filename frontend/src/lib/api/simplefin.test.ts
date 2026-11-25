@@ -167,4 +167,88 @@ describe('simplefin claim is asynchronous', () => {
 			'/api/v1/bank/workflow-status/wf-9'
 		);
 	});
+
+	it('omits Content-Type on bodyless discover requests and retries transient 520 errors', async () => {
+		const seenHeaders: Array<Record<string, string>> = [];
+		let discoverAttempts = 0;
+
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (url.endsWith('/api/v1/bank/simplefin/discover')) {
+				discoverAttempts += 1;
+				seenHeaders.push((init?.headers as Record<string, string>) ?? {});
+				if (discoverAttempts === 1) {
+					return new Response('', { status: 520 });
+				}
+				return jsonResponse(202, { workflow_id: 'simplefin-discover-ws-retry', status: 'accepted' });
+			}
+			if (url.includes('/api/v1/bank/workflow-status/simplefin-discover-ws-retry')) {
+				return jsonResponse(200, {
+					workflow_id: 'simplefin-discover-ws-retry',
+					status: 'COMPLETED',
+					result: {
+						accounts: [{ id: 'acct-5', name: 'New Savings', currency: 'USD', balance: '250.00' }],
+						accounts_discovered: 1
+					}
+				});
+			}
+			return jsonResponse(404, { error: 'unexpected' });
+		}) as unknown as typeof fetch;
+
+		const promise = discoverSimpleFINAccounts();
+		await vi.advanceTimersByTimeAsync(500);
+		const accounts = await promise;
+
+		expect(discoverAttempts).toBe(2);
+		expect(seenHeaders[0]?.['Content-Type']).toBeUndefined();
+		expect(seenHeaders[0]?.['Authorization']).toBe('Bearer test-jwt-token');
+		expect(accounts).toEqual([{ id: 'acct-5', name: 'New Savings', currency: 'USD', balance: '250.00' }]);
+	});
+
+	it('does not retry non-transient 404 errors on discover', async () => {
+		let discoverAttempts = 0;
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/api/v1/bank/simplefin/discover')) {
+				discoverAttempts += 1;
+				return jsonResponse(404, { error: 'simplefin_not_connected' });
+			}
+			return jsonResponse(404, { error: 'unexpected' });
+		}) as unknown as typeof fetch;
+
+		await expect(discoverSimpleFINAccounts()).rejects.toThrow('simplefin_not_connected');
+		expect(discoverAttempts).toBe(1);
+	});
+
+	it('tolerates transient 520 responses while polling workflow status', async () => {
+		let pollAttempts = 0;
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/api/v1/bank/simplefin/discover')) {
+				return jsonResponse(202, { workflow_id: 'simplefin-discover-ws-poll', status: 'accepted' });
+			}
+			if (url.includes('/api/v1/bank/workflow-status/simplefin-discover-ws-poll')) {
+				pollAttempts += 1;
+				if (pollAttempts === 1) {
+					return new Response('', { status: 520 });
+				}
+				return jsonResponse(200, {
+					workflow_id: 'simplefin-discover-ws-poll',
+					status: 'COMPLETED',
+					result: {
+						accounts: [{ id: 'acct-6', name: 'Brokerage', currency: 'USD', balance: '1000.00' }],
+						accounts_discovered: 1
+					}
+				});
+			}
+			return jsonResponse(404, { error: 'unexpected' });
+		}) as unknown as typeof fetch;
+
+		const promise = discoverSimpleFINAccounts();
+		await vi.advanceTimersByTimeAsync(1500);
+		const accounts = await promise;
+
+		expect(pollAttempts).toBe(2);
+		expect(accounts).toEqual([{ id: 'acct-6', name: 'Brokerage', currency: 'USD', balance: '1000.00' }]);
+	});
 });

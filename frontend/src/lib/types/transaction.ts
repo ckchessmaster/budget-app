@@ -19,6 +19,7 @@ export interface TransactionItemModel {
 	merchantClean?: string | null;
 	categoryId: string | null;
 	categoryName?: string | null;
+	plannedIncomeId?: string | null;
 	transactionDate: string;
 	userNotes?: string | null;
 	isCleared: boolean;
@@ -31,6 +32,8 @@ export interface TransactionItemModel {
 export interface UpdateTransactionPayload {
 	categoryId?: string | null;
 	clearCategory?: boolean;
+	plannedIncomeId?: string | null;
+	clearPlannedIncome?: boolean;
 	merchantClean?: string;
 	userNotes?: string;
 	status?: TransactionStatus;

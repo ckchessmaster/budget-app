@@ -133,9 +133,11 @@ func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSp
 	}
 
 	parentCategoryID := req.CategoryID
+	parentPlannedIncomeID := req.PlannedIncomeID
 	if len(req.Splits) > 0 {
 		// Parent row of a split transaction must have category_id = NULL.
 		parentCategoryID = nil
+		parentPlannedIncomeID = nil
 	}
 
 	parent := &Transaction{
@@ -146,6 +148,7 @@ func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSp
 		MerchantRaw:     req.MerchantRaw,
 		MerchantClean:   req.MerchantClean,
 		CategoryID:      parentCategoryID,
+		PlannedIncomeID: parentPlannedIncomeID,
 		TransactionDate: txDate,
 		UserNotes:       notesPtr,
 		IsCleared:       isCleared,
@@ -216,6 +219,13 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 		existing.CategoryID = nil
 	} else if req.CategoryID != nil {
 		existing.CategoryID = req.CategoryID
+		existing.PlannedIncomeID = nil
+	}
+	if req.ClearPlannedIncome {
+		existing.PlannedIncomeID = nil
+	} else if req.PlannedIncomeID != nil {
+		existing.PlannedIncomeID = req.PlannedIncomeID
+		existing.CategoryID = nil
 	}
 	if req.MerchantClean != nil {
 		existing.MerchantClean = req.MerchantClean

@@ -274,4 +274,83 @@ describe('CategoryRow', () => {
 		});
 		expect(onDropTransaction).toHaveBeenCalledWith('tx-99', 'cat-target');
 	});
+
+	it('uses a soft highlight without outlines and resists child dragleave flicker', async () => {
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-soft',
+					name: 'Groceries',
+					originalPlanned: 300,
+					effectiveTarget: 300,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 300
+				},
+				onCoverClick: vi.fn(),
+				onDropTransaction: vi.fn()
+			}
+		});
+
+		const container = getByTestId('category-row-container');
+		const row = getByTestId('category-row');
+
+		await fireEvent.dragOver(container, {
+			dataTransfer: { types: ['application/x-budget-tx-id'] }
+		});
+		expect(container.className).toContain('bg-accent-tint');
+		expect(container.className).not.toContain('ring-2');
+		expect(container.className).not.toContain('border-t-2');
+
+		// Moving pointer onto a child inside the container must not clear the soft highlight
+		const childDragLeave = new Event('dragleave', { bubbles: true });
+		Object.defineProperty(childDragLeave, 'relatedTarget', { value: row });
+		await fireEvent(container, childDragLeave);
+		expect(container.className).toContain('bg-accent-tint');
+
+		// Leaving the container entirely clears the highlight
+		const outsideDragLeave = new Event('dragleave', { bubbles: true });
+		Object.defineProperty(outsideDragLeave, 'relatedTarget', { value: document.body });
+		await fireEvent(container, outsideDragLeave);
+		expect(container.className).not.toContain('bg-accent-tint');
+	});
+
+	it('renders organize mode step buttons and group switcher with boundary disabled states', async () => {
+		const onMoveCategoryStep = vi.fn().mockResolvedValue(undefined);
+		const onMoveCategoryToGroup = vi.fn().mockResolvedValue(undefined);
+
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-org',
+					name: 'Internet',
+					groupName: 'Essentials',
+					originalPlanned: 80,
+					effectiveTarget: 80,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 80
+				},
+				organizeMode: true,
+				isFirstInGroup: true,
+				isLastInGroup: false,
+				availableGroups: ['Essentials', 'Lifestyle', 'Savings'],
+				onCoverClick: vi.fn(),
+				onMoveCategoryStep,
+				onMoveCategoryToGroup
+			}
+		});
+
+		const upBtn = getByTestId('move-category-up-btn') as HTMLButtonElement;
+		const downBtn = getByTestId('move-category-down-btn') as HTMLButtonElement;
+		expect(upBtn.disabled).toBe(true);
+		expect(downBtn.disabled).toBe(false);
+
+		await fireEvent.click(downBtn);
+		expect(onMoveCategoryStep).toHaveBeenCalledWith('cat-org', 'down');
+
+		const select = getByTestId('move-category-group-select') as HTMLSelectElement;
+		await fireEvent.change(select, { target: { value: 'Lifestyle' } });
+		expect(onMoveCategoryToGroup).toHaveBeenCalledWith('cat-org', 'Lifestyle');
+	});
 });

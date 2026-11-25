@@ -9,7 +9,10 @@
 		receivedAmount: number;
 		inflowTransactions?: InlineActivityItem[];
 		selectedTransactionId?: string | null;
+		draggingGroupName?: string | null;
+		draggingTxId?: string | null;
 		onSelectTransaction?: (txId: string) => void;
+		onDropTransaction?: (txId: string, incomeId: string) => Promise<void> | void;
 		onChanged: () => void;
 	}
 
@@ -19,11 +22,24 @@
 		receivedAmount,
 		inflowTransactions = [],
 		selectedTransactionId = null,
+		draggingGroupName = null,
+		draggingTxId = null,
 		onSelectTransaction,
+		onDropTransaction,
 		onChanged
 	}: Props = $props();
 
 	let expandedRows = $state<Record<string, boolean>>({});
+	let dragOverIncomeId = $state<string | null>(null);
+
+	let prevDraggingTxId: string | null = null;
+	$effect(() => {
+		const current = draggingTxId;
+		if (prevDraggingTxId !== null && current === null) {
+			dragOverIncomeId = null;
+		}
+		prevDraggingTxId = current;
+	});
 	let showAddForm = $state(false);
 	let name = $state('');
 	let amount = $state('');
@@ -33,29 +49,53 @@
 	let totalPlanned = $derived(incomes.reduce((sum, i) => sum + i.amount, 0));
 
 	let incomeRows = $derived.by(() => {
-		let remainingPool = Math.max(0, receivedAmount);
-		return incomes.map((inc) => {
+		const explicitlyAssigned = inflowTransactions.filter((tx) => Boolean(tx.plannedIncomeId));
+		const unassigned = inflowTransactions.filter((tx) => !tx.plannedIncomeId);
+
+		const preMatched = incomes.map((inc) => {
+			const explicitMatched = explicitlyAssigned.filter((tx) => tx.plannedIncomeId === inc.id);
 			const needle = inc.name.trim().toLowerCase();
-			const matched = needle
-				? inflowTransactions.filter((tx) => {
+			const fuzzyMatched = needle
+				? unassigned.filter((tx) => {
 						const m = tx.merchant.toLowerCase();
 						return m.includes(needle) || (m.length >= 3 && needle.includes(m));
 					})
 				: [];
+			return {
+				income: inc,
+				matched: [...explicitMatched, ...fuzzyMatched]
+			};
+		});
 
+		const consumedIds = new Set<string>();
+		let matchedSum = 0;
+		for (const entry of preMatched) {
+			for (const tx of entry.matched) {
+				if (!consumedIds.has(tx.id)) {
+					consumedIds.add(tx.id);
+					matchedSum += tx.amount;
+				}
+			}
+		}
+
+		let remainingPool = Math.max(0, receivedAmount - Math.max(0, matchedSum));
+		return preMatched.map(({ income: inc, matched }) => {
 			let rowReceived = 0;
+			let drawerTransactions: InlineActivityItem[] = [];
+
 			if (matched.length > 0) {
-				rowReceived = matched.reduce((sum, tx) => sum + Math.max(0, tx.amount), 0);
-			} else if (incomes.length === 1 && remainingPool > inc.amount) {
-				rowReceived = remainingPool;
-				remainingPool = 0;
-			} else {
+				rowReceived = matched.reduce((sum, tx) => sum + tx.amount, 0);
+				drawerTransactions = matched;
+			} else if (explicitlyAssigned.length === 0 && incomes.length === 1) {
+				rowReceived = remainingPool > inc.amount ? remainingPool : Math.min(inc.amount, remainingPool);
+				remainingPool = Math.max(0, remainingPool - rowReceived);
+				drawerTransactions = unassigned;
+			} else if (inc.amount > 0) {
 				rowReceived = Math.min(inc.amount, remainingPool);
 				remainingPool = Math.max(0, remainingPool - rowReceived);
 			}
 
 			const isPaid = inc.amount > 0 ? rowReceived >= inc.amount - 0.005 : rowReceived > 0;
-			const drawerTransactions = matched.length > 0 ? matched : inflowTransactions;
 			return {
 				income: inc,
 				rowReceived,
@@ -89,7 +129,7 @@
 		e.preventDefault();
 		const parsed = Number(amount);
 		if (!name.trim() || !Number.isFinite(parsed) || parsed < 0) {
-			errorMsg = 'Enter a source name and an amount greater than $0.00.';
+			errorMsg = 'Enter a source name and an amount of $0.00 or greater.';
 			return;
 		}
 		isSubmitting = true;
@@ -164,7 +204,49 @@
 			</div>
 		{:else}
 			{#each incomeRows as row (row.income.id)}
-				<div>
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					data-testid="income-row-container"
+					ondragover={(e) => {
+						if (!onDropTransaction || draggingGroupName !== null) return;
+						const types = e.dataTransfer?.types ? Array.from(e.dataTransfer.types) : [];
+						if (
+							types.includes('application/x-budget-category-id') ||
+							types.includes('application/x-budget-group-name')
+						) {
+							return;
+						}
+						e.preventDefault();
+						if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+						dragOverIncomeId = row.income.id;
+					}}
+					ondragleave={(e) => {
+						const related = e.relatedTarget as Node | null;
+						if (related && e.currentTarget.contains(related)) return;
+						if (dragOverIncomeId === row.income.id) {
+							dragOverIncomeId = null;
+						}
+					}}
+					ondrop={async (e) => {
+						if (dragOverIncomeId === row.income.id) {
+							dragOverIncomeId = null;
+						}
+						if (!onDropTransaction || draggingGroupName !== null) return;
+						const catId = e.dataTransfer?.getData('application/x-budget-category-id');
+						const groupName = e.dataTransfer?.getData('application/x-budget-group-name');
+						if (catId || groupName) return;
+						e.preventDefault();
+						const txId =
+							e.dataTransfer?.getData('application/x-budget-tx-id') ||
+							e.dataTransfer?.getData('text/plain');
+						if (txId) {
+							await onDropTransaction(txId, row.income.id);
+						}
+					}}
+					class="transition-colors duration-150 {dragOverIncomeId === row.income.id
+						? 'bg-accent-tint shadow-[inset_3px_0_0_var(--accent-pop)]'
+						: ''}"
+				>
 					<div
 						role="button"
 						tabindex="0"
