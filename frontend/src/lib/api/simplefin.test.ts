@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { claimSimpleFINToken, fetchWorkflowStatus } from './simplefin';
+import { claimSimpleFINToken, discoverSimpleFINAccounts, fetchWorkflowStatus } from './simplefin';
 
 const { getValidTokenMock, getAppConfigMock } = vi.hoisted(() => ({
 	getValidTokenMock: vi.fn().mockResolvedValue('test-jwt-token'),
@@ -119,6 +119,41 @@ describe('simplefin claim is asynchronous', () => {
 
 		await expect(claimSimpleFINToken('')).rejects.toThrow('setup_token is required');
 		expect(urls).toHaveLength(1);
+	});
+
+	it('discovers accounts from an existing SimpleFIN connection via workflow polling', async () => {
+		const calls: { method: string; url: string }[] = [];
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			calls.push({ method: init?.method ?? 'GET', url });
+
+			if (url.endsWith('/api/v1/bank/simplefin/discover')) {
+				return jsonResponse(202, { workflow_id: 'simplefin-discover-ws-1', status: 'accepted' });
+			}
+			if (url.includes('/api/v1/bank/workflow-status/simplefin-discover-ws-1')) {
+				return jsonResponse(200, {
+					workflow_id: 'simplefin-discover-ws-1',
+					status: 'COMPLETED',
+					result: {
+						accounts: [
+							{ id: 'acct-1', name: 'Checking', currency: 'USD', balance: '100.00' },
+							{ id: 'acct-5', name: 'Amex Platinum', currency: 'USD', balance: '-512.34' }
+						],
+						accounts_discovered: 2
+					}
+				});
+			}
+			return jsonResponse(404, { error: 'unexpected' });
+		}) as unknown as typeof fetch;
+
+		const accounts = await discoverSimpleFINAccounts();
+		expect(calls[0]).toEqual({
+			method: 'POST',
+			url: 'http://localhost:8080/api/v1/bank/simplefin/discover'
+		});
+		expect(calls[1]?.url).toContain('/api/v1/bank/workflow-status/simplefin-discover-ws-1');
+		expect(accounts).toHaveLength(2);
+		expect(accounts[1]?.id).toBe('acct-5');
 	});
 
 	it('reads workflow status from the generic endpoint', async () => {

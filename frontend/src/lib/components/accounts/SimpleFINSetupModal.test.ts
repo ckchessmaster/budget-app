@@ -2,18 +2,24 @@ import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SimpleFINDiscoveredAccount, SimpleFINClaimResult, WorkflowStatus } from '$lib/api/simplefin';
 
-const { claimMock, linkMock } = vi.hoisted(() => ({
+const { claimMock, discoverMock, linkMock } = vi.hoisted(() => ({
 	claimMock: vi.fn<
 		(
 			token: string,
 			onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
 		) => Promise<SimpleFINDiscoveredAccount[]>
 	>(),
+	discoverMock: vi.fn<
+		(onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void) => Promise<
+			SimpleFINDiscoveredAccount[]
+		>
+	>(),
 	linkMock: vi.fn()
 }));
 
 vi.mock('$lib/api/simplefin', () => ({
 	claimSimpleFINToken: (...args: Parameters<typeof claimMock>) => claimMock(...args),
+	discoverSimpleFINAccounts: (...args: Parameters<typeof discoverMock>) => discoverMock(...args),
 	linkSimpleFINAccounts: (...args: unknown[]) => linkMock(...args)
 }));
 
@@ -36,6 +42,7 @@ describe('SimpleFINSetupModal', () => {
 
 	beforeEach(() => {
 		claimMock.mockReset();
+		discoverMock.mockReset();
 		linkMock.mockReset();
 	});
 
@@ -70,7 +77,7 @@ describe('SimpleFINSetupModal', () => {
 		expect(homeLink.getAttribute('href')).toBe('https://beta-bridge.simplefin.org/');
 	});
 
-	it('collapses the walkthrough by default when reconnecting while keeping a quick token link', () => {
+	it('prioritizes discovering accounts and collapses new-token setup when already connected', () => {
 		const { getByTestId, getByRole } = render(SimpleFINSetupModal, {
 			props: {
 				open: true,
@@ -81,7 +88,12 @@ describe('SimpleFINSetupModal', () => {
 			}
 		});
 
-		expect(getByRole('heading', { level: 1 }).textContent).toContain('Reconnect SimpleFIN Bridge');
+		expect(getByRole('heading', { level: 1 }).textContent).toContain('Manage SimpleFIN Bridge');
+		expect(getByTestId('discover-existing-simplefin')).toBeTruthy();
+
+		const reconnectSection = getByTestId('reconnect-token-section') as HTMLDetailsElement;
+		expect(reconnectSection.open).toBe(false);
+
 		const guide = getByTestId('simplefin-guide') as HTMLDetailsElement;
 		expect(guide.open).toBe(false);
 
@@ -287,5 +299,134 @@ describe('SimpleFINSetupModal', () => {
 		expect(getByTestId('open-simplefin-accounts').getAttribute('href')).toBe(
 			'https://beta-bridge.simplefin.org/my-account'
 		);
+	});
+
+	it('separates newly discovered accounts from already-linked accounts and submits only new ones', async () => {
+		discoverMock.mockResolvedValue([
+			{ id: 'ext-1', name: 'Existing Checking', currency: 'USD', balance: '2891.10' },
+			{ id: 'ext-2', name: 'New Amex Gold', currency: 'USD', balance: '-145.20' }
+		]);
+		linkMock.mockResolvedValue(undefined);
+
+		const onLinked = vi.fn();
+		const onTriggerSync = vi.fn();
+		const { getByTestId, getByText, getAllByTestId, queryByLabelText } = render(SimpleFINSetupModal, {
+			props: {
+				open: true,
+				isDemoMode: false,
+				isConnected: true,
+				linkedExternalIds: ['ext-1'],
+				onClose: vi.fn(),
+				onLinked,
+				onTriggerSync
+			}
+		});
+
+		await fireEvent.click(getByTestId('discover-existing-simplefin'));
+
+		await waitFor(() => {
+			expect(getByText('Map Discovered Accounts')).toBeTruthy();
+		});
+
+		expect(discoverMock).toHaveBeenCalledTimes(1);
+		expect(getByText('1 of 1 new accounts selected')).toBeTruthy();
+		expect(getByText('$-145.20')).toBeTruthy();
+		expect(queryByLabelText('Include Existing Checking')).toBeNull();
+		expect(getAllByTestId('already-linked-account')).toHaveLength(1);
+		expect(getByText('Existing Checking')).toBeTruthy();
+
+		const confirmBtn = getByTestId('confirm-link-btn');
+		expect(confirmBtn.textContent?.trim()).toBe('Link 1 Account');
+		await fireEvent.click(confirmBtn);
+
+		await waitFor(() => {
+			expect(linkMock).toHaveBeenCalledWith([
+				{
+					external_account_id: 'ext-2',
+					name: 'New Amex Gold',
+					type: 'credit_card',
+					card_mode: 'PAY_IN_FULL',
+					balance: '-145.20'
+				}
+			]);
+			expect(onLinked).toHaveBeenCalledWith(1);
+			expect(onTriggerSync).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('shows all-linked state with Check Again when every discovered account is already linked', async () => {
+		discoverMock
+			.mockResolvedValueOnce([
+				{ id: 'ext-1', name: 'Existing Checking', currency: 'USD', balance: '500.00' }
+			])
+			.mockResolvedValueOnce([
+				{ id: 'ext-1', name: 'Existing Checking', currency: 'USD', balance: '500.00' },
+				{ id: 'ext-2', name: 'New Savings', currency: 'USD', balance: '1200.00' }
+			]);
+
+		const { getByTestId, getByText } = render(SimpleFINSetupModal, {
+			props: {
+				open: true,
+				isDemoMode: false,
+				isConnected: true,
+				linkedExternalIds: ['ext-1'],
+				onClose: vi.fn(),
+				onLinked: vi.fn()
+			}
+		});
+
+		await fireEvent.click(getByTestId('discover-existing-simplefin'));
+		await waitFor(() => {
+			expect(getByTestId('simplefin-all-linked')).toBeTruthy();
+		});
+
+		await fireEvent.click(getByTestId('check-again-btn'));
+		await waitFor(() => {
+			expect(getByText('1 of 1 new accounts selected')).toBeTruthy();
+			expect(getByText('New Savings')).toBeTruthy();
+		});
+	});
+
+	it('auto-discovers existing accounts on open when autoDiscover is true', async () => {
+		discoverMock.mockResolvedValue([
+			{ id: 'ext-2', name: 'New Savings', currency: 'USD', balance: '900.00' }
+		]);
+
+		const { getByText } = render(SimpleFINSetupModal, {
+			props: {
+				open: true,
+				isDemoMode: false,
+				isConnected: true,
+				autoDiscover: true,
+				onClose: vi.fn(),
+				onLinked: vi.fn()
+			}
+		});
+
+		await waitFor(() => {
+			expect(discoverMock).toHaveBeenCalledTimes(1);
+			expect(getByText('Map Discovered Accounts')).toBeTruthy();
+		});
+	});
+
+	it('shows revoked-connection guidance when discoverSimpleFINAccounts fails with rejected credentials', async () => {
+		discoverMock.mockRejectedValue(new Error('simplefin rejected the credentials'));
+
+		const { getByTestId, getByRole } = render(SimpleFINSetupModal, {
+			props: {
+				open: true,
+				isDemoMode: false,
+				isConnected: true,
+				onClose: vi.fn(),
+				onLinked: vi.fn()
+			}
+		});
+
+		await fireEvent.click(getByTestId('discover-existing-simplefin'));
+		await waitFor(() => {
+			const alertText = getByRole('alert').textContent ?? '';
+			expect(alertText).toContain('revoked');
+			expect(alertText).not.toContain('single-use');
+		});
 	});
 });

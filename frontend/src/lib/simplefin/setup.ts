@@ -106,16 +106,25 @@ export function validateSimpleFINSetupToken(raw: string): TokenValidationResult 
 }
 
 /**
- * Translate low-level API / Temporal claim failures into actionable user guidance.
+ * Translate low-level API / Temporal claim or discover failures into actionable user guidance.
  */
-export function formatSimpleFINClaimError(rawMessage: string): string {
+export function formatSimpleFINClaimError(
+	rawMessage: string,
+	context: 'claim' | 'discover' = 'claim'
+): string {
 	const lower = rawMessage.toLowerCase();
+	if (lower.includes('simplefin_not_connected')) {
+		return 'No active SimpleFIN connection was found. Reconnect with a new setup token below.';
+	}
 	if (
 		lower.includes('simplefin rejected the credentials') ||
 		lower.includes('simplefin claim rejected') ||
 		lower.includes('simplefin auth error') ||
 		lower.includes('invalid simplefin setup token')
 	) {
+		if (context === 'discover') {
+			return 'SimpleFIN rejected your saved connection — it may have been revoked on SimpleFIN Bridge. Reconnect with a new setup token below.';
+		}
 		return 'SimpleFIN rejected that setup token — it may be expired or already used. Setup tokens are single-use, so generate a fresh one on SimpleFIN Bridge and try again.';
 	}
 	if (lower.includes('timed out')) {
@@ -124,7 +133,12 @@ export function formatSimpleFINClaimError(rawMessage: string): string {
 	if (lower.includes('setup_token is required')) {
 		return 'Paste a SimpleFIN Setup Token before continuing.';
 	}
-	return rawMessage || 'Failed to claim SimpleFIN token. Please try again.';
+	return (
+		rawMessage ||
+		(context === 'discover'
+			? 'Failed to fetch SimpleFIN accounts. Please try again.'
+			: 'Failed to claim SimpleFIN token. Please try again.')
+	);
 }
 
 /**

@@ -6,6 +6,7 @@
 		deleteCategory,
 		fetchMonthBudget,
 		fetchSpendRecommendations,
+		updateCategory,
 		updateMonthlyPlanned
 	} from '$lib/api/budget';
 	import {
@@ -22,11 +23,13 @@
 		FOCUS_INCOME
 	} from '$lib/components/budget/CategoryFocusPills.svelte';
 	import CategoryGroupCard from '$lib/components/budget/CategoryGroupCard.svelte';
+	import CategoryGroupModal from '$lib/components/budget/CategoryGroupModal.svelte';
 	import CategoryModal from '$lib/components/budget/CategoryModal.svelte';
 	import CatchUpModal, { type CatchUpMode } from '$lib/components/budget/CatchUpModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
 	import IncomeCard from '$lib/components/budget/IncomeCard.svelte';
 	import RecommendationBanner from '$lib/components/budget/RecommendationBanner.svelte';
+	import TransactionDetailCard from '$lib/components/budget/TransactionDetailCard.svelte';
 	import TransactionsDrawer from '$lib/components/budget/TransactionsDrawer.svelte';
 	import TransactionsPanel from '$lib/components/budget/TransactionsPanel.svelte';
 	import { BudgetLocalDB, type OfflineTransaction } from '$lib/offline/db';
@@ -39,6 +42,7 @@
 	import { demo } from '$lib/stores/demo.svelte';
 	import type {
 		CategoryBudget,
+		CreateCategoryPayload,
 		InlineActivityItem,
 		MonthBudgetDetails,
 		SpendRecommendation
@@ -49,7 +53,7 @@
 		TransactionItemModel,
 		UpdateTransactionPayload
 	} from '$lib/types/transaction';
-	import { getGroupColor } from '$lib/utils/budgetColors';
+	import { GROUP_COLOR_PALETTE, getGroupColor } from '$lib/utils/budgetColors';
 	import {
 		isCatchUpTransaction,
 		isCategorizableTransaction,
@@ -96,6 +100,15 @@
 	let isCategoryModalOpen = $state(false);
 	let editingCategory = $state<CategoryBudget | null>(null);
 	let modalDefaultGroup = $state('Essentials');
+	let isGroupModalOpen = $state(false);
+	let editingGroupName = $state<string | null>(null);
+	let editingGroupColorIndex = $state(0);
+	let draggingCategoryId = $state<string | null>(null);
+	let selectedTransactionId = $state<string | null>(null);
+	let isDesktop = $state(
+		typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
+	);
+	let mobileDetailDialogEl = $state<HTMLDialogElement | null>(null);
 	let isCatchUpModalOpen = $state(false);
 	let catchUpModalMode = $state<CatchUpMode>('intro');
 	let hasAutoPromptedCatchUp = $state(false);
@@ -249,9 +262,46 @@
 			isOffline = true;
 		};
 		window.addEventListener('offline', onOffline);
+
+		const mql = window.matchMedia('(min-width: 1024px)');
+		isDesktop = mql.matches;
+		const onMediaChange = (e: MediaQueryListEvent) => {
+			isDesktop = e.matches;
+		};
+		mql.addEventListener('change', onMediaChange);
+
+		let removeDialogLightDismiss: (() => void) | null = null;
+		if (mobileDetailDialogEl && !('closedBy' in HTMLDialogElement.prototype)) {
+			const el = mobileDetailDialogEl;
+			let pressedOutside = false;
+			const isOutside = (e: PointerEvent) => {
+				const r = el.getBoundingClientRect();
+				return (
+					e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+				);
+			};
+			const onDown = (e: PointerEvent) => {
+				pressedOutside = el.open && isOutside(e);
+			};
+			const onUp = (e: PointerEvent) => {
+				if (pressedOutside && el.open && isOutside(e)) {
+					el.close();
+				}
+				pressedOutside = false;
+			};
+			el.addEventListener('pointerdown', onDown);
+			el.addEventListener('pointerup', onUp);
+			removeDialogLightDismiss = () => {
+				el.removeEventListener('pointerdown', onDown);
+				el.removeEventListener('pointerup', onUp);
+			};
+		}
+
 		return () => {
 			stopListening();
 			window.removeEventListener('offline', onOffline);
+			mql.removeEventListener('change', onMediaChange);
+			removeDialogLightDismiss?.();
 		};
 	});
 
@@ -270,21 +320,120 @@
 			: {}
 	);
 
-	function handleChangeGroupColor(groupName: string, colorIndex: number) {
-		customGroupColors = { ...customGroupColors, [groupName]: colorIndex };
+	let emptyGroups = $state<string[]>(
+		typeof window !== 'undefined'
+			? (() => {
+					try {
+						const raw = localStorage.getItem('budget-empty-groups');
+						return raw ? (JSON.parse(raw) as string[]) : [];
+					} catch {
+						return [];
+					}
+				})()
+			: []
+	);
+
+	function persistGroupColors(next: Record<string, number>) {
+		customGroupColors = next;
 		if (typeof window !== 'undefined') {
 			try {
-				localStorage.setItem('budget-group-colors', JSON.stringify(customGroupColors));
+				localStorage.setItem('budget-group-colors', JSON.stringify(next));
 			} catch {
 				// ignore storage quota errors
 			}
 		}
 	}
 
+	function persistEmptyGroups(next: string[]) {
+		emptyGroups = next;
+		if (typeof window !== 'undefined') {
+			try {
+				localStorage.setItem('budget-empty-groups', JSON.stringify(next));
+			} catch {
+				// ignore storage quota errors
+			}
+		}
+	}
+
+	function handleChangeGroupColor(groupName: string, colorIndex: number) {
+		persistGroupColors({ ...customGroupColors, [groupName]: colorIndex });
+	}
+
+	function categoryToUpdatePayload(
+		cat: CategoryBudget,
+		overrides: Partial<CreateCategoryPayload> = {}
+	): CreateCategoryPayload {
+		return {
+			name: cat.name,
+			group_name: cat.groupName,
+			monthly_budget: cat.originalPlanned,
+			rollover_mode: cat.rolloverMode,
+			sweep_target_category_id: cat.sweepTargetCategoryId,
+			target_amount: cat.targetAmount,
+			target_date: cat.targetDate,
+			target_cadence: cat.targetCadence,
+			sort_order: cat.sortOrder,
+			...overrides
+		};
+	}
+
+	async function handleSaveGroup(payload: {
+		oldName: string | null;
+		name: string;
+		colorIndex: number;
+	}) {
+		const { oldName, name, colorIndex } = payload;
+
+		if (oldName === null) {
+			handleChangeGroupColor(name, colorIndex);
+			const existsInDb = (budgetData?.categories ?? []).some((c) => c.groupName === name);
+			if (!existsInDb && !emptyGroups.includes(name)) {
+				persistEmptyGroups([...emptyGroups, name]);
+			}
+			return;
+		}
+
+		const nextColors = { ...customGroupColors };
+		if (oldName !== name) {
+			delete nextColors[oldName];
+		}
+		nextColors[name] = colorIndex;
+		persistGroupColors(nextColors);
+
+		if (oldName !== name) {
+			if (emptyGroups.includes(oldName)) {
+				persistEmptyGroups(emptyGroups.map((g) => (g === oldName ? name : g)));
+			}
+			if (activeFocusGroup === oldName) {
+				activeFocusGroup = name;
+			}
+			const targets = (budgetData?.categories ?? []).filter((c) => c.groupName === oldName);
+			if (targets.length > 0) {
+				await Promise.all(
+					targets.map((cat) =>
+						updateCategory(cat.id, categoryToUpdatePayload(cat, { group_name: name }))
+					)
+				);
+				await loadWorkspace(currentMonth, true);
+			}
+		}
+	}
+
 	async function handleDeleteGroup(groupName: string) {
 		const targets = (budgetData?.categories ?? []).filter((c) => c.groupName === groupName);
-		for (const cat of targets) {
-			await deleteCategory(cat.id);
+		if (targets.length > 0) {
+			await Promise.all(targets.map((cat) => deleteCategory(cat.id)));
+		}
+		if (emptyGroups.includes(groupName)) {
+			persistEmptyGroups(emptyGroups.filter((g) => g !== groupName));
+		}
+		if (groupName in customGroupColors) {
+			const nextColors = { ...customGroupColors };
+			delete nextColors[groupName];
+			persistGroupColors(nextColors);
+		}
+		if (activeFocusGroup === groupName) {
+			activeFocusGroup = FOCUS_ALL;
 		}
 		await loadWorkspace(currentMonth, true);
 	}
@@ -296,12 +445,115 @@
 			list.push(cat);
 			groups.set(cat.groupName, list);
 		}
+		for (const list of groups.values()) {
+			list.sort((a, b) => a.sortOrder - b.sortOrder);
+		}
+		for (const emptyName of emptyGroups) {
+			if (!groups.has(emptyName)) {
+				groups.set(emptyName, []);
+			}
+		}
 		return Array.from(groups.entries()).map(([groupName, cats], idx) => ({
 			groupName,
 			cats,
 			color: getGroupColor(groupName, customGroupColors[groupName] ?? idx)
 		}));
 	});
+
+	let allGroupNames = $derived(groupedCategories.map((g) => g.groupName));
+
+	$effect(() => {
+		const dbGroups = new Set((budgetData?.categories ?? []).map((c) => c.groupName));
+		if (emptyGroups.some((g) => dbGroups.has(g))) {
+			persistEmptyGroups(emptyGroups.filter((g) => !dbGroups.has(g)));
+		}
+	});
+
+	async function persistOrderedCategories(orderedCats: CategoryBudget[]) {
+		if (!budgetData) return;
+		const prevById = new Map(budgetData.categories.map((c) => [c.id, c]));
+		const normalized = orderedCats.map((c, idx) => ({ ...c, sortOrder: idx }));
+		const changed = normalized.filter((c) => {
+			const prev = prevById.get(c.id);
+			return !prev || prev.sortOrder !== c.sortOrder || prev.groupName !== c.groupName;
+		});
+		if (changed.length === 0) return;
+
+		budgetData = { ...budgetData, categories: normalized };
+		try {
+			await Promise.all(
+				changed.map((cat) => updateCategory(cat.id, categoryToUpdatePayload(cat)))
+			);
+		} catch (err: any) {
+			errorMsg = err?.message || 'Failed to save category order.';
+			await loadWorkspace(currentMonth, true);
+		}
+	}
+
+	async function handleReorderCategory(
+		draggedId: string,
+		targetId: string,
+		position: 'before' | 'after'
+	) {
+		if (!budgetData || draggedId === targetId) return;
+		const dragged = budgetData.categories.find((c) => c.id === draggedId);
+		const target = budgetData.categories.find((c) => c.id === targetId);
+		if (!dragged || !target) return;
+
+		const updatedDragged: CategoryBudget = { ...dragged, groupName: target.groupName };
+		const nextGroups = groupedCategories.map((g) => {
+			const withoutDragged = g.cats.filter((c) => c.id !== draggedId);
+			if (g.groupName !== target.groupName) {
+				return withoutDragged;
+			}
+			const targetIdx = withoutDragged.findIndex((c) => c.id === targetId);
+			if (targetIdx === -1) {
+				return [...withoutDragged, updatedDragged];
+			}
+			const insertAt = position === 'after' ? targetIdx + 1 : targetIdx;
+			const next = [...withoutDragged];
+			next.splice(insertAt, 0, updatedDragged);
+			return next;
+		});
+
+		await persistOrderedCategories(nextGroups.flat());
+	}
+
+	async function handleMoveCategoryToGroup(draggedId: string, targetGroupName: string) {
+		if (!budgetData) return;
+		const dragged = budgetData.categories.find((c) => c.id === draggedId);
+		if (!dragged || dragged.groupName === targetGroupName) return;
+
+		const updatedDragged: CategoryBudget = { ...dragged, groupName: targetGroupName };
+		const nextGroups = groupedCategories.map((g) => {
+			const withoutDragged = g.cats.filter((c) => c.id !== draggedId);
+			if (g.groupName === targetGroupName) {
+				return [...withoutDragged, updatedDragged];
+			}
+			return withoutDragged;
+		});
+
+		await persistOrderedCategories(nextGroups.flat());
+	}
+
+	async function handleMoveCategoryStep(categoryId: string, direction: 'up' | 'down') {
+		if (!budgetData) return;
+		const group = groupedCategories.find((g) => g.cats.some((c) => c.id === categoryId));
+		if (!group) return;
+		const idx = group.cats.findIndex((c) => c.id === categoryId);
+		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+		if (swapIdx < 0 || swapIdx >= group.cats.length) return;
+
+		const nextGroups = groupedCategories.map((g) => {
+			if (g.groupName !== group.groupName) return g.cats;
+			const next = [...g.cats];
+			const [moved] = next.splice(idx, 1);
+			next.splice(swapIdx, 0, moved);
+			return next;
+		});
+
+		await persistOrderedCategories(nextGroups.flat());
+	}
 
 	let focusGroupNames = $derived(groupedCategories.map((g) => g.groupName));
 
@@ -348,6 +600,7 @@
 					if (!split.categoryId) continue;
 					pushItem(split.categoryId, {
 						id: `${tx.id}:${split.id}`,
+						transactionId: tx.id,
 						date: tx.transactionDate,
 						merchant,
 						accountName,
@@ -358,6 +611,7 @@
 			} else if (tx.categoryId) {
 				pushItem(tx.categoryId, {
 					id: tx.id,
+					transactionId: tx.id,
 					date: tx.transactionDate,
 					merchant,
 					accountName,
@@ -373,6 +627,7 @@
 			if (acct && !acct.isOnBudget) continue;
 			pushItem(q.categoryId, {
 				id: q.localId,
+				transactionId: q.localId,
 				date: q.transactionDate,
 				merchant: q.merchantRaw,
 				accountName: acct?.name || 'Offline',
@@ -392,6 +647,7 @@
 			if (acct && !acct.isOnBudget) continue;
 			items.push({
 				id: tx.id,
+				transactionId: tx.id,
 				date: tx.transactionDate,
 				merchant: tx.merchantClean?.trim() || tx.merchantRaw,
 				accountName: tx.accountName || acct?.name || 'Account',
@@ -405,6 +661,7 @@
 			if (acct && !acct.isOnBudget) continue;
 			items.push({
 				id: q.localId,
+				transactionId: q.localId,
 				date: q.transactionDate,
 				merchant: q.merchantRaw,
 				accountName: acct?.name || 'Offline',
@@ -413,6 +670,25 @@
 			});
 		}
 		return items;
+	});
+
+	let selectedTransaction = $derived.by(() => {
+		if (!selectedTransactionId) return null;
+		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
+		return (
+			[...offlineMapped, ...transactions].find((tx) => tx.id === selectedTransactionId) ?? null
+		);
+	});
+
+	$effect(() => {
+		if (!mobileDetailDialogEl) return;
+		if (!isDesktop && selectedTransaction !== null) {
+			if (!mobileDetailDialogEl.open) {
+				mobileDetailDialogEl.showModal();
+			}
+		} else if (mobileDetailDialogEl.open) {
+			mobileDetailDialogEl.close();
+		}
 	});
 
 	let overspentCategory = $derived.by(() => {
@@ -501,6 +777,23 @@
 		editingCategory = null;
 		modalDefaultGroup = groupName;
 		isCategoryModalOpen = true;
+	}
+
+	function openNewGroup() {
+		editingGroupName = null;
+		editingGroupColorIndex = groupedCategories.length % GROUP_COLOR_PALETTE.length;
+		isGroupModalOpen = true;
+	}
+
+	function openEditGroup(groupName: string) {
+		const idx = groupedCategories.findIndex((g) => g.groupName === groupName);
+		editingGroupName = groupName;
+		editingGroupColorIndex = customGroupColors[groupName] ?? (idx >= 0 ? idx : 0);
+		isGroupModalOpen = true;
+	}
+
+	function handleSelectTransaction(txId: string) {
+		selectedTransactionId = txId;
 	}
 
 	async function handleUpdatePlanned(catId: string, newPlanned: number) {
@@ -602,13 +895,6 @@
 		}
 	}
 
-	function handleFilterCategoryTransactions(catId: string) {
-		activeCategoryFilterId = catId;
-		if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-			isMobileDrawerOpen = true;
-		}
-	}
-
 	function openCatchUpStack() {
 		if (modalCatchUpItems.length > 0) {
 			catchUpModalMode = 'stack';
@@ -670,17 +956,11 @@
 				<div class="flex items-center gap-2">
 					<button
 						type="button"
-						onclick={() => openNewCategoryInGroup('')}
-						class="rounded-lg border border-border bg-surface hover:bg-surface-hover text-ink-primary px-3 py-1.5 text-xs font-semibold transition-colors"
+						data-testid="add-category-btn"
+						onclick={openNewGroup}
+						class="rounded-lg bg-accent-primary text-accent-primary-text px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity"
 					>
-						+ Group
-					</button>
-					<button
-						type="button"
-						onclick={() => openNewCategoryInGroup('Essentials')}
-						class="rounded-lg bg-accent-primary text-accent-primary-text px-3 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
-					>
-						+ Category
+						+ Add Category
 					</button>
 				</div>
 			</div>
@@ -714,6 +994,8 @@
 						incomes={budgetData?.incomes ?? []}
 						receivedAmount={receivedInflows}
 						{inflowTransactions}
+						{selectedTransactionId}
+						onSelectTransaction={handleSelectTransaction}
 						onChanged={() => void loadWorkspace(currentMonth, true)}
 					/>
 				{/if}
@@ -723,7 +1005,7 @@
 						<div class="rounded-2xl border border-border bg-surface p-8 text-center space-y-3">
 							<p class="text-sm font-medium text-ink-primary">No categories yet</p>
 							<p class="text-xs text-ink-secondary">
-								Add your first budget category or planned income to start assigning every dollar.
+								Click "+ Add Category" above to create a category, then add budget items inside it.
 							</p>
 						</div>
 					{:else}
@@ -735,16 +1017,23 @@
 									categories={group.cats}
 									{displayMode}
 									{transactionsByCategory}
+									{draggingCategoryId}
+									{selectedTransactionId}
 									onToggleDisplayMode={() =>
 										(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
 									onCoverClick={(id) => (coverCategoryId = id)}
 									onEditClick={openEditCategory}
+									onEditGroup={openEditGroup}
 									onUpdatePlanned={handleUpdatePlanned}
-									onFilterTransactions={handleFilterCategoryTransactions}
 									onAddCategoryInGroup={openNewCategoryInGroup}
 									onDropTransaction={handleCategorizeTransaction}
 									onChangeGroupColor={handleChangeGroupColor}
-									onDeleteGroup={handleDeleteGroup}
+									onCategoryDragStart={(id) => (draggingCategoryId = id)}
+									onCategoryDragEnd={() => (draggingCategoryId = null)}
+									onReorderCategory={handleReorderCategory}
+									onMoveCategoryToGroup={handleMoveCategoryToGroup}
+									onMoveCategoryStep={handleMoveCategoryStep}
+									onSelectTransaction={handleSelectTransaction}
 								/>
 							{/each}
 						</div>
@@ -753,39 +1042,51 @@
 			{/if}
 		</div>
 
-		<!-- Right Column (Desktop lg+): Dedicated Sticky Transactions Panel -->
+		<!-- Right Column (Desktop lg+): Dedicated Sticky Transactions / Detail Panel -->
 		<aside
 			aria-label="Transactions"
 			data-testid="desktop-transactions-panel"
 			class="hidden lg:flex lg:col-span-4 lg:sticky lg:top-[4.75rem] flex-col rounded-2xl border border-border bg-surface shadow-sm overflow-hidden lg:h-[calc(100dvh-6rem)]"
 		>
-			<div class="px-4 py-3 border-b border-border bg-subtle flex items-center justify-between shrink-0">
-				<h2 class="text-xs font-bold uppercase tracking-wider text-ink-primary">Transactions</h2>
-				{#if toReviewCount > 0}
-					<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold bg-accent-pop text-accent-primary-text">
-						{toReviewCount}
-					</span>
-				{/if}
-			</div>
-
-			<div class="flex-1 min-h-0 flex flex-col">
-				<TransactionsPanel
-					{currentMonth}
-					{transactions}
-					{queuedTransactions}
-					{accounts}
+			{#if selectedTransaction}
+				<TransactionDetailCard
+					variant="panel"
+					transaction={selectedTransaction}
+					account={accountById.get(selectedTransaction.accountId) ?? null}
 					categories={budgetData?.categories ?? []}
-					{isOffline}
-					syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
-					{activeCategoryFilterId}
-					onClearCategoryFilter={() => (activeCategoryFilterId = null)}
-					onCreateTransaction={handleCreateTransaction}
-					onCategorizeTransaction={handleCategorizeTransaction}
+					onClose={() => (selectedTransactionId = null)}
 					onUpdateTransaction={handleUpdateTransaction}
 					onDeleteTransaction={handleDeleteTransaction}
-					onSyncNow={handleSyncNow}
 				/>
-			</div>
+			{:else}
+				<div class="px-4 py-3 border-b border-border bg-subtle flex items-center justify-between shrink-0">
+					<h2 class="text-xs font-bold uppercase tracking-wider text-ink-primary">Transactions</h2>
+					{#if toReviewCount > 0}
+						<span class="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold bg-accent-pop text-accent-primary-text">
+							{toReviewCount}
+						</span>
+					{/if}
+				</div>
+
+				<div class="flex-1 min-h-0 flex flex-col">
+					<TransactionsPanel
+						{currentMonth}
+						{transactions}
+						{queuedTransactions}
+						{accounts}
+						categories={budgetData?.categories ?? []}
+						{isOffline}
+						syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
+						{activeCategoryFilterId}
+						onClearCategoryFilter={() => (activeCategoryFilterId = null)}
+						onCreateTransaction={handleCreateTransaction}
+						onCategorizeTransaction={handleCategorizeTransaction}
+						onUpdateTransaction={handleUpdateTransaction}
+						onDeleteTransaction={handleDeleteTransaction}
+						onSyncNow={handleSyncNow}
+					/>
+				</div>
+			{/if}
 		</aside>
 	</div>
 </div>
@@ -830,6 +1131,7 @@
 	isOpen={isCategoryModalOpen}
 	{editingCategory}
 	allCategories={budgetData?.categories ?? []}
+	availableGroups={allGroupNames}
 	defaultGroupName={modalDefaultGroup}
 	yearMonth={currentMonth}
 	onClose={() => (isCategoryModalOpen = false)}
@@ -838,6 +1140,47 @@
 		void loadWorkspace(currentMonth, true);
 	}}
 />
+
+<CategoryGroupModal
+	isOpen={isGroupModalOpen}
+	editingGroupName={editingGroupName}
+	initialColorIndex={editingGroupColorIndex}
+	existingGroupNames={allGroupNames}
+	itemCount={editingGroupName
+		? (groupedCategories.find((g) => g.groupName === editingGroupName)?.cats.length ?? 0)
+		: 0}
+	onClose={() => (isGroupModalOpen = false)}
+	onSave={handleSaveGroup}
+	onDelete={handleDeleteGroup}
+/>
+
+<!-- Mobile Transaction Detail Pop-Up -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<dialog
+	bind:this={mobileDetailDialogEl}
+	aria-label="Transaction details"
+	closedby="any"
+	onclose={() => {
+		if (!isDesktop) {
+			selectedTransactionId = null;
+		}
+	}}
+	class="lg:hidden m-auto w-[calc(100%-1.5rem)] max-w-md rounded-2xl border border-border bg-surface p-0 text-ink-primary shadow-2xl max-h-[85dvh] overflow-hidden"
+>
+	{#if selectedTransaction}
+		<div class="flex flex-col max-h-[85dvh]">
+			<TransactionDetailCard
+				variant="modal"
+				transaction={selectedTransaction}
+				account={accountById.get(selectedTransaction.accountId) ?? null}
+				categories={budgetData?.categories ?? []}
+				onClose={() => (selectedTransactionId = null)}
+				onUpdateTransaction={handleUpdateTransaction}
+				onDeleteTransaction={handleDeleteTransaction}
+			/>
+		</div>
+	{/if}
+</dialog>
 
 <CatchUpModal
 	isOpen={isCatchUpModalOpen}
@@ -849,3 +1192,15 @@
 	onCategorizeTransaction={handleCategorizeTransaction}
 	onClose={() => (isCatchUpModalOpen = false)}
 />
+
+<style>
+	dialog:modal {
+		overscroll-behavior: contain;
+	}
+	dialog::backdrop {
+		overflow: hidden;
+		overscroll-behavior: contain;
+		background: rgb(0 0 0 / 0.65);
+		backdrop-filter: blur(4px);
+	}
+</style>

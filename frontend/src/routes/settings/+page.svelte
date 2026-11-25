@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { disconnectSimpleFIN } from '$lib/api/simplefin';
+	import { fetchAccounts } from '$lib/api/transactions';
 	import SimpleFINSetupModal from '$lib/components/accounts/SimpleFINSetupModal.svelte';
 	import SimulatorWorkbench from '$lib/components/demo/SimulatorWorkbench.svelte';
 	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
@@ -29,6 +30,7 @@
 	let demoError = $state<string | null>(null);
 
 	let simplefinModalOpen = $state(false);
+	let linkedSimpleFINIds = $state<string[]>([]);
 	let confirmDisconnect = $state(false);
 	let disconnecting = $state(false);
 	let bankError = $state<string | null>(null);
@@ -81,15 +83,25 @@
 		}
 	});
 
+	async function refreshLinkedSimpleFINIds() {
+		const accts = await fetchAccounts().catch(() => []);
+		linkedSimpleFINIds = accts
+			.map((a) => a.externalAccountId)
+			.filter((id): id is string => Boolean(id));
+	}
+
 	onMount(async () => {
 		await auth.ready();
 		if (!auth.isAuthenticated) {
 			void goto('/login');
 			return;
 		}
-		await demo.load().catch((err) => {
-			demoError = err instanceof Error ? err.message : 'Failed to load settings';
-		});
+		await Promise.all([
+			demo.load().catch((err) => {
+				demoError = err instanceof Error ? err.message : 'Failed to load settings';
+			}),
+			refreshLinkedSimpleFINIds()
+		]);
 		void refreshPushState();
 	});
 
@@ -380,7 +392,7 @@
 						onclick={() => (simplefinModalOpen = true)}
 						class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
 					>
-						{demo.simplefin.connected ? 'Reconnect SimpleFIN' : 'Connect SimpleFIN'}
+						{demo.simplefin.connected && !demo.isDemo ? 'Manage / Link Accounts' : 'Connect SimpleFIN'}
 					</button>
 
 					{#if demo.simplefin.connected}
@@ -643,8 +655,12 @@
 
 <SimpleFINSetupModal
 	open={simplefinModalOpen}
+	linkedExternalIds={linkedSimpleFINIds}
 	onClose={() => (simplefinModalOpen = false)}
-	onLinked={() => void demo.load()}
+	onLinked={() => {
+		void demo.load();
+		void refreshLinkedSimpleFINIds();
+	}}
 />
 
 <PushPromptModal

@@ -18,11 +18,23 @@
 		open: boolean;
 		editingAccount: AccountItem | null;
 		categories: CategoryOption[];
+		simplefinConnected?: boolean;
+		isDemoMode?: boolean;
+		onOpenSimpleFIN?: () => void;
 		onClose: () => void;
 		onSaved: (message?: string) => void;
 	}
 
-	let { open, editingAccount, categories, onClose, onSaved }: Props = $props();
+	let {
+		open,
+		editingAccount,
+		categories,
+		simplefinConnected = false,
+		isDemoMode = false,
+		onOpenSimpleFIN,
+		onClose,
+		onSaved
+	}: Props = $props();
 
 	let dialogEl = $state<HTMLDialogElement | null>(null);
 
@@ -360,6 +372,35 @@
 				✕
 			</button>
 		</div>
+
+		{#if !isEditing && onOpenSimpleFIN && !isDemoMode}
+			<div
+				data-testid="account-modal-simplefin-callout"
+				class="mt-4 rounded-xl border border-accent-pop/30 bg-accent-tint/50 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5"
+			>
+				<div class="min-w-0 flex-1">
+					<p class="text-xs font-semibold text-ink-primary">
+						{simplefinConnected ? 'Adding a bank account from SimpleFIN?' : 'Want automatic bank sync?'}
+					</p>
+					<p class="text-[11px] text-ink-secondary">
+						{simplefinConnected
+							? 'Fetch newly linked accounts from your existing SimpleFIN connection.'
+							: 'Connect SimpleFIN Bridge to import accounts automatically.'}
+					</p>
+				</div>
+				<button
+					type="button"
+					data-testid="switch-to-simplefin-btn"
+					onclick={() => {
+						dialogEl?.close();
+						onOpenSimpleFIN();
+					}}
+					class="shrink-0 rounded-lg bg-accent-primary px-3 py-1.5 text-xs font-semibold text-accent-primary-text hover:opacity-90 transition-opacity"
+				>
+					{simplefinConnected ? 'Fetch from SimpleFIN' : 'Connect SimpleFIN'}
+				</button>
+			</div>
+		{/if}
 
 		<form onsubmit={handleSubmit} class="mt-4 space-y-4">
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

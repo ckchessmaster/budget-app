@@ -102,10 +102,11 @@ describe('CategoryRow', () => {
 		expect(upcoming.queryByTestId('variable-progress-bar')).toBeNull();
 	});
 
-	it('expands and collapses inline activity drawer when clicking the row, while Edit button fires onEditClick cleanly', async () => {
+	it('expands and collapses inline activity drawer, hides Txns button, and fires onSelectTransaction cleanly', async () => {
 		const onCoverClick = vi.fn();
 		const onEditClick = vi.fn();
-		const { getByTestId, queryByTestId, getByText } = render(CategoryRow, {
+		const onSelectTransaction = vi.fn();
+		const { getByTestId, queryByTestId, queryByText, getByText } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-789',
@@ -119,7 +120,8 @@ describe('CategoryRow', () => {
 				},
 				transactions: [
 					{
-						id: 'tx-1',
+						id: 'tx-1:split-1',
+						transactionId: 'tx-1',
 						date: '2026-11-12',
 						merchant: "Trader Joe's",
 						accountName: 'Sapphire',
@@ -128,10 +130,12 @@ describe('CategoryRow', () => {
 					}
 				],
 				onCoverClick,
-				onEditClick
+				onEditClick,
+				onSelectTransaction
 			}
 		});
 
+		expect(queryByText('Txns')).toBeNull();
 		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 
 		await fireEvent.click(getByTestId('edit-category-btn'));
@@ -144,6 +148,12 @@ describe('CategoryRow', () => {
 		expect(getByText(/Nov 12 · Trader Joe's/)).toBeTruthy();
 		expect(getByText('(Sapphire)')).toBeTruthy();
 		expect(getByText('-$72.50')).toBeTruthy();
+
+		await fireEvent.click(getByTestId('inline-activity-btn'));
+		expect(onSelectTransaction).toHaveBeenCalledTimes(1);
+		expect(onSelectTransaction).toHaveBeenCalledWith('tx-1');
+		// Clicking a transaction line item should not collapse the drawer
+		expect(getByTestId('inline-activity-drawer')).toBeTruthy();
 
 		await fireEvent.click(getByTestId('category-row'));
 		expect(queryByTestId('inline-activity-drawer')).toBeNull();
@@ -222,5 +232,46 @@ describe('CategoryRow', () => {
 		});
 
 		expect(getByTestId('status-badge').textContent?.trim()).toBe('$100.00');
+	});
+
+	it('distinguishes category drag-and-drop reordering from transaction drops', async () => {
+		const onReorderCategory = vi.fn().mockResolvedValue(undefined);
+		const onDropTransaction = vi.fn().mockResolvedValue(undefined);
+
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-target',
+					name: 'Utilities',
+					originalPlanned: 150,
+					effectiveTarget: 150,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 150
+				},
+				onCoverClick: vi.fn(),
+				onReorderCategory,
+				onDropTransaction
+			}
+		});
+
+		expect(getByTestId('category-drag-handle')).toBeTruthy();
+		const container = getByTestId('category-row-container');
+
+		await fireEvent.drop(container, {
+			dataTransfer: {
+				getData: (type: string) =>
+					type === 'application/x-budget-category-id' ? 'cat-source' : ''
+			}
+		});
+		expect(onReorderCategory).toHaveBeenCalledWith('cat-source', 'cat-target', 'before');
+		expect(onDropTransaction).not.toHaveBeenCalled();
+
+		await fireEvent.drop(container, {
+			dataTransfer: {
+				getData: (type: string) => (type === 'application/x-budget-tx-id' ? 'tx-99' : '')
+			}
+		});
+		expect(onDropTransaction).toHaveBeenCalledWith('tx-99', 'cat-target');
 	});
 });

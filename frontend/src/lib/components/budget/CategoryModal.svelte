@@ -11,6 +11,7 @@
 		isOpen: boolean;
 		editingCategory: CategoryBudget | null;
 		allCategories: CategoryBudget[];
+		availableGroups?: string[];
 		defaultGroupName?: string;
 		yearMonth?: string;
 		onClose: () => void;
@@ -21,6 +22,7 @@
 		isOpen,
 		editingCategory,
 		allCategories,
+		availableGroups = [],
 		defaultGroupName = 'Essentials',
 		yearMonth,
 		onClose,
@@ -68,12 +70,28 @@
 		allCategories.filter((c) => !editingCategory || c.id !== editingCategory.id)
 	);
 
+	let groupOptions = $derived.by(() => {
+		const seen = new Set<string>();
+		const out: string[] = [];
+		for (const g of [...availableGroups, groupName, defaultGroupName]) {
+			const trimmed = g?.trim();
+			if (trimmed && !seen.has(trimmed)) {
+				seen.add(trimmed);
+				out.push(trimmed);
+			}
+		}
+		return out;
+	});
+
 	async function handleSubmit(e: SubmitEvent) {
 		e.preventDefault();
 		isSubmitting = true;
 		errorMsg = '';
 
 		const plannedVal = Number(monthlyBudget) || 0;
+		const nextSortOrder =
+			editingCategory?.sortOrder ??
+			Math.max(-1, ...allCategories.map((c) => c.sortOrder)) + 1;
 		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
@@ -84,7 +102,7 @@
 			target_cadence: targetCadence,
 			target_amount: targetAmount ? Number(targetAmount) : null,
 			target_date: targetDate ? targetDate : null,
-			sort_order: editingCategory?.sortOrder ?? 0
+			sort_order: nextSortOrder
 		};
 
 		try {
@@ -135,7 +153,7 @@
 		>
 			<div class="flex items-center justify-between border-b border-border pb-3">
 				<h2 class="text-base font-semibold text-ink-primary">
-					{editingCategory ? 'Edit Category' : 'New Category'}
+					{editingCategory ? 'Edit Budget Item' : 'New Budget Item'}
 				</h2>
 				<button
 					type="button"
@@ -150,7 +168,7 @@
 				<div class="grid grid-cols-2 gap-3">
 					<div>
 						<label for="cat-name" class="block text-xs font-medium text-ink-secondary mb-1">
-							Name
+							Item Name
 						</label>
 						<input
 							id="cat-name"
@@ -162,15 +180,28 @@
 					</div>
 					<div>
 						<label for="cat-group" class="block text-xs font-medium text-ink-secondary mb-1">
-							Group
+							Category
 						</label>
-						<input
-							id="cat-group"
-							type="text"
-							bind:value={groupName}
-							required
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-						/>
+						{#if groupOptions.length > 0}
+							<select
+								id="cat-group"
+								bind:value={groupName}
+								required
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
+							>
+								{#each groupOptions as grp (grp)}
+									<option value={grp}>{grp}</option>
+								{/each}
+							</select>
+						{:else}
+							<input
+								id="cat-group"
+								type="text"
+								bind:value={groupName}
+								required
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+						{/if}
 					</div>
 				</div>
 
@@ -299,7 +330,7 @@
 							disabled={isSubmitting}
 							class="rounded-lg bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-primary-text hover:opacity-90 disabled:opacity-50 transition-opacity"
 						>
-							{isSubmitting ? 'Saving...' : 'Save Category'}
+							{isSubmitting ? 'Saving...' : 'Save Item'}
 						</button>
 					</div>
 				</div>
