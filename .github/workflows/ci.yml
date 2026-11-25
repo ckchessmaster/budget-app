@@ -150,21 +150,137 @@ jobs:
             --set vault.existingSecret=budget-app-secrets \
             > /tmp/rendered.yaml
 
-          # The chart must refuse to render an install that would put banking data in
-          # someone else's namespace or leave bank sync without a queue to run on.
-          refusal=$(helm template budget-app ./charts/budget-app \
-              --set oidc.clientId=budget-app-client \
-              --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
-              --set vault.existingSecret=budget-app-secrets \
-              --set temporal.namespace=default 2>&1) && {
-            echo "::error::the chart rendered temporal.namespace=default"
-            exit 1
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set backup.enabled=true \
+            --set backup.agePublicKey=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p \
+            --set backup.rclone.existingSecret=budget-backup-rclone \
+            > /tmp/rendered-backup.yaml
+
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.existingSecret=budget-vapid-secrets \
+            > /tmp/rendered-vapid-secret.yaml
+
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.publicKey=BTestPubKey \
+            --set vapid.subject=mailto:alerts@example.com \
+            --set vapid.existingSecret=budget-vapid-secrets \
+            > /tmp/rendered-vapid-hybrid.yaml
+
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.publicKey=BTestPubKey \
+            --set vapid.subject=https://budget.example.com \
+            --set vapid.privateKey=TestPrivKey \
+            > /tmp/rendered-vapid-inline.yaml
+
+          # The chart must refuse unsafe or incomplete configurations at render time.
+          assert_refused() {
+            local label="$1"
+            local expected="$2"
+            shift 2
+            local out
+            if out=$(helm template budget-app ./charts/budget-app "$@" 2>&1); then
+              echo "::error::chart unexpectedly rendered for: ${label}"
+              exit 1
+            fi
+            if ! echo "$out" | grep -qF "$expected"; then
+              echo "::error::expected refusal containing '${expected}' for '${label}', got: ${out}"
+              exit 1
+            fi
+            echo "refusal guard ok: ${label}"
           }
-          echo "$refusal" | grep -q "temporal.namespace=default is refused" || {
-            echo "::error::expected a refusal naming temporal.namespace, got: $refusal"
-            exit 1
-          }
-          echo "chart correctly refuses temporal.namespace=default"
+
+          assert_refused "missing temporal.address" "temporal.address is required" \
+            --set oidc.clientId=budget-app-client \
+            --set vault.existingSecret=budget-app-secrets
+
+          assert_refused "temporal.namespace=default" "temporal.namespace=default is refused" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set temporal.namespace=default
+
+          assert_refused "missing vault key" "vault master key is required" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set database.existingSecret=
+
+          assert_refused "backup missing agePublicKey" "backup.agePublicKey is required" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set backup.enabled=true \
+            --set backup.rclone.existingSecret=budget-backup-rclone
+
+          assert_refused "backup with age private key" "AGE-SECRET-KEY" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set backup.enabled=true \
+            --set backup.agePublicKey=AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ \
+            --set backup.rclone.existingSecret=budget-backup-rclone
+
+          assert_refused "backup malformed agePublicKey" "backup.agePublicKey must be a valid age public recipient key" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set backup.enabled=true \
+            --set backup.agePublicKey=not-an-age-key \
+            --set backup.rclone.existingSecret=budget-backup-rclone
+
+          assert_refused "backup missing rclone.existingSecret" "backup.rclone.existingSecret is required" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set backup.enabled=true \
+            --set backup.agePublicKey=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+
+          assert_refused "vapid missing privateKey and existingSecret" "VAPID_PRIVATE_KEY" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.publicKey=BTestPubKey \
+            --set vapid.subject=mailto:alerts@example.com
+
+          assert_refused "vapid missing publicKey" "VAPID_PUBLIC_KEY" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.privateKey=priv
+
+          assert_refused "vapid missing subject" "VAPID_SUBJECT" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.privateKey=priv \
+            --set vapid.publicKey=pub
+
+          assert_refused "vapid invalid subject" "mailto: or https://" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set vapid.enabled=true \
+            --set vapid.privateKey=priv \
+            --set vapid.publicKey=pub \
+            --set vapid.subject=ops@example.com
+
           if ! python3 -c "import yaml" >/dev/null 2>&1; then
             python3 -m pip install --quiet pyyaml
           fi
@@ -177,28 +293,43 @@ jobs:
           # API server deserialises the object, so catch it here instead.
           problems = []
 
-          def check(kind, name, path, value):
+          def check(render_file, kind, name, path, value):
               if value is not None and not isinstance(value, dict):
                   problems.append(
-                      f"{kind} {name}: {path} rendered as {type(value).__name__} "
+                      f"{render_file} {kind} {name}: {path} rendered as {type(value).__name__} "
                       f"({str(value)[:60]!r}), expected a mapping"
                   )
 
-          for doc in yaml.safe_load_all(open("/tmp/rendered.yaml")):
-              if not doc:
-                  continue
-              kind = doc.get("kind", "?")
-              name = (doc.get("metadata") or {}).get("name", "?") if isinstance(doc.get("metadata"), dict) else "?"
-              check(kind, name, "metadata", doc.get("metadata"))
-              spec = doc.get("spec")
-              if isinstance(spec, dict):
-                  check(kind, name, "spec.template.metadata", (spec.get("template") or {}).get("metadata") if isinstance(spec.get("template"), dict) else None)
-                  template = spec.get("template")
-                  if isinstance(template, dict):
-                      meta = template.get("metadata")
-                      if isinstance(meta, dict):
-                          check(kind, name, "spec.template.metadata.annotations", meta.get("annotations"))
-                          check(kind, name, "spec.template.metadata.labels", meta.get("labels"))
+          def load_docs(path):
+              with open(path) as fh:
+                  docs = [d for d in yaml.safe_load_all(fh) if d]
+              for doc in docs:
+                  kind = doc.get("kind", "?")
+                  name = (doc.get("metadata") or {}).get("name", "?") if isinstance(doc.get("metadata"), dict) else "?"
+                  check(path, kind, name, "metadata", doc.get("metadata"))
+                  spec = doc.get("spec")
+                  if isinstance(spec, dict):
+                      tpl = spec.get("template")
+                      if isinstance(tpl, dict):
+                          meta = tpl.get("metadata")
+                          check(path, kind, name, "spec.template.metadata", meta)
+                          if isinstance(meta, dict):
+                              check(path, kind, name, "spec.template.metadata.annotations", meta.get("annotations"))
+                              check(path, kind, name, "spec.template.metadata.labels", meta.get("labels"))
+                      job_tpl = (spec.get("jobTemplate") or {}).get("spec", {}).get("template") if isinstance(spec.get("jobTemplate"), dict) else None
+                      if isinstance(job_tpl, dict):
+                          jmeta = job_tpl.get("metadata")
+                          check(path, kind, name, "spec.jobTemplate.spec.template.metadata", jmeta)
+                          if isinstance(jmeta, dict):
+                              check(path, kind, name, "spec.jobTemplate.spec.template.metadata.annotations", jmeta.get("annotations"))
+                              check(path, kind, name, "spec.jobTemplate.spec.template.metadata.labels", jmeta.get("labels"))
+              return docs
+
+          default_docs = load_docs("/tmp/rendered.yaml")
+          backup_docs = load_docs("/tmp/rendered-backup.yaml")
+          vapid_secret_docs = load_docs("/tmp/rendered-vapid-secret.yaml")
+          vapid_hybrid_docs = load_docs("/tmp/rendered-vapid-hybrid.yaml")
+          vapid_inline_docs = load_docs("/tmp/rendered-vapid-inline.yaml")
 
           if problems:
               print("::error::chart rendered invalid value types")
@@ -210,8 +341,8 @@ jobs:
           # Both of those have already broken in production without anyone noticing, so
           # pin them here instead of trusting the chart to keep them intact.
           backends = [
-              d for d in yaml.safe_load_all(open("/tmp/rendered.yaml"))
-              if d and d.get("kind") == "Deployment" and "backend" in (d.get("metadata") or {}).get("name", "")
+              d for d in default_docs
+              if d.get("kind") == "Deployment" and "backend" in (d.get("metadata") or {}).get("name", "")
           ]
           if not backends:
               print("::error::no backend Deployment rendered")
@@ -240,6 +371,99 @@ jobs:
                       print(f"::error::backend pod is missing {required}; the API and worker must share one vault key")
                       sys.exit(1)
 
+          # Verify opt-in defaults are cleanly disabled in default render.
+          if any(d.get("kind") == "CronJob" for d in default_docs):
+              print("::error::backup CronJob rendered when backup.enabled=false")
+              sys.exit(1)
+          default_cm = next(d for d in default_docs if d.get("kind") == "ConfigMap")
+          if any(k.startswith("VAPID_") for k in (default_cm.get("data") or {})):
+              print("::error::ConfigMap contains VAPID_* when vapid.enabled=false")
+              sys.exit(1)
+          for c in backends[0]["spec"]["template"]["spec"]["containers"]:
+              c_env = {e["name"] for e in (c.get("env") or [])}
+              if any(name.startswith("VAPID_") for name in c_env):
+                  print(f"::error::container {c.get('name')} contains VAPID_* when vapid.enabled=false")
+                  sys.exit(1)
+
+          # Verify backup CronJob render.
+          cronjobs = [d for d in backup_docs if d.get("kind") == "CronJob"]
+          if len(cronjobs) != 1:
+              print(f"::error::expected 1 CronJob when backup.enabled=true, got {len(cronjobs)}")
+              sys.exit(1)
+          cj = cronjobs[0]
+          assert cj.get("apiVersion") == "batch/v1", cj.get("apiVersion")
+          cjspec = cj["spec"]
+          assert cjspec["schedule"] == "0 2 * * *", cjspec["schedule"]
+          assert cjspec["concurrencyPolicy"] == "Forbid", cjspec["concurrencyPolicy"]
+          pod_spec = cjspec["jobTemplate"]["spec"]["template"]["spec"]
+          assert pod_spec["restartPolicy"] == "Never"
+          assert pod_spec["automountServiceAccountToken"] is False
+          assert pod_spec["securityContext"] == {
+              "runAsNonRoot": True,
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "fsGroup": 10001,
+              "seccompProfile": {"type": "RuntimeDefault"},
+          }, pod_spec["securityContext"]
+          b_container = pod_spec["containers"][0]
+          assert b_container["securityContext"] == {
+              "allowPrivilegeEscalation": False,
+              "readOnlyRootFilesystem": True,
+              "capabilities": {"drop": ["ALL"]},
+          }, b_container["securityContext"]
+          b_env = {e["name"]: e for e in b_container["env"]}
+          for req in ("DATABASE_URL", "AGE_PUBLIC_KEY", "RCLONE_CONFIG", "RCLONE_REMOTE", "BACKUP_PREFIX", "BACKUP_TMPDIR", "RCLONE_RETRIES"):
+              assert req in b_env, f"missing backup env {req}"
+          assert not b_env["AGE_PUBLIC_KEY"]["value"].startswith("AGE-SECRET-KEY-")
+          mounts = {m["name"]: m for m in b_container["volumeMounts"]}
+          assert mounts["rclone-config"]["mountPath"] == "/etc/rclone"
+          assert mounts["rclone-config"]["readOnly"] is True
+          assert mounts["tmp"]["mountPath"] == "/tmp"
+          vols = {v["name"]: v for v in pod_spec["volumes"]}
+          assert vols["rclone-config"]["secret"]["secretName"] == "budget-backup-rclone"
+          assert vols["rclone-config"]["secret"]["defaultMode"] == 288  # 0440
+          assert "emptyDir" in vols["tmp"]
+
+          # Helper for VAPID assertions on both backend and sync-worker containers.
+          def containers_by_name(docs):
+              dep = next(d for d in docs if d.get("kind") == "Deployment" and "backend" in d["metadata"]["name"])
+              return {c["name"]: c for c in dep["spec"]["template"]["spec"]["containers"]}
+
+          # 1) vapid.existingSecret only
+          cm_secret = next(d for d in vapid_secret_docs if d.get("kind") == "ConfigMap")["data"]
+          assert not any(k.startswith("VAPID_") for k in cm_secret), cm_secret
+          assert not any(d.get("kind") == "Secret" and d["metadata"]["name"].endswith("-vapid") for d in vapid_secret_docs)
+          for cname, cont in containers_by_name(vapid_secret_docs).items():
+              assert cname in ("backend", "sync-worker")
+              env_map = {e["name"]: e for e in cont["env"]}
+              for key in ("VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"):
+                  assert env_map[key]["valueFrom"]["secretKeyRef"]["name"] == "budget-vapid-secrets", (cname, key)
+
+          # 2) vapid hybrid (publicKey/subject in ConfigMap + privateKey in existingSecret)
+          cm_hybrid = next(d for d in vapid_hybrid_docs if d.get("kind") == "ConfigMap")["data"]
+          assert cm_hybrid["VAPID_PUBLIC_KEY"] == "BTestPubKey"
+          assert cm_hybrid["VAPID_SUBJECT"] == "mailto:alerts@example.com"
+          assert "VAPID_PRIVATE_KEY" not in cm_hybrid
+          for cname, cont in containers_by_name(vapid_hybrid_docs).items():
+              env_names = [e["name"] for e in cont["env"]]
+              assert "VAPID_PUBLIC_KEY" not in env_names, (cname, env_names)
+              assert "VAPID_SUBJECT" not in env_names, (cname, env_names)
+              env_map = {e["name"]: e for e in cont["env"]}
+              assert env_map["VAPID_PRIVATE_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "budget-vapid-secrets"
+
+          # 3) vapid inline (publicKey/subject in ConfigMap + chart-managed -vapid Secret for privateKey)
+          cm_inline = next(d for d in vapid_inline_docs if d.get("kind") == "ConfigMap")["data"]
+          assert cm_inline["VAPID_PUBLIC_KEY"] == "BTestPubKey"
+          assert cm_inline["VAPID_SUBJECT"] == "https://budget.example.com"
+          assert "VAPID_PRIVATE_KEY" not in cm_inline
+          vapid_secrets = [d for d in vapid_inline_docs if d.get("kind") == "Secret" and d["metadata"]["name"] == "budget-app-budget-app-vapid"]
+          assert len(vapid_secrets) == 1
+          assert vapid_secrets[0]["stringData"]["VAPID_PRIVATE_KEY"] == "TestPrivKey"
+          for cname, cont in containers_by_name(vapid_inline_docs).items():
+              env_map = {e["name"]: e for e in cont["env"]}
+              assert env_map["VAPID_PRIVATE_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "budget-app-budget-app-vapid"
+
           print("bank sync topology ok (sidecar worker present, shared vault key)")
-          print(f"chart structure ok ({sum(1 for d in yaml.safe_load_all(open('/tmp/rendered.yaml')) if d)} objects)")
+          print("backup CronJob and opt-in VAPID templates ok")
+          print(f"chart structure ok ({len(default_docs)} default objects)")
           PY

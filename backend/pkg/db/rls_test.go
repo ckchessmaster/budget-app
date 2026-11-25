@@ -82,6 +82,7 @@ func TestRLSIsolation(t *testing.T) {
 	}
 
 	defer func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM push_subscriptions WHERE user_id IN ($1, $2)", u1, u2)
 		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id IN ($1, $2)", w1, w2)
 	}()
 
@@ -139,6 +140,26 @@ func TestRLSIsolation(t *testing.T) {
 	`, adj1, w1, adj2, w2, month, nextMonth)
 	if err != nil {
 		t.Fatalf("failed to insert test rollover adjustments: %v", err)
+	}
+
+	ps1, ps2 := uuid.New(), uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+		VALUES ($1, $2, $5, 'p256dh-1', 'auth-1'),
+		       ($3, $4, $6, 'p256dh-2', 'auth-2')
+	`, ps1, u1, ps2, u2, "https://push.example.test/"+ps1.String(), "https://push.example.test/"+ps2.String())
+	if err != nil {
+		t.Fatalf("failed to insert test push subscriptions: %v", err)
+	}
+
+	nc1, nc2 := uuid.New(), uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO notification_cooldowns (id, workspace_id, trigger_type, entity_id)
+		VALUES ($1, $2, 'SPENDING_VELOCITY', $5),
+		       ($3, $4, 'STATEMENT_DUE', $6)
+	`, nc1, w1, nc2, w2, c1, c2)
+	if err != nil {
+		t.Fatalf("failed to insert test notification cooldowns: %v", err)
 	}
 
 	// 3. Open connection as budget_app_user, execute SET LOCAL app.current_user_id = '<U1_UUID>'
@@ -223,6 +244,8 @@ func TestRLSIsolation(t *testing.T) {
 	assertOnlyID("month_end_rollover_runs", r1)
 	assertOnlyID("credit_card_debt_interlocks", il1)
 	assertOnlyID("monthly_rollover_adjustments", adj1)
+	assertOnlyID("push_subscriptions", ps1)
+	assertOnlyID("notification_cooldowns", nc1)
 }
 
 func TestRLSDemoWorkspaceIsolation(t *testing.T) {

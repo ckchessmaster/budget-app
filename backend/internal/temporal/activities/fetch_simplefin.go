@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
@@ -15,9 +16,10 @@ import (
 )
 
 type BankActivities struct {
-	Pool   *pgxpool.Pool
-	Client simplefin.Client
-	Vault  crypto.Vault
+	Pool                  *pgxpool.Pool
+	Client                simplefin.Client
+	Vault                 crypto.Vault
+	NotificationEvaluator notifications.Evaluator
 }
 
 func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, scope temporalinternal.SyncScope) (*simplefin.DataResponse, error) {

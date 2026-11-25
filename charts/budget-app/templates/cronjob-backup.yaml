@@ -1,0 +1,110 @@
+{{- if .Values.backup.enabled }}
+{{- $ageKey := trim (.Values.backup.agePublicKey | default "") }}
+{{- if not $ageKey }}
+{{- fail "backup.agePublicKey is required when backup.enabled is true. Provide an asymmetric age public recipient key (age1...); keep the private key offline." }}
+{{- end }}
+{{- if hasPrefix "AGE-SECRET-KEY-" $ageKey }}
+{{- fail "backup.agePublicKey refuses AGE-SECRET-KEY private keys. Only the public age1 recipient key may be stored on the cluster." }}
+{{- end }}
+{{- if not (regexMatch "^age1[0-9a-z]{58}$" $ageKey) }}
+{{- fail "backup.agePublicKey must be a valid age public recipient key matching ^age1[0-9a-z]{58}$." }}
+{{- end }}
+{{- if not (trim (.Values.backup.rclone.existingSecret | default "")) }}
+{{- fail "backup.rclone.existingSecret is required when backup.enabled is true (Secret containing rclone.conf)." }}
+{{- end }}
+{{- if not (trim (.Values.backup.rclone.remote | default "")) }}
+{{- fail "backup.rclone.remote is required when backup.enabled is true." }}
+{{- end }}
+{{- if not (trim (.Values.backup.schedule | default "")) }}
+{{- fail "backup.schedule is required when backup.enabled is true." }}
+{{- end }}
+{{- if and (not (trim (.Values.backup.database.existingSecret | default ""))) (not (trim (.Values.database.existingSecret | default ""))) (not (trim (.Values.database.url | default ""))) }}
+{{- fail "backup.enabled requires a database Secret (database.existingSecret, database.url, or backup.database.existingSecret)." }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "budget-app.fullname" . }}-backup
+  labels:
+    app: budget-backup
+    {{- include "budget-app.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  {{- if trim (.Values.backup.timeZone | default "") }}
+  timeZone: {{ trim .Values.backup.timeZone | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  suspend: {{ .Values.backup.suspend }}
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.backup.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backup.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.backup.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: {{ .Values.backup.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          labels:
+            app: budget-backup
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            {{- include "budget-app.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: "{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              imagePullPolicy: {{ .Values.backup.image.pullPolicy }}
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "budget-app.backupDatabaseSecretName" . }}
+                      key: {{ include "budget-app.backupDatabaseSecretKey" . }}
+                - name: AGE_PUBLIC_KEY
+                  value: {{ $ageKey | quote }}
+                - name: RCLONE_CONFIG
+                  value: "/etc/rclone/rclone.conf"
+                - name: RCLONE_REMOTE
+                  value: {{ trim .Values.backup.rclone.remote | quote }}
+                - name: BACKUP_PREFIX
+                  value: {{ .Values.backup.prefix | quote }}
+                - name: BACKUP_TMPDIR
+                  value: "/tmp"
+                - name: RCLONE_RETRIES
+                  value: {{ .Values.backup.rclone.retries | quote }}
+              volumeMounts:
+                - name: rclone-config
+                  mountPath: /etc/rclone
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: rclone-config
+              secret:
+                secretName: {{ trim .Values.backup.rclone.existingSecret }}
+                defaultMode: 0440
+                items:
+                  - key: {{ .Values.backup.rclone.secretKey }}
+                    path: rclone.conf
+            - name: tmp
+              emptyDir:
+                {{- if .Values.backup.tmpSizeLimit }}
+                sizeLimit: {{ .Values.backup.tmpSizeLimit }}
+                {{- end }}
+{{- end }}

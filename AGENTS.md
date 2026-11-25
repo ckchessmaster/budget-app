@@ -41,6 +41,13 @@ helm template charts/budget-app --set temporal.address=x:7233 --set vault.existi
 helm template charts/budget-app        # fails on purpose: no temporal.address
 ```
 
+Backup:
+
+```bash
+bash -n scripts/backup/backup.sh scripts/backup/backup_test.sh
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/budgetdb?sslmode=disable bash scripts/backup/backup_test.sh
+```
+
 Local stack: `npm run dev:aspire` from the repository root brings up Postgres (5432), Dex OIDC
 (5556), Temporal gRPC (7233), Temporal UI (8233), the API, the worker, and Vite (5173), with
 the Aspire dashboard on 18888. The AppHost supplies dev values for `TEMPORAL_ADDRESS`,
@@ -51,14 +58,21 @@ cluster.
 
 ### What is orchestrated today
 
-One workflow: `BankSyncWorkflow` in
-[`backend/internal/temporal/workflows/bank_sync.go`](backend/internal/temporal/workflows/bank_sync.go).
-Four sequential activities — fetch SimpleFIN, persist (which also does manual dedup and
-pending→posted reconciliation), detect and link transfers, normalize merchants. Single task
-queue `budget-sync-queue`, single namespace `budget-app`.
+Two workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
 
-Triggers are `POST /api/v1/bank/sync-now`, the demo simulator's `syncNow` flag, and a per
-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
+- `BankSyncWorkflow` in
+  [`backend/internal/temporal/workflows/bank_sync.go`](backend/internal/temporal/workflows/bank_sync.go):
+  five sequential activities — fetch SimpleFIN, persist (which also does manual dedup and
+  pending→posted reconciliation), detect and link transfers, normalize merchants, and evaluate
+  notifications (`EvaluateNotificationsActivity`, non-fatal warning on failure, 24h RLS-scoped
+  cooldowns).
+- `MonthEndRolloverWorkflow` in
+  [`backend/internal/temporal/workflows/month_end.go`](backend/internal/temporal/workflows/month_end.go):
+  per-workspace month-end rollover (`month-end-rollover-<workspaceID>`, `0 0 1 * *` UTC) running
+  inside `SyncScope` for `FORCE RLS`.
+
+Triggers for bank sync are `POST /api/v1/bank/sync-now`, the demo simulator's `syncNow` flag, and
+a per-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
 lazily on first sync. Progress comes from `DescribeWorkflowExecution` behind
 `GET /api/v1/bank/sync-status/{workflow_id}`. There are no signals, queries, child workflows,
 or continue-as-new yet.
@@ -77,6 +91,12 @@ add a fallback, a default, or a "warn and continue" path to make a local run eas
 one of those has already caused an incident here. A missing key that degrades to a derived key
 seals bank credentials with something readable in the repository; a missing address that
 degrades to `localhost` accepts sync requests into a queue nobody polls.
+
+Opt-in W3C Web Push (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`) is all-or-nothing:
+leaving all three unset disables push cleanly, while a partial configuration or an invalid subject
+(must start with `mailto:` or `https://`) logs an error and disables push. When `vapid.enabled=true`
+in Helm, both `backend` and `sync-worker` receive identical credentials via `budget-app.syncEnv`,
+and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
 
 ### Rules for adding or changing a workflow
 
@@ -126,7 +146,11 @@ helm lint --strict charts/budget-app
 
 The chart render guards are part of the contract: a missing `temporal.address`, a missing
 namespace, `temporal.namespace=default`, and an absent vault key must all fail the render, and
-`.github/workflows/ci.yml` asserts that they do. Add assertions there when you add a guard.
+`.github/workflows/ci.yml` asserts that they do. Milestone 7 guards also require a valid
+`age1...` `backup.agePublicKey` (refusing `AGE-SECRET-KEY-*`) and `backup.rclone.existingSecret`
+when `backup.enabled=true`, and public key, private key (or `vapid.existingSecret`), and a
+`mailto:` or `https://` subject when `vapid.enabled=true`. Add assertions in `.github/workflows/ci.yml`
+when you add a guard.
 
 Against a live cluster, from the node (`ssh` then `kubectl`; `rg` is not installed there):
 

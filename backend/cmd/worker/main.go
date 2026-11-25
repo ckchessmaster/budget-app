@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/activities"
@@ -66,13 +67,21 @@ func main() {
 	}
 	defer c.Close()
 
+	vapidCfg, err := notifications.LoadVAPIDConfigFromEnv()
+	if err != nil {
+		logger.Error("invalid or partial VAPID configuration; web push notifications disabled", "error", err)
+	}
+	pushSvc := notifications.NewWebPushService(pool, vapidCfg, nil)
+	notifEval := notifications.NewEvaluator(pool, pushSvc)
+
 	w := worker.New(c, temporalinternal.TaskQueue, worker.Options{})
 	w.RegisterWorkflow(workflows.BankSyncWorkflow)
 	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
-		Pool:   pool,
-		Client: simplefin.NewClient(nil),
-		Vault:  vault,
+		Pool:                  pool,
+		Client:                simplefin.NewClient(nil),
+		Vault:                 vault,
+		NotificationEvaluator: notifEval,
 	})
 	w.RegisterActivity(&activities.RolloverActivities{
 		Pool: pool,

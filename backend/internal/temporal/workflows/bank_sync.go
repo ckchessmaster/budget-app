@@ -3,6 +3,7 @@ package workflows
 import (
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/activities"
@@ -21,11 +22,12 @@ type BankSyncResult struct {
 	ManualMatchedCount int      `json:"manual_matched_count"`
 	TransfersLinked    int      `json:"transfers_linked"`
 	NormalizedCount    int      `json:"normalized_count"`
+	NotificationsSent  int      `json:"notifications_sent,omitempty"`
 	Warnings           []string `json:"warnings,omitempty"`
 }
 
 // BankSyncWorkflow orchestrates fetching SimpleFIN data, persisting/reconciling transactions,
-// detecting cross-account transfers, and normalizing merchant names.
+// detecting cross-account transfers, normalizing merchant names, and evaluating alert triggers.
 func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResult, error) {
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
@@ -63,6 +65,22 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 		return nil, err
 	}
 
+	warnings := append([]string(nil), persistRes.Warnings...)
+	notifCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    2 * time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    15 * time.Second,
+			MaximumAttempts:    3,
+		},
+	})
+	var notifRes notifications.EvaluationResult
+	if err := workflow.ExecuteActivity(notifCtx, bankActivities.EvaluateNotificationsActivity, input.SyncScope).Get(notifCtx, &notifRes); err != nil {
+		workflow.GetLogger(ctx).Warn("notification evaluation failed after bank sync", "error", err)
+		warnings = append(warnings, "notification evaluation failed")
+	}
+
 	return &BankSyncResult{
 		FetchedCount:       persistRes.FetchedCount,
 		InsertedCount:      persistRes.InsertedCount,
@@ -70,6 +88,7 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 		ManualMatchedCount: persistRes.ManualMatchedCount,
 		TransfersLinked:    linked,
 		NormalizedCount:    normalized,
-		Warnings:           persistRes.Warnings,
+		NotificationsSent:  notifRes.TotalSent(),
+		Warnings:           warnings,
 	}, nil
 }

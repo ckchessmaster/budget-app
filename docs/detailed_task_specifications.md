@@ -1881,6 +1881,7 @@ Every task ticket adheres to the following five-part contract:
   * Run local test `backup_test.sh`: public key encrypts; private key decrypts valid SQL dump.
 
 ### `TASK-7.2.2`: Kubernetes Backup CronJob Manifest
+> **Note:** Delivered via the Helm chart (`charts/budget-app/templates/cronjob-backup.yaml`, `charts/budget-app/backup-secrets.yaml.example`, opt-in `values.yaml` blocks, and CI render guards in `.github/workflows/ci.yml`) instead of `k8s/base/` Kustomize manifests.
 * **Target Files**:
   * `k8s/base/cronjob-backup.yaml`
   * `k8s/base/backup-secrets.yaml.example`
@@ -1894,7 +1895,7 @@ Every task ticket adheres to the following five-part contract:
 
 ## Epic M7.3: Kubernetes Deployment & Production Hardening
 
-> **Note:** Largely completed via `backend/Dockerfile`, `frontend/Dockerfile`, and the Helm chart in `charts/budget-app/` (used instead of `k8s/base/` Kustomize manifests).
+> **Note:** Completed via `backend/Dockerfile`, `frontend/Dockerfile`, `scripts/backup/Dockerfile`, the Helm chart in `charts/budget-app/` (used instead of `k8s/base/` Kustomize manifests), CI verification in `.github/workflows/ci.yml`, and container image publishing in `.github/workflows/release.yml`.
 
 ### `TASK-7.3.1`: Production Multi-Stage Dockerfiles
 * **Target Files**:

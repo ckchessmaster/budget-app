@@ -15,6 +15,7 @@ func setOIDCEnv(t *testing.T, env map[string]string) {
 	for _, key := range []string{
 		"OIDC_ISSUER_URL", "DEX_ISSUER_URL", "OIDC_CLIENT_ID",
 		"OIDC_ENFORCE_AUDIENCE", "CORS_ALLOWED_ORIGINS",
+		"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -116,4 +117,39 @@ func TestLoadConfigReadsSecuritySettings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadConfigVAPIDOptIn(t *testing.T) {
+	t.Run("disabled when unset", func(t *testing.T) {
+		setOIDCEnv(t, nil)
+		cfg := server.LoadConfig()
+		if cfg.VAPID.Enabled() {
+			t.Fatal("expected VAPID to default to disabled when env vars are unset")
+		}
+	})
+
+	t.Run("enabled when all three variables are valid", func(t *testing.T) {
+		setOIDCEnv(t, map[string]string{
+			"VAPID_PUBLIC_KEY":  "test-pub-key",
+			"VAPID_PRIVATE_KEY": "test-priv-key",
+			"VAPID_SUBJECT":     "mailto:ops@example.com",
+		})
+		cfg := server.LoadConfig()
+		if !cfg.VAPID.Enabled() {
+			t.Fatal("expected VAPID to be enabled when all variables are set")
+		}
+		if cfg.VAPID.PublicKey != "test-pub-key" || cfg.VAPID.PrivateKey != "test-priv-key" || cfg.VAPID.Subject != "mailto:ops@example.com" {
+			t.Fatalf("unexpected VAPID config: %+v", cfg.VAPID)
+		}
+	})
+
+	t.Run("disabled when partial", func(t *testing.T) {
+		setOIDCEnv(t, map[string]string{
+			"VAPID_PUBLIC_KEY": "only-pub-key",
+		})
+		cfg := server.LoadConfig()
+		if cfg.VAPID.Enabled() {
+			t.Fatal("expected partial VAPID config to resolve as disabled")
+		}
+	})
 }
