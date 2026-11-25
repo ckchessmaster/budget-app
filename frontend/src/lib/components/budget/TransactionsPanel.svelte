@@ -66,6 +66,7 @@
 	let activeSubTab = $state<TxSubTab>('to_review');
 	let searchQuery = $state('');
 	let selectedAccountId = $state('');
+	let selectedType = $state<'all' | 'income' | 'spend'>('all');
 	let showQuickAdd = $state(false);
 	let savingIds = $state<Record<string, boolean>>({});
 	let actionError = $state<string | null>(null);
@@ -207,6 +208,12 @@
 
 		if (selectedAccountId) {
 			base = base.filter((tx) => tx.accountId === selectedAccountId);
+		}
+
+		if (selectedType === 'income') {
+			base = base.filter((tx) => tx.amount > 0);
+		} else if (selectedType === 'spend') {
+			base = base.filter((tx) => tx.amount < 0);
 		}
 
 		if (activeCategoryFilterId) {
@@ -494,6 +501,16 @@
 				{#each accounts as acct}
 					<option value={acct.id}>{acct.name}</option>
 				{/each}
+			</select>
+
+			<select
+				aria-label="Filter by type"
+				bind:value={selectedType}
+				class="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-ink-secondary focus:border-accent-pop focus:outline-none"
+			>
+				<option value="all">All Types</option>
+				<option value="income">Income</option>
+				<option value="spend">Spend</option>
 			</select>
 
 			{#if activeCategoryFilterId}

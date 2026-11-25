@@ -14,6 +14,7 @@ import (
 type PlannedIncomeRepo interface {
 	Create(ctx context.Context, tx pgx.Tx, inc *MonthlyPlannedIncome) error
 	ListByMonth(ctx context.Context, tx pgx.Tx, yearMonth time.Time) ([]MonthlyPlannedIncome, error)
+	Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, name string, amount decimal.Decimal) (*MonthlyPlannedIncome, error)
 	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 }
 
@@ -79,6 +80,30 @@ func (r *pgPlannedIncomeRepo) ListByMonth(ctx context.Context, tx pgx.Tx, yearMo
 		return nil, fmt.Errorf("error iterating planned incomes: %w", err)
 	}
 	return incomes, nil
+}
+
+func (r *pgPlannedIncomeRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, name string, amount decimal.Decimal) (*MonthlyPlannedIncome, error) {
+	if amount.LessThan(decimal.Zero) {
+		return nil, ErrNegativeAmount
+	}
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	var inc MonthlyPlannedIncome
+	err = tx.QueryRow(ctx, `
+		UPDATE monthly_planned_incomes
+		SET name = $1, amount = $2
+		WHERE id = $3 AND workspace_id = $4
+		RETURNING id, workspace_id, year_month, name, amount, created_at
+	`, name, amount, id, wsID).Scan(&inc.ID, &inc.WorkspaceID, &inc.YearMonth, &inc.Name, &inc.Amount, &inc.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to update planned income: %w", err)
+	}
+	return &inc, nil
 }
 
 func (r *pgPlannedIncomeRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {

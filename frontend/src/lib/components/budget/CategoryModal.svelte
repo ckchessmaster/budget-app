@@ -221,8 +221,13 @@
 						/>
 					</div>
 					<div>
-						<label for="cat-rollover" class="block text-xs font-medium text-ink-secondary mb-1">
-							Rollover Mode
+						<label for="cat-rollover" class="flex items-center gap-1 text-xs font-medium text-ink-secondary mb-1">
+							<span>Rollover Mode</span>
+							<span
+								title="Sweep: leftover funds at month-end return to Ready to Assign (or a target category). Rollover Balance: leftover funds stay in this category next month. Target Cap: leftover funds roll over up to the monthly budget cap."
+								aria-label="Rollover Mode explanation"
+								class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-border text-[10px] text-ink-muted cursor-help"
+							>?</span>
 						</label>
 						<select
 							id="cat-rollover"
@@ -233,13 +238,27 @@
 							<option value="ROLLOVER_BALANCE">Rollover Balance</option>
 							<option value="TARGET_CAP">Target Cap</option>
 						</select>
+						<p class="mt-1 text-[11px] text-ink-muted">
+							{#if rolloverMode === 'SWEEP'}
+								Leftover funds at month-end sweep out of this category.
+							{:else if rolloverMode === 'ROLLOVER_BALANCE'}
+								Leftover funds carry forward into next month's balance.
+							{:else}
+								Leftover funds carry forward up to the monthly budget cap.
+							{/if}
+						</p>
 					</div>
 				</div>
 
 				{#if rolloverMode === 'SWEEP' && sweepCandidates.length > 0}
 					<div>
-						<label for="cat-sweep-target" class="block text-xs font-medium text-ink-secondary mb-1">
-							Sweep Target Category (optional)
+						<label for="cat-sweep-target" class="flex items-center gap-1 text-xs font-medium text-ink-secondary mb-1">
+							<span>Sweep Target Category (optional)</span>
+							<span
+								title="Where unspent funds go at month-end when Sweep is active. Leave as None to return them to Ready to Assign."
+								aria-label="Sweep Target Category explanation"
+								class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-border text-[10px] text-ink-muted cursor-help"
+							>?</span>
 						</label>
 						<select
 							id="cat-sweep-target"
