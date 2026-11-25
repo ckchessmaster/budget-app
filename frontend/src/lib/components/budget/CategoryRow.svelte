@@ -26,6 +26,12 @@
 		embedded?: boolean;
 		transactions?: InlineActivityItem[];
 		draggingCategoryId?: string | null;
+		draggingGroupName?: string | null;
+		draggingTxId?: string | null;
+		organizeMode?: boolean;
+		isFirstInGroup?: boolean;
+		isLastInGroup?: boolean;
+		availableGroups?: string[];
 		selectedTransactionId?: string | null;
 		onCoverClick: (categoryId: string) => void;
 		onEditClick?: (categoryId: string) => void;
@@ -39,6 +45,7 @@
 			position: 'before' | 'after'
 		) => Promise<void> | void;
 		onMoveCategoryStep?: (categoryId: string, direction: 'up' | 'down') => Promise<void> | void;
+		onMoveCategoryToGroup?: (categoryId: string, targetGroupName: string) => Promise<void> | void;
 		onSelectTransaction?: (txId: string) => void;
 	}
 
@@ -48,6 +55,12 @@
 		embedded = false,
 		transactions = [],
 		draggingCategoryId = null,
+		draggingGroupName = null,
+		draggingTxId = null,
+		organizeMode = false,
+		isFirstInGroup = false,
+		isLastInGroup = false,
+		availableGroups = [],
 		selectedTransactionId = null,
 		onCoverClick,
 		onEditClick,
@@ -57,9 +70,13 @@
 		onCategoryDragEnd,
 		onReorderCategory,
 		onMoveCategoryStep,
+		onMoveCategoryToGroup,
 		onSelectTransaction
 	}: Props = $props();
 
+	let rowContainerEl = $state<HTMLDivElement | null>(null);
+	let upBtnEl = $state<HTMLButtonElement | null>(null);
+	let downBtnEl = $state<HTMLButtonElement | null>(null);
 	let isExpanded = $state(false);
 	let isTxDragOver = $state(false);
 	let categoryDropPosition = $state<'before' | 'after' | null>(null);
@@ -67,6 +84,24 @@
 	let plannedDraft = $state('');
 	let savingPlanned = $state(false);
 	let inputEl = $state<HTMLInputElement | null>(null);
+
+	let prevDraggingCategoryId: string | null = null;
+	$effect(() => {
+		const current = draggingCategoryId;
+		if (prevDraggingCategoryId !== null && current === null) {
+			categoryDropPosition = null;
+		}
+		prevDraggingCategoryId = current;
+	});
+
+	let prevDraggingTxId: string | null = null;
+	$effect(() => {
+		const current = draggingTxId;
+		if (prevDraggingTxId !== null && current === null) {
+			isTxDragOver = false;
+		}
+		prevDraggingTxId = current;
+	});
 
 	let totalSpent = $derived(category.spentCleared + category.spentPending);
 	let isOverspent = $derived(category.remaining < 0 || totalSpent > category.effectiveTarget);
@@ -110,11 +145,12 @@
 	}
 
 	function toggleExpanded() {
+		if (organizeMode) return;
 		isExpanded = !isExpanded;
 	}
 
 	function handleRowKeydown(e: KeyboardEvent) {
-		if (e.target !== e.currentTarget) return;
+		if (organizeMode || e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			toggleExpanded();
@@ -123,7 +159,7 @@
 
 	function startEditPlanned(e: Event) {
 		e.stopPropagation();
-		if (!onUpdatePlanned || savingPlanned) return;
+		if (organizeMode || !onUpdatePlanned || savingPlanned) return;
 		plannedDraft = category.originalPlanned.toFixed(2);
 		editingPlanned = true;
 		queueMicrotask(() => {
@@ -157,35 +193,40 @@
 			editingPlanned = false;
 		}
 	}
+
+	function isGroupDragEvent(e: DragEvent): boolean {
+		if (draggingGroupName !== null) return true;
+		const types = e.dataTransfer?.types;
+		if (!types) return false;
+		return Array.from(types).includes('application/x-budget-group-name');
+	}
+
 	function isCategoryDragEvent(e: DragEvent): boolean {
 		if (draggingCategoryId !== null) return true;
 		const types = e.dataTransfer?.types;
 		if (!types) return false;
 		return Array.from(types).includes('application/x-budget-category-id');
 	}
+
+	async function handleMoveStep(direction: 'up' | 'down') {
+		if (!onMoveCategoryStep) return;
+		await onMoveCategoryStep(category.id, direction);
+		queueMicrotask(() => {
+			if (direction === 'up' && isFirstInGroup && downBtnEl && !downBtnEl.disabled) {
+				downBtnEl.focus({ preventScroll: true });
+			} else if (direction === 'down' && isLastInGroup && upBtnEl && !upBtnEl.disabled) {
+				upBtnEl.focus({ preventScroll: true });
+			}
+		});
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	bind:this={rowContainerEl}
 	data-testid="category-row-container"
-	draggable={Boolean(onReorderCategory) && !editingPlanned}
-	ondragstart={(e) => {
-		if (!onReorderCategory || editingPlanned) return;
-		const target = e.target as Element | null;
-		if (target?.closest('input, select, a, button:not([data-testid="category-drag-handle"])')) {
-			e.preventDefault();
-			return;
-		}
-		e.dataTransfer?.setData('application/x-budget-category-id', category.id);
-		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-		onCategoryDragStart?.(category.id);
-	}}
-	ondragend={() => {
-		categoryDropPosition = null;
-		isTxDragOver = false;
-		onCategoryDragEnd?.();
-	}}
 	ondragover={(e) => {
+		if (isGroupDragEvent(e)) return;
 		if (isCategoryDragEvent(e) && onReorderCategory) {
 			if (draggingCategoryId === category.id) return;
 			e.preventDefault();
@@ -202,7 +243,9 @@
 		isTxDragOver = true;
 		categoryDropPosition = null;
 	}}
-	ondragleave={() => {
+	ondragleave={(e) => {
+		const related = e.relatedTarget as Node | null;
+		if (related && e.currentTarget.contains(related)) return;
 		isTxDragOver = false;
 		categoryDropPosition = null;
 	}}
@@ -210,6 +253,7 @@
 		const pos = categoryDropPosition ?? 'before';
 		categoryDropPosition = null;
 		isTxDragOver = false;
+		if (isGroupDragEvent(e)) return;
 		const draggedCatId =
 			e.dataTransfer?.getData('application/x-budget-category-id') || draggingCategoryId;
 		if (draggedCatId && onReorderCategory) {
@@ -228,49 +272,81 @@
 			await onDropTransaction(txId, category.id);
 		}
 	}}
-	class="{embedded
+	class="relative {embedded
 		? ''
-		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'} {isTxDragOver
-		? 'ring-2 ring-accent-primary bg-accent-tint/30'
-		: ''} {categoryDropPosition === 'before'
-		? 'border-t-2 border-t-accent-pop'
-		: categoryDropPosition === 'after'
-			? 'border-b-2 border-b-accent-pop'
+		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 overflow-hidden'} transition-[background-color,opacity,box-shadow] duration-150 {isTxDragOver
+		? 'bg-accent-tint shadow-[inset_3px_0_0_var(--accent-pop)]'
+		: categoryDropPosition !== null
+			? 'bg-accent-tint/70'
 			: ''} {draggingCategoryId === category.id ? 'opacity-50' : ''}"
 >
+	{#if categoryDropPosition !== null}
+		<div
+			aria-hidden="true"
+			data-testid="category-drop-indicator"
+			class="pointer-events-none absolute inset-x-3 h-[3px] rounded-full bg-accent-pop/75 z-10 {categoryDropPosition === 'before'
+				? 'top-0 -translate-y-1/2'
+				: 'bottom-0 translate-y-1/2'}"
+		></div>
+	{/if}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		role="button"
-		tabindex="0"
-		aria-expanded={isExpanded}
+		role={organizeMode ? undefined : 'button'}
+		tabindex={organizeMode ? undefined : 0}
+		aria-expanded={organizeMode ? undefined : isExpanded}
 		onclick={toggleExpanded}
 		onkeydown={handleRowKeydown}
-		class="group cursor-pointer transition-colors {embedded
+		class="group {organizeMode ? '' : 'cursor-pointer'} transition-colors {embedded
 			? 'px-3.5 sm:px-5 py-3 hover:bg-surface-hover/50'
 			: 'p-3.5 hover:bg-surface-hover/40'}"
 		data-testid="category-row"
 	>
-		<div class="grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-2 sm:gap-3">
+		<div class="grid {organizeMode
+			? 'grid-cols-[minmax(0,1fr)_auto]'
+			: 'grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px]'} items-center gap-2 sm:gap-3">
 			<!-- Name & Meta -->
 			<div class="min-w-0 flex items-start sm:items-center gap-1.5 sm:gap-2">
 				{#if onReorderCategory}
 					<button
 						type="button"
 						data-testid="category-drag-handle"
+						draggable={!editingPlanned}
 						aria-label={`Reorder ${category.name}`}
 						title="Drag to reorder (or use Up/Down arrow keys)"
+						ondragstart={(e) => {
+							if (editingPlanned) {
+								e.preventDefault();
+								return;
+							}
+							e.stopPropagation();
+							e.dataTransfer?.setData('application/x-budget-category-id', category.id);
+							if (e.dataTransfer) {
+								e.dataTransfer.effectAllowed = 'move';
+								if (rowContainerEl && typeof e.dataTransfer.setDragImage === 'function') {
+									e.dataTransfer.setDragImage(rowContainerEl, 24, 24);
+								}
+							}
+							onCategoryDragStart?.(category.id);
+						}}
+						ondragend={() => {
+							categoryDropPosition = null;
+							isTxDragOver = false;
+							onCategoryDragEnd?.();
+						}}
 						onclick={(e) => e.stopPropagation()}
 						onkeydown={(e) => {
 							if (e.key === 'ArrowUp' && onMoveCategoryStep) {
 								e.preventDefault();
 								e.stopPropagation();
-								void onMoveCategoryStep(category.id, 'up');
+								void handleMoveStep('up');
 							} else if (e.key === 'ArrowDown' && onMoveCategoryStep) {
 								e.preventDefault();
 								e.stopPropagation();
-								void onMoveCategoryStep(category.id, 'down');
+								void handleMoveStep('down');
 							}
 						}}
-						class="p-1 -ml-1 rounded text-ink-muted hover:text-ink-primary hover:bg-surface-hover cursor-grab active:cursor-grabbing shrink-0 touch-none"
+						class="hidden sm:inline-flex p-1 -ml-1 rounded text-ink-muted hover:text-ink-primary hover:bg-surface-hover cursor-grab active:cursor-grabbing shrink-0 touch-none select-none [-webkit-user-select:none]"
 					>
 						<svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
 							<circle cx="5.5" cy="3.5" r="1.2" />
@@ -282,23 +358,25 @@
 						</svg>
 					</button>
 				{/if}
-				<svg
-					class="w-3.5 h-3.5 mt-0.5 sm:mt-0 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					aria-hidden="true"
-				>
-					<path d="m9 18 6-6-6-6" />
-				</svg>
+				{#if !organizeMode}
+					<svg
+						class="w-3.5 h-3.5 mt-0.5 sm:mt-0 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<path d="m9 18 6-6-6-6" />
+					</svg>
+				{/if}
 
 				<div class="min-w-0 flex-1 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-y-1 gap-x-2">
 					<span class="text-left text-sm font-medium leading-snug text-ink-primary break-words sm:truncate">
 						{category.name}
 					</span>
 
-					{#if isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick}
+					{#if !organizeMode && (isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick)}
 						<div class="flex flex-wrap items-center gap-1.5">
 							{#if isFixed}
 								<span
@@ -347,6 +425,65 @@
 				</div>
 			</div>
 
+			{#if organizeMode}
+				<div
+					data-testid="category-organize-controls"
+					class="flex items-center justify-end gap-1.5 shrink-0"
+				>
+					{#if availableGroups.length > 1 && onMoveCategoryToGroup}
+						<select
+							data-testid="move-category-group-select"
+							aria-label={`Move ${category.name} to category`}
+							value={category.groupName ?? ''}
+							onchange={(e) => {
+								const targetGroup = (e.currentTarget as HTMLSelectElement).value;
+								if (targetGroup && targetGroup !== category.groupName) {
+									void onMoveCategoryToGroup(category.id, targetGroup);
+								}
+							}}
+							class="h-8 max-w-[120px] sm:max-w-[150px] rounded-lg border border-border bg-surface px-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+						>
+							{#each availableGroups as grp (grp)}
+								<option value={grp}>{grp}</option>
+							{/each}
+						</select>
+					{/if}
+					{#if onMoveCategoryStep}
+						<button
+							bind:this={upBtnEl}
+							type="button"
+							data-testid="move-category-up-btn"
+							aria-label={`Move ${category.name} up`}
+							disabled={isFirstInGroup}
+							onclick={(e) => {
+								e.stopPropagation();
+								void handleMoveStep('up');
+							}}
+							class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border bg-surface text-ink-primary hover:bg-surface-hover disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+						>
+							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+								<path d="m18 15-6-6-6 6" />
+							</svg>
+						</button>
+						<button
+							bind:this={downBtnEl}
+							type="button"
+							data-testid="move-category-down-btn"
+							aria-label={`Move ${category.name} down`}
+							disabled={isLastInGroup}
+							onclick={(e) => {
+								e.stopPropagation();
+								void handleMoveStep('down');
+							}}
+							class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border bg-surface text-ink-primary hover:bg-surface-hover disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+						>
+							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+								<path d="m6 9 6 6 6-6" />
+							</svg>
+						</button>
+					{/if}
+				</div>
+			{:else}
 			<!-- Planned Column (Muted, Inline Editable when onUpdatePlanned is provided) -->
 			<div class="text-right">
 				{#if editingPlanned}
@@ -431,10 +568,11 @@
 					</span>
 				{/if}
 			</div>
+			{/if}
 		</div>
 
 		<!-- Slim Progress Bar (Variable Categories Only) -->
-		{#if !isFixed}
+		{#if !organizeMode && !isFixed}
 			<div
 				data-testid="variable-progress-bar"
 				class="mt-2 ml-5 relative h-1.5 overflow-hidden rounded-full bg-subtle"
@@ -472,7 +610,7 @@
 		{/if}
 	</div>
 
-	{#if isExpanded}
+	{#if !organizeMode && isExpanded}
 		<InlineActivityDrawer
 			{transactions}
 			{embedded}

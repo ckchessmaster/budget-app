@@ -12,27 +12,36 @@ import (
 )
 
 func TestPlannedIncomeRepo(t *testing.T) {
-	t.Run("rejects zero or negative amount without DB", func(t *testing.T) {
+	t.Run("accepts zero and rejects negative amount without DB", func(t *testing.T) {
 		repo := NewPlannedIncomeRepo()
 		ctx := context.Background()
 		nov := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 
-		err := repo.Create(ctx, nil, &MonthlyPlannedIncome{
-			YearMonth: nov,
-			Name:      "Zero Paycheck",
+		reqZero := CreatePlannedIncomeRequest{
+			YearMonth: "2026-11-01",
+			Name:      "Unplanned Income",
 			Amount:    decimal.Zero,
-		})
-		if !errors.Is(err, ErrInvalidAmount) {
-			t.Fatalf("expected ErrInvalidAmount for 0.00, got %v", err)
+		}
+		if err := reqZero.Validate(); err != nil {
+			t.Fatalf("expected zero planned income to be valid, got %v", err)
 		}
 
-		err = repo.Create(ctx, nil, &MonthlyPlannedIncome{
+		reqNeg := CreatePlannedIncomeRequest{
+			YearMonth: "2026-11-01",
+			Name:      "Negative Paycheck",
+			Amount:    decimal.NewFromFloat(-1.00),
+		}
+		if err := reqNeg.Validate(); !errors.Is(err, ErrNegativeAmount) {
+			t.Fatalf("expected ErrNegativeAmount for -1.00, got %v", err)
+		}
+
+		err := repo.Create(ctx, nil, &MonthlyPlannedIncome{
 			YearMonth: nov,
 			Name:      "Negative Paycheck",
 			Amount:    decimal.NewFromFloat(-50.00),
 		})
-		if !errors.Is(err, ErrInvalidAmount) {
-			t.Fatalf("expected ErrInvalidAmount for -50.00, got %v", err)
+		if !errors.Is(err, ErrNegativeAmount) {
+			t.Fatalf("expected ErrNegativeAmount for -50.00, got %v", err)
 		}
 	})
 
@@ -55,16 +64,28 @@ func TestPlannedIncomeRepo(t *testing.T) {
 				Name:        "Paycheck 2",
 				Amount:      decimal.NewFromFloat(2500.00),
 			}
+			incZero := &MonthlyPlannedIncome{
+				WorkspaceID: wsID,
+				YearMonth:   nov,
+				Name:        "Unplanned Income",
+				Amount:      decimal.Zero,
+			}
 			if err := repo.Create(ctx, tx, inc1); err != nil {
 				return err
 			}
 			if err := repo.Create(ctx, tx, inc2); err != nil {
 				return err
 			}
+			if err := repo.Create(ctx, tx, incZero); err != nil {
+				return err
+			}
 
 			list, err := repo.ListByMonth(ctx, tx, nov)
 			if err != nil {
 				return err
+			}
+			if len(list) != 3 {
+				t.Fatalf("expected 3 incomes, got %d", len(list))
 			}
 			total := decimal.Zero
 			for _, item := range list {
@@ -82,8 +103,8 @@ func TestPlannedIncomeRepo(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if len(listAfter) != 1 {
-				t.Fatalf("expected 1 income after delete, got %d", len(listAfter))
+			if len(listAfter) != 2 {
+				t.Fatalf("expected 2 incomes after delete, got %d", len(listAfter))
 			}
 			return nil
 		})

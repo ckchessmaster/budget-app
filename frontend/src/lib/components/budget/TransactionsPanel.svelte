@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { OfflineTransaction } from '$lib/offline/db';
-	import type { CategoryBudget } from '$lib/types/budget';
+	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
 	import type {
 		AccountItem,
 		TransactionItemModel,
@@ -21,6 +21,7 @@
 		queuedTransactions: OfflineTransaction[];
 		accounts: AccountItem[];
 		categories: CategoryBudget[];
+		incomes?: PlannedIncome[];
 		isOffline: boolean;
 		syncing: boolean;
 		activeCategoryFilterId: string | null;
@@ -33,9 +34,12 @@
 			transactionDate: string;
 		}) => Promise<void>;
 		onCategorizeTransaction: (txId: string, categoryId: string | null) => Promise<void>;
+		onAssignTransactionToIncome?: (txId: string, incomeId: string | null) => Promise<void>;
 		onUpdateTransaction?: (txId: string, payload: UpdateTransactionPayload) => Promise<void>;
 		onDeleteTransaction: (txId: string) => Promise<void>;
 		onSyncNow: () => Promise<void>;
+		onTransactionDragStart?: (txId: string) => void;
+		onTransactionDragEnd?: () => void;
 	}
 
 	let {
@@ -44,15 +48,19 @@
 		queuedTransactions,
 		accounts,
 		categories,
+		incomes = [],
 		isOffline,
 		syncing,
 		activeCategoryFilterId,
 		onClearCategoryFilter,
 		onCreateTransaction,
 		onCategorizeTransaction,
+		onAssignTransactionToIncome,
 		onUpdateTransaction,
 		onDeleteTransaction,
-		onSyncNow
+		onSyncNow,
+		onTransactionDragStart,
+		onTransactionDragEnd
 	}: Props = $props();
 
 	let activeSubTab = $state<TxSubTab>('to_review');
@@ -148,6 +156,7 @@
 
 	let accountById = $derived(new Map(accounts.map((a) => [a.id, a])));
 	let categoryById = $derived(new Map(categories.map((c) => [c.id, c])));
+	let incomeById = $derived(new Map(incomes.map((i) => [i.id, i])));
 
 	let groupedCategories = $derived.by(() => {
 		const groups = new Map<string, CategoryBudget[]>();
@@ -174,6 +183,14 @@
 					] as [string, CategoryBudget[]]
 			)
 			.filter(([, cats]) => cats.length > 0);
+	});
+
+	let filteredPickerIncomes = $derived.by(() => {
+		const q = pickerFilter.trim().toLowerCase();
+		if (!q) return incomes;
+		return incomes.filter(
+			(inc) => inc.name.toLowerCase().includes(q) || 'income'.includes(q)
+		);
 	});
 
 	let combinedItems = $derived.by(() => {
@@ -287,6 +304,23 @@
 			pickerFilter = '';
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to categorize transaction.';
+		} finally {
+			const next = { ...savingIds };
+			delete next[txId];
+			savingIds = next;
+		}
+	}
+
+	async function handleIncomeSelect(txId: string, incomeId: string | null) {
+		if (!onAssignTransactionToIncome) return;
+		savingIds = { ...savingIds, [txId]: true };
+		actionError = null;
+		try {
+			await onAssignTransactionToIncome(txId, incomeId);
+			openPickerTxId = null;
+			pickerFilter = '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to assign transaction to income.';
 		} finally {
 			const next = { ...savingIds };
 			delete next[txId];
@@ -658,10 +692,13 @@
 				{@const displayMerchant = tx.merchantClean || tx.merchantRaw}
 				{@const isSaving = Boolean(savingIds[tx.id])}
 				{@const assignedCategory = tx.categoryId ? categoryById.get(tx.categoryId) : null}
+				{@const assignedIncome = tx.plannedIncomeId ? incomeById.get(tx.plannedIncomeId) : null}
+				{@const isUnassigned = tx.categoryId === null && !tx.plannedIncomeId}
 				{@const isPickerOpen = openPickerTxId === tx.id}
 				{@const isMenuOpen = openMenuTxId === tx.id}
 				{@const isEditing = editingTxId === tx.id}
 
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					data-testid="tx-panel-row"
 					draggable={canCategorize}
@@ -670,6 +707,10 @@
 						e.dataTransfer?.setData('application/x-budget-tx-id', tx.id);
 						e.dataTransfer?.setData('text/plain', tx.id);
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+						onTransactionDragStart?.(tx.id);
+					}}
+					ondragend={() => {
+						onTransactionDragEnd?.();
 					}}
 					class="transition-colors {canCategorize ? 'cursor-grab active:cursor-grabbing' : ''}"
 				>
@@ -770,11 +811,17 @@
 											e.stopPropagation();
 											toggleQuickPicker(tx.id);
 										}}
-										class="max-w-[110px] sm:max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {tx.categoryId === null
+										class="max-w-[110px] sm:max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {isUnassigned
 											? 'border-accent-pop/40 bg-accent-tint text-accent-pop hover:opacity-90'
 											: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
 									>
-										{assignedCategory?.name ?? tx.categoryName ?? '+ Categorize'}
+										{assignedCategory?.name ??
+											tx.categoryName ??
+											(tx.plannedIncomeId
+												? assignedIncome
+													? `Income: ${assignedIncome.name}`
+													: 'Income'
+												: '+ Categorize')}
 									</button>
 								</div>
 
@@ -1083,11 +1130,34 @@
 							/>
 
 							<div class="max-h-44 overflow-y-auto space-y-2">
-								{#if filteredPickerGroups.length === 0}
+								{#if filteredPickerGroups.length === 0 && (!onAssignTransactionToIncome || filteredPickerIncomes.length === 0)}
 									<p class="text-[11px] text-ink-muted py-1 text-center">
 										No matching categories
 									</p>
 								{:else}
+									{#if onAssignTransactionToIncome && filteredPickerIncomes.length > 0}
+										<div class="space-y-1">
+											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+												Income
+											</p>
+											<div class="flex flex-wrap gap-1.5">
+												{#each filteredPickerIncomes as inc (inc.id)}
+													{@const isAssignedIncome = tx.plannedIncomeId === inc.id}
+													<button
+														type="button"
+														data-testid="quick-income-option"
+														disabled={isSaving}
+														onclick={() => void handleIncomeSelect(tx.id, inc.id)}
+														class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors {isAssignedIncome
+															? 'border-status-good bg-status-good-bg text-status-good font-semibold'
+															: 'border-border bg-surface text-ink-primary hover:bg-surface-hover'}"
+													>
+														{inc.name}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/if}
 									{#each filteredPickerGroups as [grp, cats]}
 										<div class="space-y-1">
 											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
@@ -1113,13 +1183,16 @@
 									{/each}
 								{/if}
 
-								{#if tx.categoryId !== null}
+								{#if !isUnassigned}
 									<div class="pt-1 border-t border-border">
 										<button
 											type="button"
 											data-testid="quick-category-clear"
 											disabled={isSaving}
-											onclick={() => void handleCategorySelect(tx.id, '')}
+											onclick={() =>
+												void (tx.plannedIncomeId && onAssignTransactionToIncome
+													? handleIncomeSelect(tx.id, null)
+													: handleCategorySelect(tx.id, ''))}
 											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
 										>
 											Uncategorized

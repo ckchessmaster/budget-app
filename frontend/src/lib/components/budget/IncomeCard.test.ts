@@ -122,4 +122,165 @@ describe('IncomeCard', () => {
 		expect(onChanged).toHaveBeenCalledTimes(1);
 		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 	});
+
+	it('creates a $0.00 planned income source such as Unplanned Income', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				id: 'inc-zero',
+				workspace_id: 'ws-1',
+				year_month: '2026-11-01',
+				name: 'Unplanned Income',
+				amount: 0,
+				created_at: '2026-11-25T00:00:00Z'
+			})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const onChanged = vi.fn();
+
+		const { getByRole, getByLabelText } = render(IncomeCard, {
+			props: {
+				yearMonth: '2026-11-01',
+				incomes: sampleIncomes,
+				receivedAmount: 0,
+				onChanged
+			}
+		});
+
+		await fireEvent.click(getByRole('button', { name: '+ Add Income' }));
+		await fireEvent.input(getByLabelText('Income source name'), {
+			target: { value: 'Unplanned Income' }
+		});
+		await fireEvent.input(getByLabelText('Income amount'), { target: { value: '0' } });
+		await fireEvent.click(getByRole('button', { name: 'Add' }));
+
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+			year_month: '2026-11-01',
+			name: 'Unplanned Income',
+			amount: 0
+		});
+		expect(onChanged).toHaveBeenCalledTimes(1);
+	});
+
+	it('accepts transaction drops onto an income row and ignores category drag events', async () => {
+		const onDropTransaction = vi.fn().mockResolvedValue(undefined);
+		const { getByTestId } = render(IncomeCard, {
+			props: {
+				yearMonth: '2026-11-01',
+				incomes: sampleIncomes,
+				receivedAmount: 0,
+				onDropTransaction,
+				onChanged: vi.fn()
+			}
+		});
+
+		const container = getByTestId('income-row-container');
+		await fireEvent.drop(container, {
+			dataTransfer: {
+				getData: (type: string) =>
+					type === 'application/x-budget-category-id' ? 'cat-1' : ''
+			}
+		});
+		expect(onDropTransaction).not.toHaveBeenCalled();
+
+		await fireEvent.drop(container, {
+			dataTransfer: {
+				getData: (type: string) => (type === 'application/x-budget-tx-id' ? 'tx-inflow-1' : '')
+			}
+		});
+		expect(onDropTransaction).toHaveBeenCalledWith('tx-inflow-1', 'inc-1');
+	});
+
+	it('attributes explicitly assigned transactions only to their assigned income row', async () => {
+		const incomes: PlannedIncome[] = [
+			...sampleIncomes,
+			{
+				id: 'inc-unplanned',
+				workspaceId: 'ws-1',
+				yearMonth: '2026-11-01',
+				name: 'Unplanned Income',
+				amount: 0,
+				createdAt: '2026-11-02T00:00:00Z'
+			}
+		];
+
+		const { getAllByTestId, getByText, queryByText } = render(IncomeCard, {
+			props: {
+				yearMonth: '2026-11-01',
+				incomes,
+				receivedAmount: 4086,
+				inflowTransactions: [
+					{
+						id: 'tx-pay',
+						plannedIncomeId: 'inc-1',
+						date: '2026-11-15',
+						merchant: 'Beeline Payroll',
+						accountName: 'Checking',
+						amount: 4000,
+						status: 'POSTED'
+					},
+					{
+						id: 'tx-venmo',
+						plannedIncomeId: 'inc-unplanned',
+						date: '2026-11-20',
+						merchant: 'Transfer From Venmo',
+						accountName: 'Checking',
+						amount: 86,
+						status: 'POSTED'
+					}
+				],
+				onChanged: vi.fn()
+			}
+		});
+
+		const rows = getAllByTestId('income-row');
+		expect(rows).toHaveLength(2);
+		expect(rows[0].textContent).toContain('$4,000.00');
+		expect(rows[1].textContent).toContain('$86.00');
+
+		await fireEvent.click(rows[1]);
+		expect(getByText(/Transfer From Venmo/)).toBeTruthy();
+		expect(queryByText(/Beeline Payroll/)).toBeNull();
+	});
+
+	it('shows a soft highlight on transaction dragover, ignores group drags, and resists child dragleave flicker', async () => {
+		const onDropTransaction = vi.fn().mockResolvedValue(undefined);
+		const { getByTestId } = render(IncomeCard, {
+			props: {
+				yearMonth: '2026-11-01',
+				incomes: sampleIncomes,
+				receivedAmount: 0,
+				onDropTransaction,
+				onChanged: vi.fn()
+			}
+		});
+
+		const container = getByTestId('income-row-container');
+		const row = getByTestId('income-row');
+
+		await fireEvent.dragOver(container, {
+			dataTransfer: { types: ['application/x-budget-group-name'] }
+		});
+		expect(container.className).not.toContain('bg-accent-tint');
+
+		await fireEvent.dragOver(container, {
+			dataTransfer: { types: ['application/x-budget-tx-id'] }
+		});
+		expect(container.className).toContain('bg-accent-tint');
+		expect(container.className).not.toContain('ring-2');
+
+		const childDragLeave = new Event('dragleave', { bubbles: true });
+		Object.defineProperty(childDragLeave, 'relatedTarget', { value: row });
+		await fireEvent(container, childDragLeave);
+		expect(container.className).toContain('bg-accent-tint');
+
+		await fireEvent.drop(container, {
+			dataTransfer: {
+				getData: (type: string) =>
+					type === 'application/x-budget-group-name' ? 'Essentials' : ''
+			}
+		});
+		expect(onDropTransaction).not.toHaveBeenCalled();
+	});
 });

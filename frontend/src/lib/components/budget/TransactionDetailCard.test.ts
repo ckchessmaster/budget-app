@@ -84,7 +84,8 @@ describe('TransactionDetailCard', () => {
 			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-100', {
 				merchantClean: 'Trader Joes Market',
 				userNotes: 'Snacks',
-				clearCategory: true
+				clearCategory: true,
+				clearPlannedIncome: true
 			});
 		});
 	});

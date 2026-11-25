@@ -24,8 +24,8 @@ func NewPlannedIncomeRepo() PlannedIncomeRepo {
 }
 
 func (r *pgPlannedIncomeRepo) Create(ctx context.Context, tx pgx.Tx, inc *MonthlyPlannedIncome) error {
-	if !inc.Amount.GreaterThan(decimal.Zero) {
-		return ErrInvalidAmount
+	if inc.Amount.LessThan(decimal.Zero) {
+		return ErrNegativeAmount
 	}
 	inc.YearMonth = NormalizeYearMonth(inc.YearMonth)
 	if inc.ID == uuid.Nil {

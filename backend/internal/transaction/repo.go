@@ -59,6 +59,7 @@ type Transaction struct {
 	MerchantRaw                 string           `json:"merchant_raw"`
 	MerchantClean               *string          `json:"merchant_clean"`
 	CategoryID                  *uuid.UUID       `json:"category_id"`
+	PlannedIncomeID             *uuid.UUID       `json:"planned_income_id"`
 	TransferLinkedTransactionID *uuid.UUID       `json:"transfer_linked_transaction_id"`
 	IsTransfer                  bool             `json:"is_transfer"`
 	SettledDelta                *decimal.Decimal `json:"settled_delta,omitempty"`
@@ -81,6 +82,7 @@ type CreateSplitTransactionRequest struct {
 	MerchantRaw     string          `json:"merchant_raw"`
 	MerchantClean   *string         `json:"merchant_clean,omitempty"`
 	CategoryID      *uuid.UUID      `json:"category_id,omitempty"`
+	PlannedIncomeID *uuid.UUID      `json:"planned_income_id,omitempty"`
 	Origin          Origin          `json:"origin,omitempty"`
 	Status          Status          `json:"status,omitempty"`
 	TransactionDate time.Time       `json:"transaction_date"`
@@ -94,13 +96,15 @@ type CreateSplitTransactionRequest struct {
 }
 
 type UpdateTransactionRequest struct {
-	CategoryID    *uuid.UUID       `json:"category_id"`
-	ClearCategory bool             `json:"clear_category"`
-	MerchantClean *string          `json:"merchant_clean"`
-	UserNotes     *string          `json:"user_notes"`
-	Status        *Status          `json:"status"`
-	IsCleared     *bool            `json:"is_cleared"`
-	Amount        *decimal.Decimal `json:"amount"`
+	CategoryID         *uuid.UUID       `json:"category_id"`
+	ClearCategory      bool             `json:"clear_category"`
+	PlannedIncomeID    *uuid.UUID       `json:"planned_income_id"`
+	ClearPlannedIncome bool             `json:"clear_planned_income"`
+	MerchantClean      *string          `json:"merchant_clean"`
+	UserNotes          *string          `json:"user_notes"`
+	Status             *Status          `json:"status"`
+	IsCleared          *bool            `json:"is_cleared"`
+	Amount             *decimal.Decimal `json:"amount"`
 }
 
 type TransactionFilter struct {
@@ -152,14 +156,14 @@ func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 	return tx.QueryRow(ctx, `
 		INSERT INTO transactions (
 			id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
-			origin, status, amount, merchant_raw, merchant_clean, category_id,
+			origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
 			transfer_linked_transaction_id, transaction_date, user_notes, is_cleared, client_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING is_transfer, created_at
 	`,
 		t.ID, t.WorkspaceID, t.AccountID, t.ParentTransactionID, t.ExternalTransactionID,
-		string(t.Origin), string(t.Status), t.Amount.Round(2), t.MerchantRaw, t.MerchantClean, t.CategoryID,
+		string(t.Origin), string(t.Status), t.Amount.Round(2), t.MerchantRaw, t.MerchantClean, t.CategoryID, t.PlannedIncomeID,
 		t.TransferLinkedTransactionID, t.TransactionDate.UTC().Format("2006-01-02"), t.UserNotes, t.IsCleared,
 		t.ClientID,
 	).Scan(&t.IsTransfer, &t.CreatedAt)
@@ -188,14 +192,14 @@ func (r *pgRepo) getBy(ctx context.Context, tx pgx.Tx, predicate string, args ..
 	queryArgs := append(args, wsID)
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
-		       origin, status, amount, merchant_raw, merchant_clean, category_id,
+		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
 		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
 		WHERE %s AND workspace_id = $%d
 	`, predicate, len(queryArgs)), queryArgs...).Scan(
 		&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
-		&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID,
+		&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID, &t.PlannedIncomeID,
 		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.TransactionDate, &t.UserNotes,
 		&t.IsCleared, &t.CreatedAt,
 	)
@@ -219,7 +223,7 @@ func (r *pgRepo) getBy(ctx context.Context, tx pgx.Tx, predicate string, args ..
 func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, wsID, parentID uuid.UUID) ([]Transaction, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
-		       origin, status, amount, merchant_raw, merchant_clean, category_id,
+		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
 		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
@@ -237,7 +241,7 @@ func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, wsID, parent
 		var originStr, statusStr string
 		if err := rows.Scan(
 			&s.ID, &s.WorkspaceID, &s.AccountID, &s.ParentTransactionID, &s.ExternalTransactionID,
-			&originStr, &statusStr, &s.Amount, &s.MerchantRaw, &s.MerchantClean, &s.CategoryID,
+			&originStr, &statusStr, &s.Amount, &s.MerchantRaw, &s.MerchantClean, &s.CategoryID, &s.PlannedIncomeID,
 			&s.TransferLinkedTransactionID, &s.IsTransfer, &s.SettledDelta, &s.TransactionDate, &s.UserNotes,
 			&s.IsCleared, &s.CreatedAt,
 		); err != nil {
@@ -305,7 +309,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 	listArgs := append(args, filter.Limit, offset)
 	listQuery := fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
-		       origin, status, amount, merchant_raw, merchant_clean, category_id,
+		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
 		       transfer_linked_transaction_id, is_transfer, settled_delta, transaction_date, user_notes,
 		       is_cleared, created_at
 		FROM transactions
@@ -326,7 +330,7 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		var originStr, statusStr string
 		if err := rows.Scan(
 			&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
-			&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID,
+			&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID, &t.PlannedIncomeID,
 			&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.TransactionDate, &t.UserNotes,
 			&t.IsCleared, &t.CreatedAt,
 		); err != nil {
@@ -359,13 +363,14 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE transactions
 		SET category_id = $3,
-		    merchant_clean = $4,
-		    user_notes = $5,
-		    status = $6,
-		    is_cleared = $7,
-		    amount = $8
+		    planned_income_id = $4,
+		    merchant_clean = $5,
+		    user_notes = $6,
+		    status = $7,
+		    is_cleared = $8,
+		    amount = $9
 		WHERE id = $1 AND workspace_id = $2
-	`, t.ID, wsID, t.CategoryID, t.MerchantClean, t.UserNotes, string(t.Status), t.IsCleared, t.Amount.Round(2))
+	`, t.ID, wsID, t.CategoryID, t.PlannedIncomeID, t.MerchantClean, t.UserNotes, string(t.Status), t.IsCleared, t.Amount.Round(2))
 	if err != nil {
 		return err
 	}

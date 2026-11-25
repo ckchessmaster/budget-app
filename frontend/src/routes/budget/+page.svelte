@@ -104,6 +104,12 @@
 	let editingGroupName = $state<string | null>(null);
 	let editingGroupColorIndex = $state(0);
 	let draggingCategoryId = $state<string | null>(null);
+	let draggingGroupName = $state<string | null>(null);
+	let draggingTxId = $state<string | null>(null);
+	let organizeMode = $state(false);
+	let collapsedGroups = $state<Record<string, boolean>>({});
+	let reorderAnnouncement = $state('');
+	let announceTimer: ReturnType<typeof setTimeout> | null = null;
 	let selectedTransactionId = $state<string | null>(null);
 	let isDesktop = $state(
 		typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
@@ -302,6 +308,9 @@
 			window.removeEventListener('offline', onOffline);
 			mql.removeEventListener('change', onMediaChange);
 			removeDialogLightDismiss?.();
+			if (announceTimer) {
+				clearTimeout(announceTimer);
+			}
 		};
 	});
 
@@ -333,6 +342,19 @@
 			: []
 	);
 
+	let groupOrder = $state<string[]>(
+		typeof window !== 'undefined'
+			? (() => {
+					try {
+						const raw = localStorage.getItem('budget-group-order');
+						return raw ? (JSON.parse(raw) as string[]) : [];
+					} catch {
+						return [];
+					}
+				})()
+			: []
+	);
+
 	function persistGroupColors(next: Record<string, number>) {
 		customGroupColors = next;
 		if (typeof window !== 'undefined') {
@@ -353,6 +375,28 @@
 				// ignore storage quota errors
 			}
 		}
+	}
+
+	function persistGroupOrder(next: string[]) {
+		groupOrder = next;
+		if (typeof window !== 'undefined') {
+			try {
+				localStorage.setItem('budget-group-order', JSON.stringify(next));
+			} catch {
+				// ignore storage quota errors
+			}
+		}
+	}
+
+	function announceReorder(message: string) {
+		reorderAnnouncement = '';
+		if (announceTimer) {
+			clearTimeout(announceTimer);
+		}
+		announceTimer = setTimeout(() => {
+			reorderAnnouncement = message;
+			announceTimer = null;
+		}, 100);
 	}
 
 	function handleChangeGroupColor(groupName: string, colorIndex: number) {
@@ -390,6 +434,10 @@
 			if (!existsInDb && !emptyGroups.includes(name)) {
 				persistEmptyGroups([...emptyGroups, name]);
 			}
+			const baseOrder = groupOrder.length > 0 ? groupOrder : allGroupNames;
+			if (!baseOrder.includes(name)) {
+				persistGroupOrder([...baseOrder, name]);
+			}
 			return;
 		}
 
@@ -403,6 +451,15 @@
 		if (oldName !== name) {
 			if (emptyGroups.includes(oldName)) {
 				persistEmptyGroups(emptyGroups.map((g) => (g === oldName ? name : g)));
+			}
+			if (groupOrder.includes(oldName)) {
+				persistGroupOrder(groupOrder.map((g) => (g === oldName ? name : g)));
+			}
+			if (oldName in collapsedGroups) {
+				const nextCollapsed = { ...collapsedGroups };
+				nextCollapsed[name] = nextCollapsed[oldName];
+				delete nextCollapsed[oldName];
+				collapsedGroups = nextCollapsed;
 			}
 			if (activeFocusGroup === oldName) {
 				activeFocusGroup = name;
@@ -427,10 +484,18 @@
 		if (emptyGroups.includes(groupName)) {
 			persistEmptyGroups(emptyGroups.filter((g) => g !== groupName));
 		}
+		if (groupOrder.includes(groupName)) {
+			persistGroupOrder(groupOrder.filter((g) => g !== groupName));
+		}
 		if (groupName in customGroupColors) {
 			const nextColors = { ...customGroupColors };
 			delete nextColors[groupName];
 			persistGroupColors(nextColors);
+		}
+		if (groupName in collapsedGroups) {
+			const nextCollapsed = { ...collapsedGroups };
+			delete nextCollapsed[groupName];
+			collapsedGroups = nextCollapsed;
 		}
 		if (activeFocusGroup === groupName) {
 			activeFocusGroup = FOCUS_ALL;
@@ -440,7 +505,8 @@
 
 	let groupedCategories = $derived.by(() => {
 		const groups = new Map<string, CategoryBudget[]>();
-		for (const cat of budgetData?.categories ?? []) {
+		const dbSorted = [...(budgetData?.categories ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+		for (const cat of dbSorted) {
 			const list = groups.get(cat.groupName) ?? [];
 			list.push(cat);
 			groups.set(cat.groupName, list);
@@ -448,14 +514,30 @@
 		for (const list of groups.values()) {
 			list.sort((a, b) => a.sortOrder - b.sortOrder);
 		}
+
+		const orderedNames = Array.from(groups.keys());
 		for (const emptyName of emptyGroups) {
-			if (!groups.has(emptyName)) {
-				groups.set(emptyName, []);
+			if (groups.has(emptyName)) continue;
+			groups.set(emptyName, []);
+			const targetOrderIdx = groupOrder.indexOf(emptyName);
+			if (targetOrderIdx === -1) {
+				orderedNames.push(emptyName);
+				continue;
+			}
+			const insertAt = orderedNames.findIndex((existing) => {
+				const existingIdx = groupOrder.indexOf(existing);
+				return existingIdx !== -1 && existingIdx > targetOrderIdx;
+			});
+			if (insertAt === -1) {
+				orderedNames.push(emptyName);
+			} else {
+				orderedNames.splice(insertAt, 0, emptyName);
 			}
 		}
-		return Array.from(groups.entries()).map(([groupName, cats], idx) => ({
+
+		return orderedNames.map((groupName, idx) => ({
 			groupName,
-			cats,
+			cats: groups.get(groupName) ?? [],
 			color: getGroupColor(groupName, customGroupColors[groupName] ?? idx)
 		}));
 	});
@@ -517,6 +599,7 @@
 		});
 
 		await persistOrderedCategories(nextGroups.flat());
+		announceReorder(`Moved ${dragged.name} ${position} ${target.name}`);
 	}
 
 	async function handleMoveCategoryToGroup(draggedId: string, targetGroupName: string) {
@@ -534,6 +617,7 @@
 		});
 
 		await persistOrderedCategories(nextGroups.flat());
+		announceReorder(`Moved ${dragged.name} to ${targetGroupName}`);
 	}
 
 	async function handleMoveCategoryStep(categoryId: string, direction: 'up' | 'down') {
@@ -543,6 +627,7 @@
 		const idx = group.cats.findIndex((c) => c.id === categoryId);
 		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
 		if (swapIdx < 0 || swapIdx >= group.cats.length) return;
+		const movedItem = group.cats[idx];
 
 		const nextGroups = groupedCategories.map((g) => {
 			if (g.groupName !== group.groupName) return g.cats;
@@ -553,6 +638,76 @@
 		});
 
 		await persistOrderedCategories(nextGroups.flat());
+		announceReorder(
+			`Moved ${movedItem.name} ${direction} to position ${swapIdx + 1} of ${group.cats.length} in ${group.groupName}`
+		);
+	}
+
+	async function handleReorderGroup(
+		draggedGroupName: string,
+		targetGroupName: string,
+		position: 'before' | 'after'
+	) {
+		if (!budgetData || draggedGroupName === targetGroupName) return;
+		const draggedGroup = groupedCategories.find((g) => g.groupName === draggedGroupName);
+		if (!draggedGroup) return;
+
+		const withoutDragged = groupedCategories.filter((g) => g.groupName !== draggedGroupName);
+		const targetIdx = withoutDragged.findIndex((g) => g.groupName === targetGroupName);
+		if (targetIdx === -1) return;
+
+		const insertAt = position === 'after' ? targetIdx + 1 : targetIdx;
+		const nextGroups = [...withoutDragged];
+		nextGroups.splice(insertAt, 0, draggedGroup);
+
+		persistGroupOrder(nextGroups.map((g) => g.groupName));
+		await persistOrderedCategories(nextGroups.flatMap((g) => g.cats));
+		announceReorder(`Moved category ${draggedGroupName} ${position} ${targetGroupName}`);
+	}
+
+	async function handleMoveGroupStep(groupName: string, direction: 'up' | 'down') {
+		if (!budgetData) return;
+		const idx = groupedCategories.findIndex((g) => g.groupName === groupName);
+		if (idx === -1) return;
+		const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+		if (swapIdx < 0 || swapIdx >= groupedCategories.length) return;
+
+		const nextGroups = [...groupedCategories];
+		const [moved] = nextGroups.splice(idx, 1);
+		nextGroups.splice(swapIdx, 0, moved);
+
+		persistGroupOrder(nextGroups.map((g) => g.groupName));
+		await persistOrderedCategories(nextGroups.flatMap((g) => g.cats));
+		announceReorder(
+			`Moved category ${groupName} ${direction} to position ${swapIdx + 1} of ${nextGroups.length}`
+		);
+	}
+
+	function toggleGroupCollapsed(groupName: string) {
+		collapsedGroups = { ...collapsedGroups, [groupName]: !collapsedGroups[groupName] };
+	}
+
+	let allGroupsCollapsed = $derived(
+		groupedCategories.length > 0 && groupedCategories.every((g) => Boolean(collapsedGroups[g.groupName]))
+	);
+
+	function toggleAllGroupsCollapsed() {
+		const nextVal = !allGroupsCollapsed;
+		const next: Record<string, boolean> = {};
+		for (const g of groupedCategories) {
+			next[g.groupName] = nextVal;
+		}
+		collapsedGroups = next;
+	}
+
+	function toggleOrganizeMode() {
+		const next = !organizeMode;
+		organizeMode = next;
+		if (next) {
+			activeFocusGroup = FOCUS_ALL;
+		} else {
+			collapsedGroups = {};
+		}
 	}
 
 	let focusGroupNames = $derived(groupedCategories.map((g) => g.groupName));
@@ -642,12 +797,14 @@
 	let inflowTransactions = $derived.by(() => {
 		const items: InlineActivityItem[] = [];
 		for (const tx of transactions) {
-			if (tx.amount <= 0 || tx.isTransfer) continue;
+			if (tx.isTransfer) continue;
+			if (tx.amount <= 0 && !tx.plannedIncomeId) continue;
 			const acct = accountById.get(tx.accountId);
 			if (acct && !acct.isOnBudget) continue;
 			items.push({
 				id: tx.id,
 				transactionId: tx.id,
+				plannedIncomeId: tx.plannedIncomeId ?? null,
 				date: tx.transactionDate,
 				merchant: tx.merchantClean?.trim() || tx.merchantRaw,
 				accountName: tx.accountName || acct?.name || 'Account',
@@ -662,6 +819,7 @@
 			items.push({
 				id: q.localId,
 				transactionId: q.localId,
+				plannedIncomeId: null,
 				date: q.transactionDate,
 				merchant: q.merchantRaw,
 				accountName: acct?.name || 'Offline',
@@ -805,6 +963,14 @@
 		await updateTransaction(
 			txId,
 			categoryId ? { categoryId } : { clearCategory: true }
+		);
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleAssignTransactionToIncome(txId: string, incomeId: string | null) {
+		await updateTransaction(
+			txId,
+			incomeId ? { plannedIncomeId: incomeId, clearCategory: true } : { clearPlannedIncome: true }
 		);
 		await loadWorkspace(currentMonth, true);
 	}
@@ -954,6 +1120,19 @@
 				</div>
 
 				<div class="flex items-center gap-2">
+					{#if groupedCategories.length > 0}
+						<button
+							type="button"
+							data-testid="toggle-organize-btn"
+							aria-pressed={organizeMode}
+							onclick={toggleOrganizeMode}
+							class="rounded-lg border px-3 py-2 text-xs font-semibold transition-colors {organizeMode
+								? 'border-accent-pop bg-accent-tint text-accent-pop'
+								: 'border-border bg-surface text-ink-secondary hover:bg-surface-hover hover:text-ink-primary'}"
+						>
+							{organizeMode ? 'Done' : 'Organize'}
+						</button>
+					{/if}
 					<button
 						type="button"
 						data-testid="add-category-btn"
@@ -964,6 +1143,36 @@
 					</button>
 				</div>
 			</div>
+
+			<div class="sr-only" aria-live="polite" role="status">{reorderAnnouncement}</div>
+
+			{#if organizeMode && groupedCategories.length > 0}
+				<div
+					data-testid="organize-mode-banner"
+					class="rounded-xl border border-accent-pop/30 bg-accent-tint px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+				>
+					<span class="text-ink-primary font-medium">
+						Use the arrows to reorder categories and items, or pick a new category for an item.
+					</span>
+					<div class="flex items-center gap-2 shrink-0">
+						<button
+							type="button"
+							data-testid="organize-collapse-all-btn"
+							onclick={toggleAllGroupsCollapsed}
+							class="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium text-ink-primary hover:bg-surface-hover transition-colors"
+						>
+							{allGroupsCollapsed ? 'Expand All' : 'Collapse All'}
+						</button>
+						<button
+							type="button"
+							onclick={toggleOrganizeMode}
+							class="rounded-lg bg-accent-primary text-accent-primary-text px-3 py-1 text-xs font-semibold hover:opacity-90 transition-opacity"
+						>
+							Done
+						</button>
+					</div>
+				</div>
+			{/if}
 
 			{#if errorMsg}
 				<div class="rounded-xl border border-status-danger bg-status-danger-bg p-4 text-xs text-status-danger">
@@ -995,7 +1204,10 @@
 						receivedAmount={receivedInflows}
 						{inflowTransactions}
 						{selectedTransactionId}
+						{draggingGroupName}
+						{draggingTxId}
 						onSelectTransaction={handleSelectTransaction}
+						onDropTransaction={handleAssignTransactionToIncome}
 						onChanged={() => void loadWorkspace(currentMonth, true)}
 					/>
 				{/if}
@@ -1010,7 +1222,7 @@
 						</div>
 					{:else}
 						<div class="space-y-5">
-							{#each visibleGroupedCategories as group (group.groupName)}
+							{#each visibleGroupedCategories as group, groupIdx (group.groupName)}
 								<CategoryGroupCard
 									groupName={group.groupName}
 									color={group.color}
@@ -1018,6 +1230,13 @@
 									{displayMode}
 									{transactionsByCategory}
 									{draggingCategoryId}
+									{draggingGroupName}
+									{draggingTxId}
+									{organizeMode}
+									isCollapsed={Boolean(collapsedGroups[group.groupName])}
+									isFirstGroup={groupIdx === 0}
+									isLastGroup={groupIdx === visibleGroupedCategories.length - 1}
+									availableGroups={allGroupNames}
 									{selectedTransactionId}
 									onToggleDisplayMode={() =>
 										(displayMode = displayMode === 'remaining' ? 'spent' : 'remaining')}
@@ -1033,6 +1252,11 @@
 									onReorderCategory={handleReorderCategory}
 									onMoveCategoryToGroup={handleMoveCategoryToGroup}
 									onMoveCategoryStep={handleMoveCategoryStep}
+									onGroupDragStart={(name) => (draggingGroupName = name)}
+									onGroupDragEnd={() => (draggingGroupName = null)}
+									onReorderGroup={handleReorderGroup}
+									onMoveGroupStep={handleMoveGroupStep}
+									onToggleCollapse={toggleGroupCollapsed}
 									onSelectTransaction={handleSelectTransaction}
 								/>
 							{/each}
@@ -1054,6 +1278,7 @@
 					transaction={selectedTransaction}
 					account={accountById.get(selectedTransaction.accountId) ?? null}
 					categories={budgetData?.categories ?? []}
+					incomes={budgetData?.incomes ?? []}
 					onClose={() => (selectedTransactionId = null)}
 					onUpdateTransaction={handleUpdateTransaction}
 					onDeleteTransaction={handleDeleteTransaction}
@@ -1075,15 +1300,19 @@
 						{queuedTransactions}
 						{accounts}
 						categories={budgetData?.categories ?? []}
+						incomes={budgetData?.incomes ?? []}
 						{isOffline}
 						syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 						{activeCategoryFilterId}
 						onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 						onCreateTransaction={handleCreateTransaction}
 						onCategorizeTransaction={handleCategorizeTransaction}
+						onAssignTransactionToIncome={handleAssignTransactionToIncome}
 						onUpdateTransaction={handleUpdateTransaction}
 						onDeleteTransaction={handleDeleteTransaction}
 						onSyncNow={handleSyncNow}
+						onTransactionDragStart={(id) => (draggingTxId = id)}
+						onTransactionDragEnd={() => (draggingTxId = null)}
 					/>
 				</div>
 			{/if}
@@ -1103,15 +1332,19 @@
 		{queuedTransactions}
 		{accounts}
 		categories={budgetData?.categories ?? []}
+		incomes={budgetData?.incomes ?? []}
 		{isOffline}
 		syncing={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
 		{activeCategoryFilterId}
 		onClearCategoryFilter={() => (activeCategoryFilterId = null)}
 		onCreateTransaction={handleCreateTransaction}
 		onCategorizeTransaction={handleCategorizeTransaction}
+		onAssignTransactionToIncome={handleAssignTransactionToIncome}
 		onUpdateTransaction={handleUpdateTransaction}
 		onDeleteTransaction={handleDeleteTransaction}
 		onSyncNow={handleSyncNow}
+		onTransactionDragStart={(id) => (draggingTxId = id)}
+		onTransactionDragEnd={() => (draggingTxId = null)}
 	/>
 </TransactionsDrawer>
 
@@ -1135,9 +1368,29 @@
 	defaultGroupName={modalDefaultGroup}
 	yearMonth={currentMonth}
 	onClose={() => (isCategoryModalOpen = false)}
-	onSuccess={() => {
+	onSuccess={async () => {
 		isCategoryModalOpen = false;
-		void loadWorkspace(currentMonth, true);
+		await loadWorkspace(currentMonth, true);
+		if (groupOrder.length > 0 && budgetData) {
+			const byGroup = new Map<string, CategoryBudget[]>();
+			for (const cat of [...budgetData.categories].sort((a, b) => a.sortOrder - b.sortOrder)) {
+				const list = byGroup.get(cat.groupName) ?? [];
+				list.push(cat);
+				byGroup.set(cat.groupName, list);
+			}
+			const ordered: CategoryBudget[] = [];
+			for (const grp of groupOrder) {
+				const items = byGroup.get(grp);
+				if (items) {
+					ordered.push(...items);
+					byGroup.delete(grp);
+				}
+			}
+			for (const items of byGroup.values()) {
+				ordered.push(...items);
+			}
+			await persistOrderedCategories(ordered);
+		}
 	}}
 />
 
@@ -1174,6 +1427,7 @@
 				transaction={selectedTransaction}
 				account={accountById.get(selectedTransaction.accountId) ?? null}
 				categories={budgetData?.categories ?? []}
+				incomes={budgetData?.incomes ?? []}
 				onClose={() => (selectedTransactionId = null)}
 				onUpdateTransaction={handleUpdateTransaction}
 				onDeleteTransaction={handleDeleteTransaction}

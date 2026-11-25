@@ -45,7 +45,7 @@ func (h *Handler) CreatePlannedIncome(w http.ResponseWriter, r *http.Request) {
 		return h.incomeRepo.Create(r.Context(), tx, inc)
 	})
 	if err != nil {
-		if errors.Is(err, ErrInvalidAmount) {
+		if errors.Is(err, ErrInvalidAmount) || errors.Is(err, ErrNegativeAmount) {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}

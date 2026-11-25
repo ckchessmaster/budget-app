@@ -34,6 +34,7 @@ export function isNewTransaction(
 	accountById: Map<string, AccountItem>
 ): boolean {
 	if (tx.categoryId !== null) return false;
+	if (tx.plannedIncomeId) return false;
 	if (tx.isTransfer) return false;
 	if (tx.splits && tx.splits.length > 0) return false;
 	const acct = accountById.get(tx.accountId);

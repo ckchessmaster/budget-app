@@ -87,6 +87,12 @@ describe('formatSimpleFINClaimError', () => {
 		expect(msg).toContain('took too long');
 	});
 
+	it('translates transient gateway 520 errors into friendly retry guidance', () => {
+		const msg = formatSimpleFINClaimError('Failed to discover SimpleFIN accounts (520)', 'discover');
+		expect(msg).toContain('HTTP 520');
+		expect(msg).toContain('try again');
+	});
+
 	it('passes through unrecognized error messages', () => {
 		expect(formatSimpleFINClaimError('network offline')).toBe('network offline');
 	});
