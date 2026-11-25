@@ -32,7 +32,7 @@
 				$
 			</div>
 			<h2 class="text-xl font-bold text-ink-primary">Welcome Back</h2>
-			<p class="text-xs text-ink-secondary mt-1">Authenticate via your local Dex OIDC provider</p>
+			<p class="text-xs text-ink-secondary mt-1">Sign in to continue to your budget</p>
 		</div>
 
 		{#if errorMsg}
@@ -48,16 +48,10 @@
 		>
 			{#if isSubmitting}
 				<div class="w-4 h-4 border-2 border-accent-primary-text/30 border-t-accent-primary-text rounded-full animate-spin"></div>
-				<span>Redirecting to Dex...</span>
+				<span>Redirecting...</span>
 			{:else}
-				<span>Sign In with Dex OIDC</span>
+				<span>Sign In</span>
 			{/if}
 		</button>
-
-		<div class="mt-6 pt-4 border-t border-border text-xs text-ink-secondary space-y-1">
-			<p class="font-medium text-ink-primary">Local Dev Credentials:</p>
-			<p>Email: <code class="text-accent-pop bg-subtle px-1 py-0.5 rounded font-mono">admin@dev.local</code></p>
-			<p>Password: <code class="text-accent-pop bg-subtle px-1 py-0.5 rounded font-mono">password</code></p>
-		</div>
 	</div>
 </div>

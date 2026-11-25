@@ -207,4 +207,72 @@ describe('AccountModal', () => {
 		await waitFor(() => expect(mockDeleteAccount).toHaveBeenCalledWith('acct-del'));
 		expect(onSaved).toHaveBeenCalledTimes(1);
 	});
+
+	it('shows SimpleFIN switch callout in create mode and hides it when editing or in demo mode', async () => {
+		const onOpenSimpleFIN = vi.fn();
+		const connected = render(AccountModal, {
+			props: {
+				open: true,
+				editingAccount: null,
+				categories: sampleCategories,
+				simplefinConnected: true,
+				isDemoMode: false,
+				onOpenSimpleFIN,
+				onClose: vi.fn(),
+				onSaved: vi.fn()
+			}
+		});
+
+		const btn = connected.getByTestId('switch-to-simplefin-btn');
+		expect(btn.textContent?.trim()).toBe('Fetch from SimpleFIN');
+		await fireEvent.click(btn);
+		expect(onOpenSimpleFIN).toHaveBeenCalledTimes(1);
+		connected.unmount();
+
+		const disconnected = render(AccountModal, {
+			props: {
+				open: true,
+				editingAccount: null,
+				categories: sampleCategories,
+				simplefinConnected: false,
+				isDemoMode: false,
+				onOpenSimpleFIN: vi.fn(),
+				onClose: vi.fn(),
+				onSaved: vi.fn()
+			}
+		});
+		expect(disconnected.getByTestId('switch-to-simplefin-btn').textContent?.trim()).toBe(
+			'Connect SimpleFIN'
+		);
+		disconnected.unmount();
+
+		const editing = render(AccountModal, {
+			props: {
+				open: true,
+				editingAccount: makeAccount(),
+				categories: sampleCategories,
+				simplefinConnected: true,
+				isDemoMode: false,
+				onOpenSimpleFIN: vi.fn(),
+				onClose: vi.fn(),
+				onSaved: vi.fn()
+			}
+		});
+		expect(editing.queryByTestId('account-modal-simplefin-callout')).toBeNull();
+		editing.unmount();
+
+		const demo = render(AccountModal, {
+			props: {
+				open: true,
+				editingAccount: null,
+				categories: sampleCategories,
+				simplefinConnected: true,
+				isDemoMode: true,
+				onOpenSimpleFIN: vi.fn(),
+				onClose: vi.fn(),
+				onSaved: vi.fn()
+			}
+		});
+		expect(demo.queryByTestId('account-modal-simplefin-callout')).toBeNull();
+	});
 });

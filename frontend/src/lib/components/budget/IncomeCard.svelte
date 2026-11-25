@@ -8,6 +8,8 @@
 		incomes: PlannedIncome[];
 		receivedAmount: number;
 		inflowTransactions?: InlineActivityItem[];
+		selectedTransactionId?: string | null;
+		onSelectTransaction?: (txId: string) => void;
 		onChanged: () => void;
 	}
 
@@ -16,6 +18,8 @@
 		incomes,
 		receivedAmount,
 		inflowTransactions = [],
+		selectedTransactionId = null,
+		onSelectTransaction,
 		onChanged
 	}: Props = $props();
 
@@ -202,7 +206,7 @@
 											void handleDelete(row.income.id);
 										}}
 										aria-label={`Remove ${row.income.name}`}
-										class="text-[11px] text-status-danger sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:underline transition-opacity shrink-0"
+										class="px-2 py-1 rounded-md text-xs text-status-danger sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:bg-status-danger-bg transition-all shrink-0"
 									>
 										Remove
 									</button>
@@ -224,7 +228,12 @@
 					</div>
 
 					{#if expandedRows[row.income.id]}
-						<InlineActivityDrawer transactions={row.drawerTransactions} embedded={true} />
+						<InlineActivityDrawer
+							transactions={row.drawerTransactions}
+							embedded={true}
+							{selectedTransactionId}
+							{onSelectTransaction}
+						/>
 					{/if}
 				</div>
 			{/each}

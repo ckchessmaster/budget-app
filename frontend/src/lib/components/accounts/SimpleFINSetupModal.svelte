@@ -19,6 +19,7 @@
 
 	interface SelectableAccountMapping extends LinkAccountMapping {
 		selected: boolean;
+		alreadyLinked: boolean;
 	}
 
 	interface Props {
@@ -27,6 +28,8 @@
 		onLinked: (linkedCount?: number) => void;
 		isDemoMode?: boolean;
 		isConnected?: boolean;
+		linkedExternalIds?: string[];
+		autoDiscover?: boolean;
 		onExitDemoMode?: () => Promise<void>;
 		onTriggerSync?: () => Promise<unknown> | void;
 	}
@@ -37,6 +40,8 @@
 		onLinked,
 		isDemoMode,
 		isConnected,
+		linkedExternalIds = [],
+		autoDiscover = false,
 		onExitDemoMode,
 		onTriggerSync
 	}: Props = $props();
@@ -52,8 +57,10 @@
 	let discovered = $state<SimpleFINDiscoveredAccount[]>([]);
 	let mappings = $state<SelectableAccountMapping[]>([]);
 	let claimWarnings = $state<string[]>([]);
-	let loading = $state(false);
+	let loadingMode = $state<'idle' | 'discover' | 'claim' | 'link'>('idle');
+	let loading = $derived(loadingMode !== 'idle');
 	let exitingDemo = $state(false);
+	let autoDiscoverTriggered = $state(false);
 	let errorMsg = $state<string | null>(null);
 	// The claim is a Temporal workflow now, so it can sit in RETRYING while the bank
 	// catches up. Surfacing that beats a silent spinner the user assumes is broken.
@@ -70,8 +77,10 @@
 
 	let validation = $derived(validateSimpleFINSetupToken(setupToken));
 	let showValidationError = $derived((tokenTouched || submitAttempted) && !validation.valid);
-	let selectedCount = $derived(mappings.filter((m) => m.selected).length);
-	let allSelected = $derived(mappings.length > 0 && selectedCount === mappings.length);
+	let newMappings = $derived(mappings.filter((m) => !m.alreadyLinked));
+	let alreadyLinkedMappings = $derived(mappings.filter((m) => m.alreadyLinked));
+	let selectedCount = $derived(newMappings.filter((m) => m.selected).length);
+	let allSelected = $derived(newMappings.length > 0 && selectedCount === newMappings.length);
 
 	function reset() {
 		step = 1;
@@ -84,8 +93,9 @@
 		claimWarnings = [];
 		errorMsg = null;
 		progressMsg = null;
-		loading = false;
+		loadingMode = 'idle';
 		exitingDemo = false;
+		autoDiscoverTriggered = false;
 	}
 
 	$effect(() => {
@@ -93,6 +103,10 @@
 		if (open) {
 			if (!dialogEl.open) {
 				dialogEl.showModal();
+			}
+			if (autoDiscover && isReconnect && !isDemo && !autoDiscoverTriggered && step === 1 && !loading) {
+				autoDiscoverTriggered = true;
+				void handleDiscoverExisting();
 			}
 		} else if (dialogEl.open) {
 			dialogEl.close();
@@ -182,21 +196,30 @@
 		progressMsg = null;
 		claimWarnings = warningsFromWorkflow;
 		discovered = accounts;
-		mappings = accounts.map((a) => ({
-			external_account_id: a.id,
-			name: a.name,
-			type: inferAccountType(a.name),
-			card_mode: 'PAY_IN_FULL',
-			balance: a.balance,
-			selected: true
-		}));
+		const linkedSet = new Set(linkedExternalIds ?? []);
+		const mapped: SelectableAccountMapping[] = accounts.map((a) => {
+			const alreadyLinked = linkedSet.has(a.id);
+			return {
+				external_account_id: a.id,
+				name: a.name,
+				type: inferAccountType(a.name),
+				card_mode: 'PAY_IN_FULL',
+				balance: a.balance,
+				alreadyLinked,
+				selected: !alreadyLinked
+			};
+		});
+		mappings = [
+			...mapped.filter((m) => !m.alreadyLinked),
+			...mapped.filter((m) => m.alreadyLinked)
+		];
 		step = 2;
 	}
 
 	async function handleDiscoverExisting() {
 		errorMsg = null;
 		clipboardHint = null;
-		loading = true;
+		loadingMode = 'discover';
 		claimWarnings = [];
 		progressMsg = 'Fetching accounts from your existing SimpleFIN connection...';
 		try {
@@ -217,10 +240,11 @@
 		} catch (err) {
 			progressMsg = null;
 			errorMsg = formatSimpleFINClaimError(
-				err instanceof Error ? err.message : 'Failed to fetch accounts'
+				err instanceof Error ? err.message : 'Failed to fetch accounts',
+				'discover'
 			);
 		} finally {
-			loading = false;
+			loadingMode = 'idle';
 		}
 	}
 
@@ -237,7 +261,7 @@
 			return;
 		}
 
-		loading = true;
+		loadingMode = 'claim';
 		claimWarnings = [];
 		progressMsg = 'Contacting your bank...';
 		try {
@@ -258,27 +282,30 @@
 		} catch (err) {
 			progressMsg = null;
 			errorMsg = formatSimpleFINClaimError(
-				err instanceof Error ? err.message : 'Failed to claim token'
+				err instanceof Error ? err.message : 'Failed to claim token',
+				'claim'
 			);
 		} finally {
-			loading = false;
+			loadingMode = 'idle';
 		}
 	}
 
 	function toggleSelectAll() {
 		const next = !allSelected;
 		for (const item of mappings) {
-			item.selected = next;
+			if (!item.alreadyLinked) {
+				item.selected = next;
+			}
 		}
 	}
 
 	async function handleConfirmLink() {
 		const selectedMappings: LinkAccountMapping[] = mappings
-			.filter((m) => m.selected)
-			.map(({ selected: _selected, ...rest }) => rest);
+			.filter((m) => !m.alreadyLinked && m.selected)
+			.map(({ selected: _selected, alreadyLinked: _alreadyLinked, ...rest }) => rest);
 		if (selectedMappings.length === 0) return;
 
-		loading = true;
+		loadingMode = 'link';
 		errorMsg = null;
 		try {
 			await linkSimpleFINAccounts(selectedMappings);
@@ -288,7 +315,7 @@
 		} catch (err) {
 			errorMsg = err instanceof Error ? err.message : 'Failed to link accounts';
 		} finally {
-			loading = false;
+			loadingMode = 'idle';
 		}
 	}
 
@@ -299,6 +326,167 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+{#snippet tokenGuideAndForm()}
+	{#if isReconnect}
+		<div class="flex items-center justify-between gap-2 text-xs text-ink-secondary bg-subtle/50 border border-border rounded-lg px-3 py-2">
+			<span>Need a fresh single-use token?</span>
+			<a
+				href={SIMPLEFIN_CREATE_TOKEN_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				data-testid="reconnect-simplefin-create"
+				class="font-medium text-accent-pop hover:underline shrink-0"
+			>
+				Create new token on SimpleFIN ↗
+			</a>
+		</div>
+	{/if}
+
+	<details
+		open={!isReconnect}
+		data-testid="simplefin-guide"
+		class="rounded-xl border border-border bg-subtle/70 p-3.5 space-y-2.5"
+	>
+		<summary class="cursor-pointer select-none text-xs font-semibold text-ink-primary">
+			{isReconnect
+				? 'Need a new setup token? View setup steps'
+				: 'How to get your SimpleFIN Setup Token'}
+		</summary>
+
+		<ol class="list-decimal list-inside space-y-1.5 text-xs text-ink-secondary pt-1">
+			<li>
+				<strong class="text-ink-primary">Open SimpleFIN Bridge</strong> and sign in — or create
+				an account and link your banks under <strong class="text-ink-primary">Financial Institutions</strong>.
+			</li>
+			<li>
+				Go to <strong class="text-ink-primary">Apps → New Connection</strong>, give it a name
+				(like <span class="italic">Budget App</span>), and click
+				<strong class="text-ink-primary">Create Setup Token</strong>.
+			</li>
+			<li>
+				<strong class="text-ink-primary">Copy the single-use Setup Token</strong> and paste it
+				below.
+			</li>
+		</ol>
+
+		<div class="flex flex-wrap items-center gap-2 pt-1">
+			<a
+				href={SIMPLEFIN_CREATE_TOKEN_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				data-testid="open-simplefin-create"
+				class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-accent-primary hover:opacity-90 text-accent-primary-text transition-opacity"
+			>
+				Create Setup Token on SimpleFIN ↗
+			</a>
+			<a
+				href={SIMPLEFIN_BRIDGE_HOME_URL}
+				target="_blank"
+				rel="noopener noreferrer"
+				data-testid="open-simplefin-home"
+				class="text-xs font-medium text-accent-pop hover:underline px-1 py-1"
+			>
+				New to SimpleFIN? Sign up &amp; link banks ↗
+			</a>
+		</div>
+	</details>
+
+	<form onsubmit={handleClaim} novalidate class="space-y-3">
+		<div>
+			<div class="flex items-center justify-between gap-2 mb-1">
+				<label for="sf-token" class="block text-xs font-medium text-ink-primary">
+					SimpleFIN Setup Token
+				</label>
+				{#if canPaste}
+					<button
+						type="button"
+						onclick={() => void handlePasteFromClipboard()}
+						disabled={isBusy}
+						data-testid="paste-token-btn"
+						class="px-2 py-0.5 text-[11px] font-medium rounded border border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary transition-colors"
+					>
+						Paste
+					</button>
+				{/if}
+			</div>
+			<p id="sf-token-hint" class="text-[11px] text-ink-muted mb-1.5">
+				Single-use base64 token from SimpleFIN Bridge. Your access URL is encrypted with
+				AES-256-GCM before storage.
+			</p>
+			<!-- svelte-ignore a11y_autofocus -->
+			<textarea
+				id="sf-token"
+				bind:this={tokenInputEl}
+				bind:value={setupToken}
+				autofocus={!isReconnect}
+				rows="3"
+				spellcheck="false"
+				autocomplete="off"
+				aria-invalid={showValidationError ? 'true' : 'false'}
+				aria-describedby={showValidationError
+					? 'sf-token-hint sf-token-error'
+					: 'sf-token-hint'}
+				onblur={() => {
+					if (setupToken.trim()) tokenTouched = true;
+				}}
+				onpaste={() => {
+					tokenTouched = true;
+					clipboardHint = null;
+				}}
+				oninput={() => {
+					errorMsg = null;
+					clipboardHint = null;
+				}}
+				placeholder="Paste your base64 SimpleFIN setup token..."
+				class="w-full bg-canvas border rounded-md px-3 py-2 text-xs font-mono text-ink-primary placeholder:text-ink-muted focus:outline-none {showValidationError
+					? 'border-status-danger focus:border-status-danger'
+					: validation.valid
+						? 'border-status-good focus:border-status-good'
+						: 'border-border focus:border-accent-pop'}"
+			></textarea>
+
+			{#if showValidationError && !validation.valid}
+				<p
+					id="sf-token-error"
+					data-testid="sf-token-error"
+					class="text-[11px] text-status-danger mt-1"
+				>
+					{validation.message}
+				</p>
+			{:else if validation.valid}
+				<p data-testid="token-valid-indicator" class="text-[11px] text-status-good mt-1">
+					Valid setup token format — ready to claim.
+				</p>
+			{/if}
+
+			{#if clipboardHint}
+				<p class="text-[11px] text-ink-secondary mt-1">{clipboardHint}</p>
+			{/if}
+		</div>
+
+		<div class="flex justify-end gap-2 pt-1">
+			{#if !isReconnect}
+				<button
+					type="button"
+					onclick={requestClose}
+					disabled={isBusy}
+					class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
+				>
+					Cancel
+				</button>
+			{/if}
+			<button
+				type="submit"
+				disabled={loading || !setupToken.trim()}
+				data-testid="claim-token-btn"
+				class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text rounded-md transition-opacity"
+			>
+				{loadingMode === 'claim' ? 'Claiming...' : 'Claim & Discover Accounts'}
+			</button>
+		</div>
+	</form>
+{/snippet}
+
 <dialog
 	bind:this={dialogEl}
 	aria-labelledby="simplefin-modal-title"
@@ -314,7 +502,7 @@
 					{#if isDemo}
 						SimpleFIN Bank Sync
 					{:else if step === 1}
-						{isReconnect ? 'Reconnect SimpleFIN Bridge' : 'Connect SimpleFIN Bridge'}
+						{isReconnect ? 'Manage SimpleFIN Bridge' : 'Connect SimpleFIN Bridge'}
 					{:else}
 						Map Discovered Accounts
 					{/if}
@@ -343,6 +531,17 @@
 			>
 				{errorMsg}
 			</div>
+		{/if}
+
+		{#if progressMsg && !isDemo}
+			<p
+				data-testid="simplefin-progress"
+				class="text-xs text-ink-secondary bg-subtle border border-border rounded-lg px-3 py-2 flex items-center gap-2"
+				role="status"
+			>
+				<span class="inline-block w-2 h-2 rounded-full bg-accent-pop animate-pulse shrink-0"></span>
+				<span>{progressMsg}</span>
+			</p>
 		{/if}
 
 		{#if isDemo}
@@ -380,193 +579,64 @@
 			</div>
 		{:else if step === 1}
 			{#if isReconnect}
-				<div class="rounded-xl border border-accent-primary/30 bg-accent-tint/50 p-3.5 space-y-2">
+				<div class="rounded-xl border border-accent-primary/30 bg-accent-tint/50 p-4 space-y-2.5">
 					<p class="text-xs font-semibold text-ink-primary">
-						Already connected to SimpleFIN
+						Add Accounts from SimpleFIN
 					</p>
-					<p class="text-xs text-ink-secondary">
-						If you added a new bank or account in your SimpleFIN Bridge, you can fetch it using your existing connection without creating a new setup token.
+					<p class="text-xs text-ink-secondary leading-relaxed">
+						Linked a new bank or credit card in your SimpleFIN Bridge? Fetch it directly using your existing connection without creating a new setup token.
 					</p>
-					<button
-						type="button"
-						onclick={handleDiscoverExisting}
-						disabled={isBusy}
-						data-testid="discover-existing-simplefin"
-						class="px-3 py-1.5 text-xs font-semibold bg-accent-primary hover:opacity-90 text-accent-primary-text rounded-md disabled:opacity-50 transition-opacity"
-					>
-						{loading ? 'Fetching...' : 'Fetch Accounts from Existing Connection'}
-					</button>
-				</div>
-			{/if}
-
-			<p class="text-xs text-ink-secondary leading-relaxed">
-				SimpleFIN Bridge is a separate, read-only bank sync service (paid directly to SimpleFIN)
-				that connects your banks without sharing login passwords with Budget App.
-			</p>
-
-			<details
-				open={!isReconnect}
-				data-testid="simplefin-guide"
-				class="rounded-xl border border-border bg-subtle/70 p-3.5 space-y-2.5"
-			>
-				<summary class="cursor-pointer select-none text-xs font-semibold text-ink-primary">
-					{isReconnect
-						? 'Need a new setup token? View setup steps'
-						: 'How to get your SimpleFIN Setup Token'}
-				</summary>
-
-				<ol class="list-decimal list-inside space-y-1.5 text-xs text-ink-secondary pt-1">
-					<li>
-						<strong class="text-ink-primary">Open SimpleFIN Bridge</strong> and sign in — or create
-						an account and link your banks under <strong class="text-ink-primary">Financial Institutions</strong>.
-					</li>
-					<li>
-						Go to <strong class="text-ink-primary">Apps → New Connection</strong>, give it a name
-						(like <span class="italic">Budget App</span>), and click
-						<strong class="text-ink-primary">Create Setup Token</strong>.
-					</li>
-					<li>
-						<strong class="text-ink-primary">Copy the single-use Setup Token</strong> and paste it
-						below.
-					</li>
-				</ol>
-
-				<div class="flex flex-wrap items-center gap-2 pt-1">
-					<a
-						href={SIMPLEFIN_CREATE_TOKEN_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						data-testid="open-simplefin-create"
-						class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-accent-primary hover:opacity-90 text-accent-primary-text transition-opacity"
-					>
-						Create Setup Token on SimpleFIN ↗
-					</a>
-					<a
-						href={SIMPLEFIN_BRIDGE_HOME_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						data-testid="open-simplefin-home"
-						class="text-xs font-medium text-accent-pop hover:underline px-1 py-1"
-					>
-						New to SimpleFIN? Sign up &amp; link banks ↗
-					</a>
-				</div>
-			</details>
-
-			{#if isReconnect}
-				<div class="flex items-center justify-between gap-2 text-xs text-ink-secondary bg-subtle/50 border border-border rounded-lg px-3 py-2">
-					<span>Need a fresh single-use token?</span>
-					<a
-						href={SIMPLEFIN_CREATE_TOKEN_URL}
-						target="_blank"
-						rel="noopener noreferrer"
-						data-testid="reconnect-simplefin-create"
-						class="font-medium text-accent-pop hover:underline shrink-0"
-					>
-						Create new token on SimpleFIN ↗
-					</a>
-				</div>
-			{/if}
-
-			<form onsubmit={handleClaim} novalidate class="space-y-3">
-				<div>
-					<div class="flex items-center justify-between gap-2 mb-1">
-						<label for="sf-token" class="block text-xs font-medium text-ink-primary">
-							SimpleFIN Setup Token
-						</label>
-						{#if canPaste}
-							<button
-								type="button"
-								onclick={() => void handlePasteFromClipboard()}
-								disabled={isBusy}
-								data-testid="paste-token-btn"
-								class="px-2 py-0.5 text-[11px] font-medium rounded border border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary transition-colors"
-							>
-								Paste
-							</button>
-						{/if}
-					</div>
-					<p id="sf-token-hint" class="text-[11px] text-ink-muted mb-1.5">
-						Single-use base64 token from SimpleFIN Bridge. Your access URL is encrypted with
-						AES-256-GCM before storage.
-					</p>
-					<!-- svelte-ignore a11y_autofocus -->
-					<textarea
-						id="sf-token"
-						bind:this={tokenInputEl}
-						bind:value={setupToken}
-						autofocus
-						rows="3"
-						spellcheck="false"
-						autocomplete="off"
-						aria-invalid={showValidationError ? 'true' : 'false'}
-						aria-describedby={showValidationError
-							? 'sf-token-hint sf-token-error'
-							: 'sf-token-hint'}
-						onblur={() => {
-							if (setupToken.trim()) tokenTouched = true;
-						}}
-						onpaste={() => {
-							tokenTouched = true;
-							clipboardHint = null;
-						}}
-						oninput={() => {
-							errorMsg = null;
-							clipboardHint = null;
-						}}
-						placeholder="Paste your base64 SimpleFIN setup token..."
-						class="w-full bg-canvas border rounded-md px-3 py-2 text-xs font-mono text-ink-primary placeholder:text-ink-muted focus:outline-none {showValidationError
-							? 'border-status-danger focus:border-status-danger'
-							: validation.valid
-								? 'border-status-good focus:border-status-good'
-								: 'border-border focus:border-accent-pop'}"
-					></textarea>
-
-					{#if showValidationError && !validation.valid}
-						<p
-							id="sf-token-error"
-							data-testid="sf-token-error"
-							class="text-[11px] text-status-danger mt-1"
+					<div class="flex flex-wrap items-center gap-2 pt-0.5">
+						<button
+							type="button"
+							onclick={() => void handleDiscoverExisting()}
+							disabled={isBusy}
+							data-testid="discover-existing-simplefin"
+							class="px-3.5 py-2 text-xs font-semibold bg-accent-primary hover:opacity-90 text-accent-primary-text rounded-lg disabled:opacity-50 transition-opacity"
 						>
-							{validation.message}
-						</p>
-					{:else if validation.valid}
-						<p data-testid="token-valid-indicator" class="text-[11px] text-status-good mt-1">
-							Valid setup token format — ready to claim.
-						</p>
-					{/if}
-
-					{#if clipboardHint}
-						<p class="text-[11px] text-ink-secondary mt-1">{clipboardHint}</p>
-					{/if}
+							{loadingMode === 'discover' ? 'Fetching Accounts...' : 'Fetch Accounts from Existing Connection'}
+						</button>
+						<a
+							href={SIMPLEFIN_MY_ACCOUNT_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-xs font-medium text-accent-pop hover:underline px-1.5 py-1"
+						>
+							Manage banks on SimpleFIN Bridge ↗
+						</a>
+					</div>
 				</div>
 
-				{#if progressMsg}
-					<p class="text-[11px] text-ink-secondary flex items-center gap-1.5" role="status">
-						<span class="inline-block w-1.5 h-1.5 rounded-full bg-accent-pop animate-pulse"></span>
-						{progressMsg}
-					</p>
-				{/if}
+				<details
+					data-testid="reconnect-token-section"
+					class="rounded-xl border border-border bg-subtle/40 p-3.5 space-y-3"
+				>
+					<summary class="cursor-pointer select-none text-xs font-semibold text-ink-secondary hover:text-ink-primary transition-colors">
+						Need to reconnect with a new setup token?
+					</summary>
+					<div class="space-y-3 pt-1">
+						{@render tokenGuideAndForm()}
+					</div>
+				</details>
 
-				<div class="flex justify-end gap-2 pt-1">
+				<div class="flex justify-end pt-1">
 					<button
 						type="button"
 						onclick={requestClose}
 						disabled={isBusy}
-						class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
+						class="px-3.5 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
 					>
-						Cancel
-					</button>
-					<button
-						type="submit"
-						disabled={loading || !setupToken.trim()}
-						data-testid="claim-token-btn"
-						class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text rounded-md transition-opacity"
-					>
-						{loading ? 'Claiming...' : 'Claim & Discover Accounts'}
+						Close
 					</button>
 				</div>
-			</form>
+			{:else}
+				<p class="text-xs text-ink-secondary leading-relaxed">
+					SimpleFIN Bridge is a separate, read-only bank sync service (paid directly to SimpleFIN)
+					that connects your banks without sharing login passwords with Budget App.
+				</p>
+
+				{@render tokenGuideAndForm()}
+			{/if}
 		{:else}
 			{#if claimWarnings.length > 0}
 				<div class="rounded-lg border border-status-warn/30 bg-status-warn-bg p-3 text-xs text-status-warn space-y-1">
@@ -590,7 +660,7 @@
 					<p class="text-xs text-ink-secondary leading-relaxed">
 						Your SimpleFIN Bridge connection succeeded, but SimpleFIN didn't return any accounts
 						yet. Link your bank under <strong class="text-ink-primary">Financial Institutions</strong>
-						on SimpleFIN Bridge, then reconnect with a new setup token to import those accounts.
+						on SimpleFIN Bridge, then check again to import those accounts.
 					</p>
 					<div class="pt-1">
 						<a
@@ -606,9 +676,90 @@
 				</div>
 
 				<div class="flex justify-end gap-2 pt-1">
+					{#if isReconnect}
+						<button
+							type="button"
+							onclick={() => void handleDiscoverExisting()}
+							disabled={isBusy}
+							class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-primary hover:bg-surface-hover rounded-md transition-colors disabled:opacity-50"
+						>
+							{loadingMode === 'discover' ? 'Checking...' : 'Check Again'}
+						</button>
+					{/if}
 					<button
 						type="button"
 						onclick={handleFinishEmptyDiscovery}
+						disabled={isBusy}
+						class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 text-accent-primary-text rounded-md transition-opacity"
+					>
+						Close
+					</button>
+				</div>
+			{:else if newMappings.length === 0}
+				<div
+					data-testid="simplefin-all-linked"
+					class="rounded-xl border border-border bg-subtle p-4 space-y-2.5"
+				>
+					<p class="text-xs font-semibold text-ink-primary">
+						All {alreadyLinkedMappings.length} discovered {alreadyLinkedMappings.length === 1 ? 'account is' : 'accounts are'} already linked
+					</p>
+					<p class="text-xs text-ink-secondary leading-relaxed">
+						If you just added a new bank in SimpleFIN Bridge, it can take a few minutes to appear.
+						Verify your institutions on SimpleFIN Bridge and check again.
+					</p>
+					<div class="pt-1">
+						<a
+							href={SIMPLEFIN_MY_ACCOUNT_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-accent-primary hover:opacity-90 text-accent-primary-text transition-opacity"
+						>
+							Open SimpleFIN Bridge ↗
+						</a>
+					</div>
+				</div>
+
+				<div class="space-y-2 max-h-56 overflow-y-auto pr-0.5">
+					{#each alreadyLinkedMappings as mapping (mapping.external_account_id)}
+						<div class="bg-subtle/60 border border-border rounded-lg px-3 py-2 flex items-center justify-between gap-2 opacity-75">
+							<div class="flex items-center gap-2 min-w-0">
+								<span class="text-xs font-medium text-ink-primary truncate">{mapping.name}</span>
+								<span class="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-subtle border border-border text-ink-secondary">
+									Already linked
+								</span>
+							</div>
+							<span class="text-xs font-mono text-ink-secondary shrink-0">
+								${mapping.balance ?? '0.00'}
+							</span>
+						</div>
+					{/each}
+				</div>
+
+				<div class="flex justify-end gap-2 pt-1">
+					<button
+						type="button"
+						onclick={() => {
+							step = 1;
+							errorMsg = null;
+						}}
+						disabled={isBusy}
+						class="px-3 py-1.5 text-xs border border-border bg-subtle text-ink-secondary hover:bg-surface-hover hover:text-ink-primary rounded-md transition-colors"
+					>
+						Back
+					</button>
+					<button
+						type="button"
+						onclick={() => void handleDiscoverExisting()}
+						disabled={isBusy}
+						data-testid="check-again-btn"
+						class="px-3 py-1.5 text-xs font-medium border border-border bg-subtle text-ink-primary hover:bg-surface-hover rounded-md transition-colors disabled:opacity-50"
+					>
+						{loadingMode === 'discover' ? 'Checking...' : 'Check Again'}
+					</button>
+					<button
+						type="button"
+						onclick={requestClose}
+						disabled={isBusy}
 						class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 text-accent-primary-text rounded-md transition-opacity"
 					>
 						Close
@@ -616,8 +767,10 @@
 				</div>
 			{:else}
 				<div class="flex items-center justify-between text-xs text-ink-secondary">
-					<span>{selectedCount} of {mappings.length} accounts selected</span>
-					{#if mappings.length > 1}
+					<span>
+						{selectedCount} of {newMappings.length} {alreadyLinkedMappings.length > 0 ? 'new ' : ''}accounts selected
+					</span>
+					{#if newMappings.length > 1}
 						<button
 							type="button"
 							onclick={toggleSelectAll}
@@ -630,7 +783,7 @@
 				</div>
 
 				<div class="space-y-3 max-h-80 overflow-y-auto pr-0.5">
-					{#each mappings as mapping, idx (mapping.external_account_id)}
+					{#each newMappings as mapping, idx (mapping.external_account_id)}
 						<div
 							class="bg-subtle border border-border rounded-lg p-3 space-y-2 transition-opacity {mapping.selected
 								? ''
@@ -645,9 +798,14 @@
 										class="rounded border-border bg-canvas accent-accent-pop"
 									/>
 									<span class="text-sm font-medium text-ink-primary truncate">{mapping.name}</span>
+									{#if alreadyLinkedMappings.length > 0}
+										<span class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent-tint text-accent-pop border border-accent-pop/30">
+											New
+										</span>
+									{/if}
 								</label>
 								<span class="text-xs font-mono text-ink-secondary shrink-0">
-									${discovered[idx]?.balance ?? '0.00'}
+									${mapping.balance ?? '0.00'}
 								</span>
 							</div>
 
@@ -690,6 +848,33 @@
 							</div>
 						</div>
 					{/each}
+
+					{#if alreadyLinkedMappings.length > 0}
+						<div class="pt-2 space-y-2">
+							<div class="flex items-center justify-between text-[11px] text-ink-muted">
+								<span class="font-semibold uppercase tracking-wider">
+									Already Linked ({alreadyLinkedMappings.length})
+								</span>
+								<span>Already in your workspace — edit from Accounts</span>
+							</div>
+							{#each alreadyLinkedMappings as mapping (mapping.external_account_id)}
+								<div
+									data-testid="already-linked-account"
+									class="bg-subtle/50 border border-border rounded-lg px-3 py-2 flex items-center justify-between gap-2 opacity-65"
+								>
+									<div class="flex items-center gap-2 min-w-0">
+										<span class="text-xs font-medium text-ink-primary truncate">{mapping.name}</span>
+										<span class="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-subtle border border-border text-ink-secondary">
+											Already linked
+										</span>
+									</div>
+									<span class="text-xs font-mono text-ink-secondary shrink-0">
+										${mapping.balance ?? '0.00'}
+									</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
 				</div>
 
 				<div class="flex justify-end gap-2 pt-2">
@@ -711,7 +896,7 @@
 						data-testid="confirm-link-btn"
 						class="px-4 py-1.5 text-xs font-medium bg-accent-primary hover:opacity-90 disabled:opacity-50 text-accent-primary-text rounded-md transition-opacity"
 					>
-						{#if loading}
+						{#if loadingMode === 'link'}
 							Linking...
 						{:else}
 							Link {selectedCount} {selectedCount === 1 ? 'Account' : 'Accounts'}

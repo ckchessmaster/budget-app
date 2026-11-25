@@ -25,11 +25,21 @@
 		displayMode?: 'remaining' | 'spent';
 		embedded?: boolean;
 		transactions?: InlineActivityItem[];
+		draggingCategoryId?: string | null;
+		selectedTransactionId?: string | null;
 		onCoverClick: (categoryId: string) => void;
 		onEditClick?: (categoryId: string) => void;
 		onUpdatePlanned?: (categoryId: string, newPlanned: number) => Promise<void> | void;
-		onFilterTransactions?: (categoryId: string) => void;
 		onDropTransaction?: (txId: string, categoryId: string) => Promise<void> | void;
+		onCategoryDragStart?: (categoryId: string) => void;
+		onCategoryDragEnd?: () => void;
+		onReorderCategory?: (
+			draggedId: string,
+			targetId: string,
+			position: 'before' | 'after'
+		) => Promise<void> | void;
+		onMoveCategoryStep?: (categoryId: string, direction: 'up' | 'down') => Promise<void> | void;
+		onSelectTransaction?: (txId: string) => void;
 	}
 
 	let {
@@ -37,15 +47,22 @@
 		displayMode = 'remaining',
 		embedded = false,
 		transactions = [],
+		draggingCategoryId = null,
+		selectedTransactionId = null,
 		onCoverClick,
 		onEditClick,
 		onUpdatePlanned,
-		onFilterTransactions,
-		onDropTransaction
+		onDropTransaction,
+		onCategoryDragStart,
+		onCategoryDragEnd,
+		onReorderCategory,
+		onMoveCategoryStep,
+		onSelectTransaction
 	}: Props = $props();
 
 	let isExpanded = $state(false);
-	let isDragOver = $state(false);
+	let isTxDragOver = $state(false);
+	let categoryDropPosition = $state<'before' | 'after' | null>(null);
 	let editingPlanned = $state(false);
 	let plannedDraft = $state('');
 	let savingPlanned = $state(false);
@@ -140,21 +157,68 @@
 			editingPlanned = false;
 		}
 	}
+	function isCategoryDragEvent(e: DragEvent): boolean {
+		if (draggingCategoryId !== null) return true;
+		const types = e.dataTransfer?.types;
+		if (!types) return false;
+		return Array.from(types).includes('application/x-budget-category-id');
+	}
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	data-testid="category-row-container"
+	draggable={Boolean(onReorderCategory) && !editingPlanned}
+	ondragstart={(e) => {
+		if (!onReorderCategory || editingPlanned) return;
+		const target = e.target as Element | null;
+		if (target?.closest('input, select, a, button:not([data-testid="category-drag-handle"])')) {
+			e.preventDefault();
+			return;
+		}
+		e.dataTransfer?.setData('application/x-budget-category-id', category.id);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+		onCategoryDragStart?.(category.id);
+	}}
+	ondragend={() => {
+		categoryDropPosition = null;
+		isTxDragOver = false;
+		onCategoryDragEnd?.();
+	}}
 	ondragover={(e) => {
+		if (isCategoryDragEvent(e) && onReorderCategory) {
+			if (draggingCategoryId === category.id) return;
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+			const rect = e.currentTarget.getBoundingClientRect();
+			const midY = rect.top + rect.height / 2;
+			categoryDropPosition = e.clientY < midY ? 'before' : 'after';
+			isTxDragOver = false;
+			return;
+		}
 		if (!onDropTransaction) return;
 		e.preventDefault();
 		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-		isDragOver = true;
+		isTxDragOver = true;
+		categoryDropPosition = null;
 	}}
 	ondragleave={() => {
-		isDragOver = false;
+		isTxDragOver = false;
+		categoryDropPosition = null;
 	}}
 	ondrop={async (e) => {
-		isDragOver = false;
+		const pos = categoryDropPosition ?? 'before';
+		categoryDropPosition = null;
+		isTxDragOver = false;
+		const draggedCatId =
+			e.dataTransfer?.getData('application/x-budget-category-id') || draggingCategoryId;
+		if (draggedCatId && onReorderCategory) {
+			e.preventDefault();
+			if (draggedCatId !== category.id) {
+				await onReorderCategory(draggedCatId, category.id, pos);
+			}
+			return;
+		}
 		if (!onDropTransaction) return;
 		e.preventDefault();
 		const txId =
@@ -166,9 +230,13 @@
 	}}
 	class="{embedded
 		? ''
-		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'} {isDragOver
+		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'} {isTxDragOver
 		? 'ring-2 ring-accent-primary bg-accent-tint/30'
-		: ''}"
+		: ''} {categoryDropPosition === 'before'
+		? 'border-t-2 border-t-accent-pop'
+		: categoryDropPosition === 'after'
+			? 'border-b-2 border-b-accent-pop'
+			: ''} {draggingCategoryId === category.id ? 'opacity-50' : ''}"
 >
 	<div
 		role="button"
@@ -184,6 +252,36 @@
 		<div class="grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-2 sm:gap-3">
 			<!-- Name & Meta -->
 			<div class="min-w-0 flex items-start sm:items-center gap-1.5 sm:gap-2">
+				{#if onReorderCategory}
+					<button
+						type="button"
+						data-testid="category-drag-handle"
+						aria-label={`Reorder ${category.name}`}
+						title="Drag to reorder (or use Up/Down arrow keys)"
+						onclick={(e) => e.stopPropagation()}
+						onkeydown={(e) => {
+							if (e.key === 'ArrowUp' && onMoveCategoryStep) {
+								e.preventDefault();
+								e.stopPropagation();
+								void onMoveCategoryStep(category.id, 'up');
+							} else if (e.key === 'ArrowDown' && onMoveCategoryStep) {
+								e.preventDefault();
+								e.stopPropagation();
+								void onMoveCategoryStep(category.id, 'down');
+							}
+						}}
+						class="p-1 -ml-1 rounded text-ink-muted hover:text-ink-primary hover:bg-surface-hover cursor-grab active:cursor-grabbing shrink-0 touch-none"
+					>
+						<svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+							<circle cx="5.5" cy="3.5" r="1.2" />
+							<circle cx="10.5" cy="3.5" r="1.2" />
+							<circle cx="5.5" cy="8" r="1.2" />
+							<circle cx="10.5" cy="8" r="1.2" />
+							<circle cx="5.5" cy="12.5" r="1.2" />
+							<circle cx="10.5" cy="12.5" r="1.2" />
+						</svg>
+					</button>
+				{/if}
 				<svg
 					class="w-3.5 h-3.5 mt-0.5 sm:mt-0 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
 					viewBox="0 0 24 24"
@@ -200,7 +298,7 @@
 						{category.name}
 					</span>
 
-					{#if isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onFilterTransactions || onEditClick}
+					{#if isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick}
 						<div class="flex flex-wrap items-center gap-1.5">
 							{#if isFixed}
 								<span
@@ -230,21 +328,6 @@
 								</span>
 							{/if}
 
-							{#if onFilterTransactions}
-								<button
-									type="button"
-									onclick={(e) => {
-										e.stopPropagation();
-										onFilterTransactions(category.id);
-									}}
-									title={`Filter transactions for ${category.name}`}
-									aria-label={`Filter transactions for ${category.name}`}
-									class="text-[11px] text-ink-muted hover:text-accent-pop sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-opacity shrink-0"
-								>
-									Txns
-								</button>
-							{/if}
-
 							{#if onEditClick}
 								<button
 									type="button"
@@ -254,7 +337,7 @@
 										e.stopPropagation();
 										onEditClick(category.id);
 									}}
-									class="text-[11px] text-ink-muted hover:text-ink-primary sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-opacity shrink-0"
+									class="px-2 py-1 rounded-md text-xs text-ink-muted hover:text-ink-primary hover:bg-surface-hover sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-all shrink-0"
 								>
 									Edit
 								</button>
@@ -295,7 +378,7 @@
 						title={showOriginalTick
 							? `Base planned: ${fmt(category.originalPlanned)} (adjusted to ${fmt(category.effectiveTarget)})`
 							: 'Click to edit planned budget'}
-						class="inline-block rounded px-1.5 py-0.5 text-xs font-mono font-normal text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
+						class="inline-block rounded px-2 py-1 text-xs font-mono font-normal text-ink-muted hover:text-ink-primary hover:bg-surface-hover transition-colors"
 					>
 						{fmt(category.effectiveTarget)}
 					</button>
@@ -390,6 +473,11 @@
 	</div>
 
 	{#if isExpanded}
-		<InlineActivityDrawer {transactions} {embedded} />
+		<InlineActivityDrawer
+			{transactions}
+			{embedded}
+			{selectedTransactionId}
+			{onSelectTransaction}
+		/>
 	{/if}
 </div>

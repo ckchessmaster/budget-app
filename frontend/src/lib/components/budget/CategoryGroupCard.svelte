@@ -10,15 +10,26 @@
 		displayMode: 'remaining' | 'spent';
 		highlighted?: boolean;
 		transactionsByCategory?: Map<string, InlineActivityItem[]>;
+		draggingCategoryId?: string | null;
+		selectedTransactionId?: string | null;
 		onToggleDisplayMode: () => void;
 		onCoverClick: (id: string) => void;
 		onEditClick: (id: string) => void;
+		onEditGroup?: (groupName: string) => void;
 		onUpdatePlanned: (id: string, amount: number) => Promise<void> | void;
-		onFilterTransactions?: (id: string) => void;
 		onAddCategoryInGroup: (groupName: string) => void;
 		onDropTransaction?: (txId: string, categoryId: string) => Promise<void> | void;
 		onChangeGroupColor?: (groupName: string, colorIndex: number) => void;
-		onDeleteGroup?: (groupName: string) => Promise<void> | void;
+		onCategoryDragStart?: (categoryId: string) => void;
+		onCategoryDragEnd?: () => void;
+		onReorderCategory?: (
+			draggedId: string,
+			targetId: string,
+			position: 'before' | 'after'
+		) => Promise<void> | void;
+		onMoveCategoryToGroup?: (draggedId: string, targetGroupName: string) => Promise<void> | void;
+		onMoveCategoryStep?: (categoryId: string, direction: 'up' | 'down') => Promise<void> | void;
+		onSelectTransaction?: (txId: string) => void;
 	}
 
 	let {
@@ -28,20 +39,26 @@
 		displayMode,
 		highlighted = false,
 		transactionsByCategory,
+		draggingCategoryId = null,
+		selectedTransactionId = null,
 		onToggleDisplayMode,
 		onCoverClick,
 		onEditClick,
+		onEditGroup,
 		onUpdatePlanned,
-		onFilterTransactions,
 		onAddCategoryInGroup,
 		onDropTransaction,
 		onChangeGroupColor,
-		onDeleteGroup
+		onCategoryDragStart,
+		onCategoryDragEnd,
+		onReorderCategory,
+		onMoveCategoryToGroup,
+		onMoveCategoryStep,
+		onSelectTransaction
 	}: Props = $props();
 
 	let colorPickerOpen = $state(false);
-	let confirmDeleteGroup = $state(false);
-	let deletingGroup = $state(false);
+	let isEmptyDropOver = $state(false);
 
 	let groupPlannedTotal = $derived(categories.reduce((sum, c) => sum + c.effectiveTarget, 0));
 	let groupSpentTotal = $derived(
@@ -77,10 +94,12 @@
 				<button
 					type="button"
 					onclick={() => (colorPickerOpen = !colorPickerOpen)}
-					title="Change group color"
+					title="Change category color"
 					aria-label={`Change color for ${groupName}`}
-					class="w-3 h-3 rounded-full shrink-0 {color.dotClass} ring-2 ring-offset-1 ring-offset-surface ring-transparent hover:ring-ink-muted/40 transition-all"
-				></button>
+					class="p-1 -m-1 rounded-full shrink-0 hover:bg-surface/70 transition-colors"
+				>
+					<span class="block w-3.5 h-3.5 rounded-full {color.dotClass} ring-2 ring-offset-1 ring-offset-surface ring-transparent"></span>
+				</button>
 				{#if colorPickerOpen}
 					<div
 						class="absolute left-0 top-7 z-20 flex items-center gap-1.5 rounded-xl border border-border bg-surface p-2 shadow-lg"
@@ -96,15 +115,26 @@
 									onChangeGroupColor(groupName, idx);
 									colorPickerOpen = false;
 								}}
-								class="w-4 h-4 rounded-full {swatch.dotClass} hover:scale-110 transition-transform {swatch.stroke === color.stroke ? 'ring-2 ring-ink-primary ring-offset-1 ring-offset-surface' : ''}"
+								class="w-5 h-5 rounded-full {swatch.dotClass} hover:scale-110 transition-transform {swatch.stroke === color.stroke ? 'ring-2 ring-ink-primary ring-offset-1 ring-offset-surface' : ''}"
 							></button>
 						{/each}
 					</div>
 				{/if}
 			{:else}
-				<span class="w-2.5 h-2.5 rounded-full shrink-0 {color.dotClass}" aria-hidden="true"></span>
+				<span class="w-3 h-3 rounded-full shrink-0 {color.dotClass}" aria-hidden="true"></span>
 			{/if}
 			<h3 class="text-base font-bold text-ink-primary truncate">{groupName}</h3>
+			{#if onEditGroup}
+				<button
+					type="button"
+					data-testid="edit-group-btn"
+					aria-label={`Edit ${groupName}`}
+					onclick={() => onEditGroup(groupName)}
+					class="px-2.5 py-1 rounded-lg text-xs font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface/80 transition-colors shrink-0"
+				>
+					Edit
+				</button>
+			{/if}
 		</div>
 
 		<div class="text-right">
@@ -134,71 +164,72 @@
 		</div>
 	</div>
 
-	<!-- Categories -->
-	<div class="divide-y divide-border">
-		{#each categories as cat (cat.id)}
-			<CategoryRow
-				category={cat}
-				{displayMode}
-				embedded={true}
-				transactions={transactionsByCategory?.get(cat.id) ?? []}
-				{onCoverClick}
-				{onEditClick}
-				{onUpdatePlanned}
-				{onFilterTransactions}
-				{onDropTransaction}
-			/>
-		{/each}
-	</div>
+	<!-- Items -->
+	{#if categories.length === 0}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			data-testid="empty-group-dropzone"
+			ondragover={(e) => {
+				if (!onMoveCategoryToGroup) return;
+				const hasCatType =
+					draggingCategoryId !== null ||
+					Boolean(e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('application/x-budget-category-id'));
+				if (!hasCatType) return;
+				e.preventDefault();
+				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+				isEmptyDropOver = true;
+			}}
+			ondragleave={() => {
+				isEmptyDropOver = false;
+			}}
+			ondrop={async (e) => {
+				isEmptyDropOver = false;
+				if (!onMoveCategoryToGroup) return;
+				const draggedCatId =
+					e.dataTransfer?.getData('application/x-budget-category-id') || draggingCategoryId;
+				if (draggedCatId) {
+					e.preventDefault();
+					await onMoveCategoryToGroup(draggedCatId, groupName);
+				}
+			}}
+			class="px-4 py-6 text-center text-xs text-ink-muted transition-colors {isEmptyDropOver
+				? 'ring-2 ring-inset ring-accent-pop bg-accent-tint/30 text-ink-primary'
+				: ''}"
+		>
+			No items yet. Click "+ Add Item" below or drag an item here.
+		</div>
+	{:else}
+		<div class="divide-y divide-border">
+			{#each categories as cat (cat.id)}
+				<CategoryRow
+					category={cat}
+					{displayMode}
+					embedded={true}
+					transactions={transactionsByCategory?.get(cat.id) ?? []}
+					{draggingCategoryId}
+					{selectedTransactionId}
+					{onCoverClick}
+					{onEditClick}
+					{onUpdatePlanned}
+					{onDropTransaction}
+					{onCategoryDragStart}
+					{onCategoryDragEnd}
+					{onReorderCategory}
+					{onMoveCategoryStep}
+					{onSelectTransaction}
+				/>
+			{/each}
+		</div>
+	{/if}
 
 	<!-- Footer -->
-	<div class="rounded-b-2xl px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border flex items-center justify-between gap-2">
+	<div class="rounded-b-2xl px-3.5 sm:px-5 py-2 bg-subtle border-t border-border flex items-center justify-between gap-2">
 		<button
 			type="button"
 			onclick={() => onAddCategoryInGroup(groupName)}
-			class="text-xs font-semibold text-accent-pop hover:underline transition-colors"
+			class="px-2 py-1.5 -ml-2 rounded-lg text-xs font-semibold text-accent-pop hover:bg-surface-hover transition-colors"
 		>
 			+ Add Item
 		</button>
-
-		{#if onDeleteGroup}
-			{#if confirmDeleteGroup}
-				<div class="flex items-center gap-2">
-					<span class="text-[11px] text-status-danger">Delete group?</span>
-					<button
-						type="button"
-						disabled={deletingGroup}
-						onclick={async () => {
-							deletingGroup = true;
-							try {
-								await onDeleteGroup(groupName);
-							} finally {
-								deletingGroup = false;
-								confirmDeleteGroup = false;
-							}
-						}}
-						class="text-[11px] font-semibold text-status-danger hover:underline disabled:opacity-50"
-					>
-						{deletingGroup ? 'Deleting...' : 'Confirm'}
-					</button>
-					<button
-						type="button"
-						disabled={deletingGroup}
-						onclick={() => (confirmDeleteGroup = false)}
-						class="text-[11px] text-ink-secondary hover:text-ink-primary"
-					>
-						Cancel
-					</button>
-				</div>
-			{:else}
-				<button
-					type="button"
-					onclick={() => (confirmDeleteGroup = true)}
-					class="text-[11px] text-ink-muted hover:text-status-danger transition-colors"
-				>
-					Delete Group
-				</button>
-			{/if}
-		{/if}
 	</div>
 </section>

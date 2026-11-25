@@ -15,6 +15,7 @@
 	let loading = $state(true);
 	let syncing = $state(false);
 	let simplefinModalOpen = $state(false);
+	let simplefinAutoDiscover = $state(false);
 	let accountModalOpen = $state(false);
 	let editingAccount = $state<AccountItem | null>(null);
 	let statusMessage = $state<string | null>(null);
@@ -23,6 +24,9 @@
 	let offBudgetAccounts = $derived(accounts.filter((a) => !a.isOnBudget));
 	let onBudgetTotal = $derived(onBudgetAccounts.reduce((sum, a) => sum + a.currentBalance, 0));
 	let offBudgetTotal = $derived(offBudgetAccounts.reduce((sum, a) => sum + a.currentBalance, 0));
+	let linkedSimpleFINIds = $derived(
+		accounts.map((a) => a.externalAccountId).filter((id): id is string => Boolean(id))
+	);
 
 	function fmtMoney(n: number): string {
 		const abs = Math.abs(n).toLocaleString('en-US', {
@@ -173,10 +177,13 @@
 			</button>
 			<button
 				type="button"
-				onclick={() => (simplefinModalOpen = true)}
+				onclick={() => {
+					simplefinAutoDiscover = false;
+					simplefinModalOpen = true;
+				}}
 				class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border transition-colors"
 			>
-				{demo.simplefin.connected && !demo.isDemo ? 'Reconnect SimpleFIN' : 'Connect SimpleFIN'}
+				{demo.simplefin.connected && !demo.isDemo ? 'Link SimpleFIN Accounts' : 'Connect SimpleFIN'}
 			</button>
 			<button
 				type="button"
@@ -264,6 +271,14 @@
 	open={accountModalOpen}
 	{editingAccount}
 	{categories}
+	simplefinConnected={demo.simplefin.connected && !demo.isDemo}
+	isDemoMode={demo.isDemo}
+	onOpenSimpleFIN={() => {
+		accountModalOpen = false;
+		editingAccount = null;
+		simplefinAutoDiscover = demo.simplefin.connected && !demo.isDemo;
+		simplefinModalOpen = true;
+	}}
 	onClose={() => {
 		accountModalOpen = false;
 		editingAccount = null;
@@ -278,7 +293,12 @@
 
 <SimpleFINSetupModal
 	open={simplefinModalOpen}
-	onClose={() => (simplefinModalOpen = false)}
+	linkedExternalIds={linkedSimpleFINIds}
+	autoDiscover={simplefinAutoDiscover}
+	onClose={() => {
+		simplefinModalOpen = false;
+		simplefinAutoDiscover = false;
+	}}
 	onLinked={(count) => {
 		if (count && count > 0) {
 			statusMessage = `Linked ${count} ${count === 1 ? 'account' : 'accounts'} via SimpleFIN — running initial bank sync...`;

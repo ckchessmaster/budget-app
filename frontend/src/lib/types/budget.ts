@@ -78,6 +78,7 @@ export interface CreateIncomePayload {
 
 export interface InlineActivityItem {
 	id: string;
+	transactionId?: string;
 	date: string; // YYYY-MM-DD
 	merchant: string;
 	accountName: string;

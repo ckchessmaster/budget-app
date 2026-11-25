@@ -71,6 +71,17 @@ describe('formatSimpleFINClaimError', () => {
 		expect(msg).toContain('expired or already used');
 	});
 
+	it('explains revoked saved connection when discover rejects credentials', () => {
+		const msg = formatSimpleFINClaimError('simplefin rejected the credentials', 'discover');
+		expect(msg).toContain('revoked');
+		expect(msg).not.toContain('single-use');
+	});
+
+	it('explains missing connection when simplefin_not_connected is returned', () => {
+		const msg = formatSimpleFINClaimError('simplefin_not_connected', 'discover');
+		expect(msg).toContain('No active SimpleFIN connection');
+	});
+
 	it('translates timeout messages into user-friendly guidance', () => {
 		const msg = formatSimpleFINClaimError('Timed out waiting for the SimpleFIN claim to finish');
 		expect(msg).toContain('took too long');
