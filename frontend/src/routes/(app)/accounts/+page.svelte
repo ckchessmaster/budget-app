@@ -176,7 +176,7 @@
 				onclick={() => (simplefinModalOpen = true)}
 				class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border transition-colors"
 			>
-				Connect SimpleFIN
+				{demo.simplefin.connected && !demo.isDemo ? 'Reconnect SimpleFIN' : 'Connect SimpleFIN'}
 			</button>
 			<button
 				type="button"
@@ -279,5 +279,11 @@
 <SimpleFINSetupModal
 	open={simplefinModalOpen}
 	onClose={() => (simplefinModalOpen = false)}
-	onLinked={() => void loadAccounts()}
+	onLinked={(count) => {
+		if (count && count > 0) {
+			statusMessage = `Linked ${count} ${count === 1 ? 'account' : 'accounts'} via SimpleFIN — running initial bank sync...`;
+		}
+		void demo.load().catch(() => {});
+		void loadAccounts();
+	}}
 />
