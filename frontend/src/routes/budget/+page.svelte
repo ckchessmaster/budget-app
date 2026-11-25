@@ -700,6 +700,7 @@
 									onUpdatePlanned={handleUpdatePlanned}
 									onFilterTransactions={handleFilterCategoryTransactions}
 									onAddCategoryInGroup={openNewCategoryInGroup}
+									onDropTransaction={handleCategorizeTransaction}
 								/>
 							{/each}
 						</div>

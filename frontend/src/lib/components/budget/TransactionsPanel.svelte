@@ -662,7 +662,17 @@
 				{@const isMenuOpen = openMenuTxId === tx.id}
 				{@const isEditing = editingTxId === tx.id}
 
-				<div data-testid="tx-panel-row" class="transition-colors">
+				<div
+					data-testid="tx-panel-row"
+					draggable={canCategorize}
+					ondragstart={(e) => {
+						if (!canCategorize) return;
+						e.dataTransfer?.setData('application/x-budget-tx-id', tx.id);
+						e.dataTransfer?.setData('text/plain', tx.id);
+						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+					}}
+					class="transition-colors {canCategorize ? 'cursor-grab active:cursor-grabbing' : ''}"
+				>
 					{#if canCategorize}
 						<div
 							role="button"

@@ -16,6 +16,7 @@
 		onUpdatePlanned: (id: string, amount: number) => Promise<void> | void;
 		onFilterTransactions?: (id: string) => void;
 		onAddCategoryInGroup: (groupName: string) => void;
+		onDropTransaction?: (txId: string, categoryId: string) => Promise<void> | void;
 	}
 
 	let {
@@ -30,7 +31,8 @@
 		onEditClick,
 		onUpdatePlanned,
 		onFilterTransactions,
-		onAddCategoryInGroup
+		onAddCategoryInGroup,
+		onDropTransaction
 	}: Props = $props();
 
 	let groupPlannedTotal = $derived(categories.reduce((sum, c) => sum + c.effectiveTarget, 0));
@@ -102,6 +104,7 @@
 				{onEditClick}
 				{onUpdatePlanned}
 				{onFilterTransactions}
+				{onDropTransaction}
 			/>
 		{/each}
 	</div>
