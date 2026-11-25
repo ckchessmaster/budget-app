@@ -33,7 +33,6 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/schedules"
-	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
 	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
@@ -215,9 +214,16 @@ func (s *Server) setupRoutes() {
 			transaction.RegisterRoutes(protected, s.pool, s.evaluator)
 
 			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
-			simplefin.RegisterRoutes(protected, s.pool, s.vault)
+			var claimWorkflow simplefin.ClaimWorkflow
+			if s.temporal != nil {
+				claimWorkflow = schedules.SimpleFINClaimStarter{Client: s.temporal}
+			}
+			simplefin.RegisterRoutes(protected, s.pool, s.vault, claimWorkflow)
 			protected.Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
-			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleBankSyncStatus)
+			// One status endpoint serves every workflow the API can start. The
+			// sync-specific path is an alias kept for cached frontend bundles.
+			protected.Get("/api/v1/bank/workflow-status/{workflow_id}", s.handleWorkflowStatus)
+			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleWorkflowStatus)
 
 			// Settings & Demo Mode simulator routes
 			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal)
@@ -304,7 +310,19 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
+// handleWorkflowStatus reports the state of any budget-app workflow the caller's workspace
+// owns.
+//
+// It replaces the sync-only status endpoint, which decoded the result into a concrete
+// BankSyncResult and so could describe exactly one workflow. The result is passed through
+// as raw JSON instead: the API has no business interpreting it, and the caller already
+// knows which workflow it started. The old /bank/sync-status path stays routed to this
+// handler so a cached frontend bundle keeps working.
+//
+// Authorization is the workflow ID containing the caller's workspace ID, which every
+// workflow ID in this app embeds. That is deliberately checked before Temporal is
+// contacted, so one workspace cannot probe another's history by guessing IDs.
+func (s *Server) handleWorkflowStatus(w http.ResponseWriter, r *http.Request) {
 	userID, err := middleware.GetUserID(r.Context())
 	if err != nil {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
@@ -348,15 +366,15 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type syncStatusResp struct {
-		WorkflowID string                    `json:"workflow_id"`
-		Status     string                    `json:"status"`
-		Attempt    int32                     `json:"attempt,omitempty"`
-		LastError  string                    `json:"last_error,omitempty"`
-		Result     *workflows.BankSyncResult `json:"result,omitempty"`
+	type workflowStatusResp struct {
+		WorkflowID string          `json:"workflow_id"`
+		Status     string          `json:"status"`
+		Attempt    int32           `json:"attempt,omitempty"`
+		LastError  string          `json:"last_error,omitempty"`
+		Result     json.RawMessage `json:"result,omitempty"`
 	}
 
-	resp := syncStatusResp{
+	resp := workflowStatusResp{
 		WorkflowID: workflowID,
 		Status:     "RUNNING",
 	}
@@ -378,9 +396,9 @@ func (s *Server) handleBankSyncStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Status = "COMPLETED"
 		getCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		var result workflows.BankSyncResult
-		if err := s.temporal.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, &result); err == nil {
-			resp.Result = &result
+		var raw json.RawMessage
+		if err := s.temporal.GetWorkflow(r.Context(), workflowID, "").Get(getCtx, &raw); err == nil && len(raw) > 0 {
+			resp.Result = raw
 		}
 	case enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
 		enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT,

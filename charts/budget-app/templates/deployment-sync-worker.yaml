@@ -23,6 +23,11 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         {{- include "budget-app.labels" . | nindent 8 }}
     spec:
+      # Schema migrations are deliberately not run here. The backend pod owns them via its
+      # initContainer, and running them from two pods at once only invites a lock fight.
+      # During an upgrade a worker can therefore briefly see the previous schema; the
+      # affected activities fail as retryable errors and Temporal replays them once the
+      # migration lands, which is the behaviour the retry policies are there for.
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

@@ -27,6 +27,25 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("simplefin rate limited; retry after %s", e.RetryAfter)
 }
 
+// TerminalStatusError is a claim response the bank will keep answering the same way.
+//
+// A SimpleFIN claim token is single-use, so a 4xx on the claim endpoint means the token is
+// malformed, expired or already spent. Re-sending it cannot succeed, and every attempt is
+// another request to a provider that has already said no, so callers must treat this as
+// terminal rather than retryable.
+type TerminalStatusError struct {
+	StatusCode int
+	Operation  string
+	Message    string
+}
+
+func (e *TerminalStatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("simplefin %s rejected the request (%d): %s", e.Operation, e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("simplefin %s rejected the request (%d)", e.Operation, e.StatusCode)
+}
+
 type AuthError struct {
 	StatusCode int
 	Message    string
@@ -87,7 +106,17 @@ func (c *httpClient) ClaimSetupToken(ctx context.Context, setupToken string) (st
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", &AuthError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body))}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	// Any other 4xx on a claim is terminal for the reasons on TerminalStatusError. 5xx is
+	// deliberately left retryable: the token is still good and the bank is having a moment.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", &TerminalStatusError{
+			StatusCode: resp.StatusCode,
+			Operation:  "claim",
+			Message:    strings.TrimSpace(string(body)),
+		}
+	}
+	if resp.StatusCode < 200 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", fmt.Errorf("simplefin claim returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
