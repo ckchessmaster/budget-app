@@ -2,16 +2,20 @@ package transaction
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
 type Service interface {
 	CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSplitTransactionRequest) (*Transaction, error)
+	CreateTransactionIdempotent(ctx context.Context, tx pgx.Tx, req CreateSplitTransactionRequest) (*Transaction, bool, error)
 	GetTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error)
 	ListTransactions(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error)
 	UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID, req UpdateTransactionRequest) (*Transaction, error)
@@ -43,6 +47,54 @@ func ValidateSplits(totalAmount decimal.Decimal, splits []SplitItem) error {
 		return ErrSplitSumMismatch
 	}
 	return nil
+}
+
+// CreateTransactionIdempotent creates a transaction guarded by req.ClientID, and reports
+// whether this call is the one that wrote it.
+//
+// The boolean is the whole point: a replayed item must not repeat the side effects that
+// follow an insert, above all the balance adjustment, so callers need to know whether they
+// applied the row or found it already applied. A conflict is success, not an error.
+//
+// The pre-check is a SELECT rather than ON CONFLICT DO NOTHING because the insert and the
+// balance adjustment share one transaction: a statement that swallows the conflict cannot
+// also tell the caller to skip the adjustment.
+//
+// Two concurrent attempts with the same key can both pass the pre-check. One loses on the
+// unique index, which aborts its transaction, and the caller retries — where the pre-check
+// now finds the row. That is why the 23505 is returned untouched instead of being turned
+// into a duplicate report: the row cannot be read from an aborted transaction.
+func (s *service) CreateTransactionIdempotent(
+	ctx context.Context,
+	tx pgx.Tx,
+	req CreateSplitTransactionRequest,
+) (*Transaction, bool, error) {
+	if req.ClientID == "" {
+		created, err := s.CreateTransaction(ctx, tx, req)
+		if err != nil {
+			return nil, false, err
+		}
+		return created, true, nil
+	}
+
+	existing, err := s.repo.GetByClientID(ctx, tx, req.ClientID)
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, ErrTransactionNotFound) {
+		return nil, false, err
+	}
+
+	created, err := s.CreateTransaction(ctx, tx, req)
+	if err != nil {
+		var pqErr *pgconn.PgError
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			// Lost the race. Retryable on purpose: the retry takes the pre-check.
+			return nil, false, fmt.Errorf("%w (client_id %s already applied concurrently)", err, req.ClientID)
+		}
+		return nil, false, err
+	}
+	return created, true, nil
 }
 
 func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSplitTransactionRequest) (*Transaction, error) {
@@ -97,6 +149,10 @@ func (s *service) CreateTransaction(ctx context.Context, tx pgx.Tx, req CreateSp
 		TransactionDate: txDate,
 		UserNotes:       notesPtr,
 		IsCleared:       isCleared,
+	}
+	if req.ClientID != "" {
+		key := req.ClientID
+		parent.ClientID = &key
 	}
 
 	if err := s.repo.Create(ctx, tx, parent); err != nil {

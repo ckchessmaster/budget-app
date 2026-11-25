@@ -211,7 +211,15 @@ func (s *Server) setupRoutes() {
 
 			// Milestone 3: Accounts, solvency, debt paydown, and transactions
 			account.RegisterRoutes(protected, s.pool)
-			transaction.RegisterRoutes(protected, s.pool, s.evaluator)
+			var replay transaction.ReplayWorkflow
+			if s.temporal != nil {
+				replay = schedules.OfflineReplayStarter{Client: s.temporal}
+			}
+			transaction.RegisterRoutes(protected, s.pool, replay, s.evaluator)
+			// The offline queue polls the same shared status endpoint as bank sync and
+			// the demo reset. It lives under /transactions so the queue does not have to
+			// know that its work happens to run on the banking task queue.
+			protected.Get("/api/v1/transactions/workflow-status/{workflow_id}", s.handleWorkflowStatus)
 
 			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
 			var claimWorkflow simplefin.ClaimWorkflow
@@ -315,7 +323,7 @@ func (s *Server) handleBankSyncNow(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWorkflowStatus reports the state of any budget-app workflow the caller's workspace
-// owns.
+// owns: bank sync, a SimpleFIN claim, a demo reset, or an offline transaction replay.
 //
 // It replaces the sync-only status endpoint, which decoded the result into a concrete
 // BankSyncResult and so could describe exactly one workflow. The result is passed through

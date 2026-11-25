@@ -58,7 +58,7 @@ cluster.
 
 ### What is orchestrated today
 
-Four workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
+Five workflows are registered on task queue `budget-sync-queue` in namespace `budget-app`:
 
 - `BankSyncWorkflow` in
   [`backend/internal/temporal/workflows/bank_sync.go`](backend/internal/temporal/workflows/bank_sync.go):
@@ -81,6 +81,14 @@ Four workflows are registered on task queue `budget-sync-queue` in namespace `bu
   tears the demo sandbox down and rebuilds it. `POST /api/v1/demo/reset` answers 202 and the
   browser polls. Its ID is `demo-reset-<workspaceID>` with no timestamp, so Temporal itself
   refuses a second concurrent reset and the endpoint returns 409.
+- `OfflineReplayWorkflow` in
+  [`backend/internal/temporal/workflows/offline_replay.go`](backend/internal/temporal/workflows/offline_replay.go):
+  applies a batch of queued offline transactions, one `ReplayTransactionItemActivity` per item,
+  bounded to 8 in flight. `POST /api/v1/transactions/sync` answers 202 with a workflow id and the
+  browser polls. Unlike the reset, its ID carries a timestamp: two queued batches are different
+  work, and duplicates are prevented per item by `transactions.client_id`, not by the ID.
+  The workflow never fails because one item did — it returns `applied` client ids and `rejected`
+  ones carrying a reason and a `retryable` flag the client acts on.
 
 Claim and fetch are separate activities because a claim token is single-use at the bank: one
 activity doing both would re-claim on every fetch retry.
@@ -99,7 +107,9 @@ Triggers for bank sync are `POST /api/v1/bank/sync-now`, the demo simulator's `s
 a per-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
 lazily on first sync. Both schedules are created at runtime rather than by a migration, so a
 workspace that predates them only starts running on its next provision or sync. Progress comes
-from `DescribeWorkflowExecution` behind `GET /api/v1/bank/sync-status/{workflow_id}`. There are
+from `DescribeWorkflowExecution` behind `GET /api/v1/bank/workflow-status/{workflow_id}`, also
+routed as `/bank/sync-status/{workflow_id}` for cached bundles and
+`/api/v1/transactions/workflow-status/{workflow_id}` for the offline queue. There are
 no signals, queries, child workflows, or continue-as-new yet.
 ### Required configuration, with no fallbacks
 
@@ -132,12 +142,25 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
 2. **Workflow code stays deterministic.** No `time.Now()`, no `rand`, no HTTP, no DB in
    workflow functions — use `workflow.Now(ctx)`, side effects, and activities. Replay
    re-executes the function from scratch.
+   For fan-out, `workflow.WaitGroup` is an interface bound to the scheduler: build it with
+   `workflow.NewWaitGroup(ctx)`. A zero value is a nil reference that panics on `Add`, and
+   inside a workflow that panic surfaces only as an opaque
+   `runtime error: invalid memory address or nil pointer dereference`.
 3. **Set `ActivityOptions` explicitly.** See `bank_sync.go`: a start-to-close timeout plus a
    `RetryPolicy` with bounded attempts. Classify errors — validation failures are terminal via
    `temporal.NewNonRetryableApplicationError`, transport and rate-limit failures retry. When an
    upstream sends `Retry-After`, honour it instead of using generic backoff.
+   Give the terminal error a short machine-readable type (`unknown_account`,
+   `invalid_transaction_date`): it is what the client shows the user, and the reason strings in
+   `internal/transaction/repo.go` are the shared vocabulary.
 4. **Assume at-least-once.** Every activity needs an idempotent effect: an upsert, a unique
    constraint, or a natural key. Retries are not exceptional.
+   `offline_replay.go` is the worked example of a fan-out: one activity per item, a
+   `workflow.Channel` semaphore to bound concurrency, and a result that reports per-item
+   outcomes instead of failing the batch. Idempotency there is `transactions.client_id`,
+   unique per workspace — and note that a duplicate must also skip the balance adjustment,
+   which is why `CreateTransactionIdempotent` returns whether it applied the row rather than
+   just an error.
 5. **Register the workflow and activities** in
    [`backend/cmd/worker/main.go`](backend/cmd/worker/main.go). The worker binary is built into
    the backend image at `/usr/local/bin/worker`.

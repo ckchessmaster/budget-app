@@ -548,11 +548,20 @@
 	async function handleSyncNow() {
 		syncing = true;
 		try {
-			await flushOfflineQueue(localDB);
+			const flushed = await flushOfflineQueue(localDB);
 			if (typeof navigator === 'undefined' || navigator.onLine) {
 				await demo.triggerSyncAndPoll();
 			}
 			await loadWorkspace(currentMonth, true);
+			// The replay is durable now, so an item can be refused for a reason only the
+			// user can fix — a deleted account, a date that never parsed. Say which, rather
+			// than leaving it sitting in the queue looking like it is still on its way.
+			if (flushed.failedCount > 0) {
+				const first = flushed.rejections.find((r) => !r.retryable);
+				errorMsg = `${flushed.failedCount} queued transaction${flushed.failedCount === 1 ? '' : 's'} could not be saved${
+					first ? ` (${first.reason})` : ''
+				} and stayed in the queue for editing.`;
+			}
 		} catch (err: any) {
 			errorMsg = err?.message || 'Sync failed.';
 		} finally {

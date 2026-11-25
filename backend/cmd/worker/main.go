@@ -8,12 +8,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/activities"
 	"github.com/ckchessmaster/budget-app/backend/internal/temporal/workflows"
+	"github.com/ckchessmaster/budget-app/backend/internal/transaction"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
@@ -80,6 +82,7 @@ func main() {
 	w.RegisterWorkflow(workflows.MonthEndRolloverWorkflow)
 	w.RegisterWorkflow(workflows.SimpleFINClaimWorkflow)
 	w.RegisterWorkflow(workflows.DemoResetWorkflow)
+	w.RegisterWorkflow(workflows.OfflineReplayWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:                  pool,
 		Client:                simplefin.NewClient(nil),
@@ -107,6 +110,14 @@ func main() {
 		MockBaseURL: mockBaseURL,
 		Temporal:    c,
 		SeedSandbox: demo.SeedDemoWorkspaceTxWithID,
+	})
+	// Offline replay reuses the API's own transaction service, so a queued item goes
+	// through the same validation and balance rules as a synchronous POST. Two code paths
+	// for creating a transaction is how the queue and the UI start disagreeing about the
+	// ledger.
+	w.RegisterActivity(&activities.ReplayActivities{
+		Pool:         pool,
+		Transactions: transaction.NewService(transaction.NewRepo(), account.NewRepo()),
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)
