@@ -3,6 +3,7 @@ package budget
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 )
 
 type Handler struct {
@@ -132,6 +134,23 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.StartingBalance != nil && req.StartingBalance.LessThan(decimal.Zero) {
+		writeErr(w, http.StatusBadRequest, "starting_balance must be >= 0")
+		return
+	}
+
+	var startYM time.Time
+	if req.YearMonth != nil && *req.YearMonth != "" {
+		parsedYM, err := time.Parse("2006-01", *req.YearMonth)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid year_month format, expected YYYY-MM")
+			return
+		}
+		startYM = NormalizeYearMonth(parsedYM)
+	} else {
+		startYM = NormalizeYearMonth(time.Now().UTC())
+	}
+
 	cat := &Category{
 		Name:                  req.Name,
 		GroupName:             req.GroupName,
@@ -145,7 +164,21 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
-		return h.catRepo.Create(r.Context(), tx, cat)
+		if err := h.catRepo.Create(r.Context(), tx, cat); err != nil {
+			return err
+		}
+		if req.StartingBalance != nil && req.StartingBalance.GreaterThan(decimal.Zero) {
+			_, err := tx.Exec(r.Context(), `
+				INSERT INTO monthly_category_budgets (workspace_id, category_id, year_month, original_planned, carryover_balance)
+				VALUES ($1, $2, $3::date, $4, $5)
+				ON CONFLICT (workspace_id, category_id, year_month)
+				DO UPDATE SET carryover_balance = EXCLUDED.carryover_balance
+			`, cat.WorkspaceID, cat.ID, startYM, cat.MonthlyBudget, *req.StartingBalance)
+			if err != nil {
+				return fmt.Errorf("failed to set starting balance: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrCyclicSweep) {

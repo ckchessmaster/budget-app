@@ -178,6 +178,23 @@ export async function createPlannedIncome(payload: CreateIncomePayload): Promise
 	return mapIncome(await res.json());
 }
 
+export async function updatePlannedIncome(
+	id: string,
+	payload: { name: string; amount: number }
+): Promise<PlannedIncome> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/budget/incomes/${id}`, {
+		method: 'PATCH',
+		headers: await authHeaders(),
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(err.error || `Failed to update planned income (${res.status})`);
+	}
+	return mapIncome(await res.json());
+}
+
 export async function deletePlannedIncome(id: string): Promise<void> {
 	const { apiBaseUrl } = getAppConfig();
 	const res = await fetch(`${apiBaseUrl}/api/v1/budget/incomes/${id}`, {

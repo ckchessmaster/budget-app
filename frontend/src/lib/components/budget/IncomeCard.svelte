@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createPlannedIncome, deletePlannedIncome } from '$lib/api/budget';
+	import { createPlannedIncome, deletePlannedIncome, updatePlannedIncome } from '$lib/api/budget';
 	import type { InlineActivityItem, PlannedIncome } from '$lib/types/budget';
 	import InlineActivityDrawer from './InlineActivityDrawer.svelte';
 
@@ -43,6 +43,9 @@
 	let showAddForm = $state(false);
 	let name = $state('');
 	let amount = $state('');
+	let editingId = $state<string | null>(null);
+	let editName = $state('');
+	let editAmount = $state('');
 	let isSubmitting = $state(false);
 	let errorMsg = $state('');
 
@@ -146,6 +149,37 @@
 			onChanged();
 		} catch (err: any) {
 			errorMsg = err?.message || 'Failed to add planned income.';
+		} finally {
+			isSubmitting = false;
+		}
+	}
+
+	function startEdit(inc: PlannedIncome) {
+		editingId = inc.id;
+		editName = inc.name;
+		editAmount = String(inc.amount);
+		errorMsg = '';
+	}
+
+	async function handleSaveEdit(e: SubmitEvent) {
+		e.preventDefault();
+		if (!editingId) return;
+		const parsed = Number(editAmount);
+		if (!editName.trim() || !Number.isFinite(parsed) || parsed < 0) {
+			errorMsg = 'Enter a source name and an amount of $0.00 or greater.';
+			return;
+		}
+		isSubmitting = true;
+		errorMsg = '';
+		try {
+			await updatePlannedIncome(editingId, {
+				name: editName.trim(),
+				amount: parsed
+			});
+			editingId = null;
+			onChanged();
+		} catch (err: any) {
+			errorMsg = err?.message || 'Failed to update planned income.';
 		} finally {
 			isSubmitting = false;
 		}
@@ -285,6 +319,18 @@
 										disabled={isSubmitting}
 										onclick={(e) => {
 											e.stopPropagation();
+											startEdit(row.income);
+										}}
+										aria-label={`Edit ${row.income.name}`}
+										class="px-2 py-1 rounded-md text-xs text-ink-secondary sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:bg-surface-hover transition-all shrink-0"
+									>
+										Edit
+									</button>
+									<button
+										type="button"
+										disabled={isSubmitting}
+										onclick={(e) => {
+											e.stopPropagation();
 											void handleDelete(row.income.id);
 										}}
 										aria-label={`Remove ${row.income.name}`}
@@ -308,6 +354,51 @@
 							{fmt(row.rowReceived)}
 						</div>
 					</div>
+
+					{#if editingId === row.income.id}
+						<form
+							onsubmit={handleSaveEdit}
+							class="px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border/60 flex flex-col sm:flex-row gap-2"
+						>
+							<input
+								type="text"
+								placeholder="Paycheck / Income source"
+								aria-label="Edit income source name"
+								bind:value={editName}
+								required
+								class="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
+							/>
+							<input
+								type="number"
+								step="0.01"
+								min="0"
+								placeholder="2500.00"
+								aria-label="Edit income amount"
+								bind:value={editAmount}
+								required
+								class="w-full sm:w-32 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-mono text-ink-primary focus:border-accent-pop focus:outline-none"
+							/>
+							<div class="flex items-center gap-1.5">
+								<button
+									type="submit"
+									disabled={isSubmitting}
+									class="rounded-lg bg-accent-primary text-accent-primary-text hover:opacity-90 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold transition-opacity"
+								>
+									{isSubmitting ? 'Saving...' : 'Save'}
+								</button>
+								<button
+									type="button"
+									onclick={() => {
+										editingId = null;
+										errorMsg = '';
+									}}
+									class="rounded-lg border border-border px-2.5 py-1.5 text-xs text-ink-secondary hover:bg-surface-hover transition-colors"
+								>
+									Cancel
+								</button>
+							</div>
+						</form>
+					{/if}
 
 					{#if expandedRows[row.income.id]}
 						<InlineActivityDrawer

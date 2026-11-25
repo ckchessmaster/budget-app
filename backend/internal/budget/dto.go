@@ -18,6 +18,8 @@ type CreateCategoryRequest struct {
 	TargetDate            *string          `json:"target_date"`
 	TargetCadence         string           `json:"target_cadence"`
 	SortOrder             int              `json:"sort_order"`
+	StartingBalance       *decimal.Decimal `json:"starting_balance,omitempty"`
+	YearMonth             *string          `json:"year_month,omitempty"`
 }
 
 func validateCategoryFields(name, groupName string, monthlyBudget decimal.Decimal, rolloverMode, targetCadence string) error {

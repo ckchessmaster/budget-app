@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 )
 
 func (h *Handler) CreatePlannedIncome(w http.ResponseWriter, r *http.Request) {
@@ -109,4 +110,52 @@ func (h *Handler) DeletePlannedIncome(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) UpdatePlannedIncome(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_income_id")
+		return
+	}
+
+	var req struct {
+		Name   string          `json:"name"`
+		Amount decimal.Decimal `json:"amount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_request_body")
+		return
+	}
+	if req.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name_required")
+		return
+	}
+	if req.Amount.LessThan(decimal.Zero) {
+		writeErr(w, http.StatusBadRequest, "negative_amount")
+		return
+	}
+
+	var updated *MonthlyPlannedIncome
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		updated, txErr = h.incomeRepo.Update(r.Context(), tx, id, req.Name, req.Amount)
+		return txErr
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "planned_income_not_found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "failed_to_update_planned_income")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updated)
 }

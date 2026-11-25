@@ -31,6 +31,7 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 		r.Post("/reallocate", h.ReallocateFunds)
 		r.Post("/incomes", h.CreatePlannedIncome)
 		r.Get("/incomes", h.ListPlannedIncomes)
+		r.Patch("/incomes/{id}", h.UpdatePlannedIncome)
 		r.Delete("/incomes/{id}", h.DeletePlannedIncome)
 		r.Get("/cc-interlocks", h.ListCCDebtInterlocks)
 		r.Post("/cc-interlocks/{id}/resolve", h.ResolveCCDebtInterlock)
