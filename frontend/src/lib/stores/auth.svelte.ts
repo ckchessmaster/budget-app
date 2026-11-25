@@ -20,6 +20,14 @@ function isFresh(session: User): boolean {
 	return (session.expires_at ?? 0) * 1000 - Date.now() > RENEW_SKEW_MS;
 }
 
+function isSilentCallbackPath(): boolean {
+	return (
+		browser &&
+		typeof window !== 'undefined' &&
+		window.location.pathname.startsWith('/auth/silent-callback')
+	);
+}
+
 function selectBestToken(accessToken?: string, idToken?: string): string | null {
 	if (isJwt(accessToken)) return accessToken;
 	if (isJwt(idToken)) return idToken;
@@ -42,9 +50,10 @@ export class AuthStore {
 	private expiresAtMs = $state(0);
 	private eventsWired = false;
 	private readyPromise: Promise<void> = Promise.resolve();
+	private renewPromise: Promise<void> | null = null;
 
 	constructor() {
-		if (browser) {
+		if (browser && !isSilentCallbackPath()) {
 			this.wireEvents();
 			this.readyPromise = this.loadSession(false);
 		}
@@ -71,7 +80,12 @@ export class AuthStore {
 			return this.token;
 		}
 
-		await this.loadSession(true);
+		if (!this.renewPromise) {
+			this.renewPromise = this.loadSession(true).finally(() => {
+				this.renewPromise = null;
+			});
+		}
+		await this.renewPromise;
 		return this.token;
 	}
 
@@ -191,8 +205,11 @@ export class AuthStore {
 
 		const manager = getUserManager();
 
-		// automaticSilentRenew covers proactive renewal; these two make sure a session that
-		// genuinely died stops pretending, rather than lingering as a stale bearer.
+		// automaticSilentRenew covers proactive renewal; these keep store state synced on
+		// background renewals and stop pretending if a session genuinely died.
+		manager.events.addUserLoaded((session) => {
+			this.adopt(session);
+		});
 		manager.events.addAccessTokenExpired(() => {
 			this.clear(true);
 		});
