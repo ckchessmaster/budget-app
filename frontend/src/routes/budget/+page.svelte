@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
+		deleteCategory,
 		fetchMonthBudget,
 		fetchSpendRecommendations,
 		updateMonthlyPlanned
@@ -256,6 +257,38 @@
 
 	let accountById = $derived(new Map(accounts.map((a) => [a.id, a])));
 
+	let customGroupColors = $state<Record<string, number>>(
+		typeof window !== 'undefined'
+			? (() => {
+					try {
+						const raw = localStorage.getItem('budget-group-colors');
+						return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+					} catch {
+						return {};
+					}
+				})()
+			: {}
+	);
+
+	function handleChangeGroupColor(groupName: string, colorIndex: number) {
+		customGroupColors = { ...customGroupColors, [groupName]: colorIndex };
+		if (typeof window !== 'undefined') {
+			try {
+				localStorage.setItem('budget-group-colors', JSON.stringify(customGroupColors));
+			} catch {
+				// ignore storage quota errors
+			}
+		}
+	}
+
+	async function handleDeleteGroup(groupName: string) {
+		const targets = (budgetData?.categories ?? []).filter((c) => c.groupName === groupName);
+		for (const cat of targets) {
+			await deleteCategory(cat.id);
+		}
+		await loadWorkspace(currentMonth, true);
+	}
+
 	let groupedCategories = $derived.by(() => {
 		const groups = new Map<string, CategoryBudget[]>();
 		for (const cat of budgetData?.categories ?? []) {
@@ -266,7 +299,7 @@
 		return Array.from(groups.entries()).map(([groupName, cats], idx) => ({
 			groupName,
 			cats,
-			color: getGroupColor(groupName, idx)
+			color: getGroupColor(groupName, customGroupColors[groupName] ?? idx)
 		}));
 	});
 
@@ -634,13 +667,22 @@
 					{/if}
 				</div>
 
-				<button
-					type="button"
-					onclick={() => openNewCategoryInGroup('Essentials')}
-					class="rounded-lg bg-accent-primary text-accent-primary-text px-3 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
-				>
-					+ Category
-				</button>
+				<div class="flex items-center gap-2">
+					<button
+						type="button"
+						onclick={() => openNewCategoryInGroup('')}
+						class="rounded-lg border border-border bg-surface hover:bg-surface-hover text-ink-primary px-3 py-1.5 text-xs font-semibold transition-colors"
+					>
+						+ Group
+					</button>
+					<button
+						type="button"
+						onclick={() => openNewCategoryInGroup('Essentials')}
+						class="rounded-lg bg-accent-primary text-accent-primary-text px-3 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
+					>
+						+ Category
+					</button>
+				</div>
 			</div>
 
 			{#if errorMsg}
@@ -701,6 +743,8 @@
 									onFilterTransactions={handleFilterCategoryTransactions}
 									onAddCategoryInGroup={openNewCategoryInGroup}
 									onDropTransaction={handleCategorizeTransaction}
+									onChangeGroupColor={handleChangeGroupColor}
+									onDeleteGroup={handleDeleteGroup}
 								/>
 							{/each}
 						</div>
