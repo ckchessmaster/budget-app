@@ -23,9 +23,10 @@
 
 	let { children } = $props();
 
-	const PUBLIC_PATHS = ['/login', '/auth/callback'];
+	const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/silent-callback'];
 
 	let currentPath = $derived(page.url.pathname);
+	let isSilentCallbackRoute = $derived(currentPath.startsWith('/auth/silent-callback'));
 	let isBudgetRoute = $derived(currentPath === '/budget' || currentPath.startsWith('/budget/'));
 	let isBudgetActive = $derived(currentPath === '/' || currentPath.startsWith('/budget'));
 	let isAccountsActive = $derived(currentPath.startsWith('/accounts'));
@@ -59,6 +60,9 @@
 	}
 
 	onMount(() => {
+		if (page.url.pathname.startsWith('/auth/silent-callback')) {
+			return;
+		}
 		theme.init();
 		const stopPwaInstall = pwaInstall.init();
 
@@ -116,6 +120,9 @@
 	});
 </script>
 
+{#if isSilentCallbackRoute}
+	{@render children()}
+{:else}
 <div class="flex flex-col h-dvh w-full bg-canvas text-ink-primary overflow-hidden font-sans">
 	{#if !isBudgetRoute}
 		<header
@@ -326,3 +333,4 @@
 		}}
 	/>
 </div>
+{/if}

@@ -33,7 +33,11 @@ let userManagerInstance: UserManager | null = null;
 
 export function getUserManager(): UserManager {
 	if (!userManagerInstance) {
-		userManagerInstance = new UserManager(oidcSettings);
+		const isSilentCallback =
+			browser && window.location.pathname.startsWith('/auth/silent-callback');
+		userManagerInstance = new UserManager(
+			isSilentCallback ? { ...oidcSettings, automaticSilentRenew: false } : oidcSettings
+		);
 	}
 	return userManagerInstance;
 }

@@ -22,6 +22,7 @@ const {
 	mockRemoveUser: vi.fn(),
 	mockSigninRedirect: vi.fn(),
 	mockEvents: {
+		addUserLoaded: vi.fn(),
 		addAccessTokenExpired: vi.fn(),
 		addAccessTokenExpiring: vi.fn(),
 		addSilentRenewError: vi.fn()
@@ -182,6 +183,7 @@ describe('AuthStore session lifecycle', () => {
 		mockGetUser.mockResolvedValue(null);
 		await readyStore();
 
+		expect(mockEvents.addUserLoaded).toHaveBeenCalledTimes(1);
 		expect(mockEvents.addAccessTokenExpired).toHaveBeenCalledTimes(1);
 		expect(mockEvents.addSilentRenewError).toHaveBeenCalledTimes(1);
 	});
@@ -207,5 +209,60 @@ describe('AuthStore session lifecycle', () => {
 
 		expect(store.isAuthenticated).toBe(true);
 		expect(store.token).toBe(RENEWED_TOKEN);
+	});
+
+	it('coalesces concurrent getValidToken renewals into a single signinSilent call', async () => {
+		mockGetUser.mockResolvedValue(session(LIVE_TOKEN, 20));
+		let resolveRenew!: (value: ReturnType<typeof session>) => void;
+		mockSigninSilent.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveRenew = resolve;
+				})
+		);
+
+		const store = await readyStore();
+		const first = store.getValidToken();
+		const second = store.getValidToken();
+
+		await vi.waitFor(() => {
+			expect(mockSigninSilent).toHaveBeenCalledTimes(1);
+		});
+		resolveRenew(session(RENEWED_TOKEN, 3600));
+
+		await expect(Promise.all([first, second])).resolves.toEqual([RENEWED_TOKEN, RENEWED_TOKEN]);
+		expect(store.token).toBe(RENEWED_TOKEN);
+	});
+
+	it('updates store state when the token manager emits userLoaded', async () => {
+		mockGetUser.mockResolvedValue(session(LIVE_TOKEN, -1));
+		mockSigninSilent.mockRejectedValue(new Error('failed'));
+
+		const store = await readyStore();
+		await expect(store.getValidToken()).resolves.toBeNull();
+		expect(store.sessionExpired).toBe(true);
+
+		const loadedHandler = mockEvents.addUserLoaded.mock.calls[0]?.[0];
+		expect(loadedHandler).toBeTypeOf('function');
+		loadedHandler(session(RENEWED_TOKEN, 3600));
+
+		expect(store.isAuthenticated).toBe(true);
+		expect(store.token).toBe(RENEWED_TOKEN);
+		expect(store.sessionExpired).toBe(false);
+	});
+
+	it('skips loading session and wiring events on the silent-callback route', async () => {
+		window.history.pushState({}, '', '/auth/silent-callback');
+		try {
+			const store = new AuthStore();
+			await store.ready();
+
+			expect(mockGetUser).not.toHaveBeenCalled();
+			expect(mockEvents.addUserLoaded).not.toHaveBeenCalled();
+			expect(mockEvents.addAccessTokenExpired).not.toHaveBeenCalled();
+			expect(mockEvents.addSilentRenewError).not.toHaveBeenCalled();
+		} finally {
+			window.history.pushState({}, '', '/');
+		}
 	});
 });
