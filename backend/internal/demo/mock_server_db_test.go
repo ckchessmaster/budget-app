@@ -2,7 +2,6 @@ package demo
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -32,7 +31,7 @@ func enableDemo(t *testing.T, adminPool, appPool *pgxpool.Pool, userID uuid.UUID
 		t.Fatalf("failed to provision real workspace: %v", err)
 	}
 
-	h := NewHandler(appPool, testVault(t), DefaultMockBridgeBaseURL, provisioner, nil)
+	h := NewHandler(appPool, testVault(t), DefaultMockBridgeBaseURL, provisioner, nil, nil)
 	status, settings := postToggle(t, h, userID, true)
 	if status != 200 {
 		t.Fatalf("demo toggle status = %d, want 200", status)
@@ -426,8 +425,10 @@ func TestBridgeServesRealSimpleFINClient(t *testing.T) {
 	}
 }
 
-// postReset drives the reset endpoint the way the settings UI does.
-func postReset(t *testing.T, h *Handler, userID uuid.UUID) (int, toggleSettings) {
+// postReset drives the reset endpoint the way the settings UI does. The endpoint is
+// asynchronous now and answers 202 with a workflow id, so the settings the old response
+// carried are read back afterwards instead.
+func postReset(t *testing.T, h *Handler, userID uuid.UUID) (int, *SettingsResponse) {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/demo/reset", nil)
@@ -437,13 +438,10 @@ func postReset(t *testing.T, h *Handler, userID uuid.UUID) (int, toggleSettings)
 	rec := httptest.NewRecorder()
 	h.ResetDemo(rec, req)
 
-	var settings toggleSettings
-	if rec.Code == http.StatusOK {
-		if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
-			t.Fatalf("reset returned 200 but body was not settings JSON: %v (%s)", err, rec.Body.String())
-		}
+	if rec.Code != http.StatusAccepted {
+		return rec.Code, nil
 	}
-	return rec.Code, settings
+	return rec.Code, settingsAfterReset(t, h, userID)
 }
 
 // TestResetDemoSeedsAWorkingAccessURL is the whole demo sync chain in one test: reset
@@ -478,7 +476,8 @@ func TestResetDemoSeedsAWorkingAccessURL(t *testing.T) {
 
 	provisioner := workspace.NewProvisioner()
 	vault := testVault(t)
-	h := NewHandler(appPool, vault, mockBase, provisioner, nil)
+	h := NewHandler(appPool, vault, mockBase, provisioner, nil, nil)
+	h.reset = inlineResetStarter{h: h}
 	if _, err := provisioner.EnsureWorkspaceProvisioned(ctx, appPool, userID); err != nil {
 		t.Fatalf("failed to provision real workspace: %v", err)
 	}
@@ -487,8 +486,8 @@ func TestResetDemoSeedsAWorkingAccessURL(t *testing.T) {
 	}
 
 	status, settings := postReset(t, h, userID)
-	if status != http.StatusOK {
-		t.Fatalf("demo reset status = %d, want 200", status)
+	if status != http.StatusAccepted {
+		t.Fatalf("demo reset status = %d, want 202", status)
 	}
 
 	var encrypted string

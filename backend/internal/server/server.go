@@ -226,7 +226,11 @@ func (s *Server) setupRoutes() {
 			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleWorkflowStatus)
 
 			// Settings & Demo Mode simulator routes
-			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal)
+			var demoReset demo.ResetWorkflow
+			if s.temporal != nil {
+				demoReset = schedules.DemoResetStarter{Client: s.temporal}
+			}
+			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal, demoReset)
 
 			// Milestone 7: W3C Web Push notifications (opt-in via VAPID)
 			notifications.RegisterRoutes(protected, s.push)

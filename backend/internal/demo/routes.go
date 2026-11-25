@@ -40,8 +40,9 @@ func RegisterRoutes(
 	provisioner workspace.Provisioner,
 	vault crypto.Vault,
 	temporalClient client.Client,
+	reset ResetWorkflow,
 ) {
-	h := NewHandler(pool, vault, mockBaseURL, provisioner, temporalClient)
+	h := NewHandler(pool, vault, mockBaseURL, provisioner, temporalClient, reset)
 
 	r.Route("/api/v1/settings", func(r chi.Router) {
 		r.Get("/", h.GetSettings)

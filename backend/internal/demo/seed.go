@@ -57,7 +57,27 @@ func SeedDemoWorkspaceTx(
 	mockBaseURL string,
 	vault crypto.Vault,
 ) (uuid.UUID, error) {
-	demoWSID := uuid.New()
+	return SeedDemoWorkspaceTxWithID(ctx, tx, userID, uuid.New(), mockBaseURL, vault)
+}
+
+// SeedDemoWorkspaceTxWithID builds a sandbox under a workspace ID the caller already knows.
+//
+// The plain SeedDemoWorkspaceTx invents its own ID, which is fine for a one-shot request and
+// wrong for a workflow: activities run at least once, and a retry of a seeder that invents an
+// ID would stack a second sandbox on top of the first. With the ID supplied by the caller the
+// reset activity can delete whatever is under that key and rebuild it, which is idempotent by
+// construction and leaves exactly one connection row behind.
+func SeedDemoWorkspaceTxWithID(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID uuid.UUID,
+	demoWSID uuid.UUID,
+	mockBaseURL string,
+	vault crypto.Vault,
+) (uuid.UUID, error) {
+	if demoWSID == uuid.Nil {
+		demoWSID = uuid.New()
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspaces (id, name, is_demo)
 		VALUES ($1, 'Demo Sandbox Workspace', TRUE)

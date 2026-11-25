@@ -148,6 +148,13 @@ func HealthCheck(ctx context.Context, c client.Client) error {
 	return describeNamespace(ctx, c, NamespaceFromEnv())
 }
 
+// ErrWorkflowAlreadyRunning reports that a workflow with the same ID is still executing.
+//
+// It lives here because both the API packages that start workflows and the schedule helpers
+// that wrap the Temporal client need to recognise it, and the dependency between them only
+// points one way. Callers map it to a 409 rather than a 500.
+var ErrWorkflowAlreadyRunning = errors.New("workflow already running")
+
 // SyncScope carries the identity a workflow runs on behalf of.
 //
 // Row-level security in this database is scoped by app.current_user_id, and every
