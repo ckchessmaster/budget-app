@@ -639,7 +639,7 @@
 	}}
 />
 
-<div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5">
+<div class="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 sm:py-5">
 	<!-- Hybrid 12-Column Split Grid: 8 cols Budget | 4 cols Sticky Transactions (lg+) -->
 	<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 		<!-- Left/Main Column: Budget Canvas -->

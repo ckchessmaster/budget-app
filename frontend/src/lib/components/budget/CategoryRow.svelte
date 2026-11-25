@@ -177,15 +177,15 @@
 		onclick={toggleExpanded}
 		onkeydown={handleRowKeydown}
 		class="group cursor-pointer transition-colors {embedded
-			? 'px-5 py-3 hover:bg-surface-hover/50'
+			? 'px-3.5 sm:px-5 py-3 hover:bg-surface-hover/50'
 			: 'p-3.5 hover:bg-surface-hover/40'}"
 		data-testid="category-row"
 	>
-		<div class="grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-3">
+		<div class="grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-2 sm:gap-3">
 			<!-- Name & Meta -->
-			<div class="min-w-0 flex items-center gap-2">
+			<div class="min-w-0 flex items-start sm:items-center gap-1.5 sm:gap-2">
 				<svg
-					class="w-3.5 h-3.5 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
+					class="w-3.5 h-3.5 mt-0.5 sm:mt-0 shrink-0 text-ink-muted transition-transform duration-150 {isExpanded ? 'rotate-90' : ''}"
 					viewBox="0 0 24 24"
 					fill="none"
 					stroke="currentColor"
@@ -195,67 +195,73 @@
 					<path d="m9 18 6-6-6-6" />
 				</svg>
 
-				<span class="truncate text-left text-sm font-medium text-ink-primary">
-					{category.name}
-				</span>
-
-				{#if isFixed}
-					<span
-						data-testid="fixed-status-badge"
-						class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {isFixedPaid
-							? 'bg-status-good-bg text-status-good'
-							: 'bg-subtle text-ink-secondary border border-border'}"
-					>
-						{isFixedPaid ? 'Paid' : 'Upcoming'}
+				<div class="min-w-0 flex-1 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-y-1 gap-x-2">
+					<span class="text-left text-sm font-medium leading-snug text-ink-primary break-words sm:truncate">
+						{category.name}
 					</span>
-				{/if}
 
-				{#if category.spentPending > 0}
-					<span
-						data-testid="pending-badge"
-						class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn px-1.5 py-0.5 text-[11px] font-mono font-medium"
-					>
-						+{fmt(category.spentPending)} pend
-					</span>
-				{/if}
+					{#if isFixed || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onFilterTransactions || onEditClick}
+						<div class="flex flex-wrap items-center gap-1.5">
+							{#if isFixed}
+								<span
+									data-testid="fixed-status-badge"
+									class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {isFixedPaid
+										? 'bg-status-good-bg text-status-good'
+										: 'bg-subtle text-ink-secondary border border-border'}"
+								>
+									{isFixedPaid ? 'Paid' : 'Upcoming'}
+								</span>
+							{/if}
 
-				{#if category.pacing && !category.pacing.isMet}
-					<span
-						class="hidden sm:inline-flex items-center shrink-0 rounded-md bg-subtle px-1.5 py-0.5 text-[11px] font-medium text-ink-secondary border border-border"
-					>
-						Pace: {fmt(category.pacing.monthlyDue)}/mo
-					</span>
-				{/if}
+							{#if category.spentPending > 0}
+								<span
+									data-testid="pending-badge"
+									class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn px-1.5 py-0.5 text-[11px] font-mono font-medium"
+								>
+									+{fmt(category.spentPending)} pend
+								</span>
+							{/if}
 
-				{#if onFilterTransactions}
-					<button
-						type="button"
-						onclick={(e) => {
-							e.stopPropagation();
-							onFilterTransactions(category.id);
-						}}
-						title={`Filter transactions for ${category.name}`}
-						aria-label={`Filter transactions for ${category.name}`}
-						class="text-[11px] text-ink-muted hover:text-accent-pop opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
-					>
-						Txns
-					</button>
-				{/if}
+							{#if category.pacing && !category.pacing.isMet}
+								<span
+									class="hidden sm:inline-flex items-center shrink-0 rounded-md bg-subtle px-1.5 py-0.5 text-[11px] font-medium text-ink-secondary border border-border"
+								>
+									Pace: {fmt(category.pacing.monthlyDue)}/mo
+								</span>
+							{/if}
 
-				{#if onEditClick}
-					<button
-						type="button"
-						data-testid="edit-category-btn"
-						aria-label={`Edit ${category.name}`}
-						onclick={(e) => {
-							e.stopPropagation();
-							onEditClick(category.id);
-						}}
-						class="text-[11px] text-ink-muted hover:text-ink-primary opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
-					>
-						Edit
-					</button>
-				{/if}
+							{#if onFilterTransactions}
+								<button
+									type="button"
+									onclick={(e) => {
+										e.stopPropagation();
+										onFilterTransactions(category.id);
+									}}
+									title={`Filter transactions for ${category.name}`}
+									aria-label={`Filter transactions for ${category.name}`}
+									class="text-[11px] text-ink-muted hover:text-accent-pop sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-opacity shrink-0"
+								>
+									Txns
+								</button>
+							{/if}
+
+							{#if onEditClick}
+								<button
+									type="button"
+									data-testid="edit-category-btn"
+									aria-label={`Edit ${category.name}`}
+									onclick={(e) => {
+										e.stopPropagation();
+										onEditClick(category.id);
+									}}
+									class="text-[11px] text-ink-muted hover:text-ink-primary sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-opacity shrink-0"
+								>
+									Edit
+								</button>
+							{/if}
+						</div>
+					{/if}
+				</div>
 			</div>
 
 			<!-- Planned Column (Muted, Inline Editable when onUpdatePlanned is provided) -->
@@ -272,7 +278,7 @@
 						onclick={(e) => e.stopPropagation()}
 						onkeydown={handlePlannedInputKeydown}
 						onblur={() => void commitPlanned()}
-						class="w-24 rounded-md border border-accent-pop bg-surface px-2 py-0.5 text-right text-xs font-mono font-medium text-ink-primary focus:outline-none"
+						class="w-full max-w-24 rounded-md border border-accent-pop bg-surface px-2 py-0.5 text-right text-xs font-mono font-medium text-ink-primary focus:outline-none"
 					/>
 				{:else if onUpdatePlanned}
 					<button
@@ -310,7 +316,7 @@
 							e.stopPropagation();
 							onCoverClick(category.id);
 						}}
-						class="inline-flex items-center gap-1 rounded-full bg-status-danger-bg px-2.5 py-0.5 text-xs font-mono font-bold text-status-danger border border-status-danger/30 hover:opacity-90 transition-opacity"
+						class="inline-flex flex-wrap items-center justify-end gap-x-1 rounded-full bg-status-danger-bg px-2 py-0.5 text-[11px] sm:text-xs font-mono font-bold text-status-danger border border-status-danger/30 hover:opacity-90 transition-opacity"
 					>
 						<span>{fmt(category.remaining)}</span>
 						<span class="font-sans text-[10px] uppercase tracking-wider underline">Cover</span>

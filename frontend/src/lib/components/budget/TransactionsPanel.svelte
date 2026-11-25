@@ -770,7 +770,7 @@
 											e.stopPropagation();
 											toggleQuickPicker(tx.id);
 										}}
-										class="max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {tx.categoryId === null
+										class="max-w-[110px] sm:max-w-[140px] truncate rounded-full border px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors focus:outline-none {tx.categoryId === null
 											? 'border-accent-pop/40 bg-accent-tint text-accent-pop hover:opacity-90'
 											: 'border-border bg-subtle text-ink-secondary hover:text-ink-primary hover:bg-surface-hover'}"
 									>

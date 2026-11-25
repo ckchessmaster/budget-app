@@ -127,7 +127,7 @@
 	class="rounded-2xl border border-border bg-surface shadow-xs overflow-hidden"
 >
 	<!-- Header -->
-	<div class="px-5 pt-4 pb-3 border-b border-border grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-end gap-3">
+	<div class="px-3.5 sm:px-5 pt-4 pb-3 border-b border-border grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-end gap-2 sm:gap-3">
 		<div>
 			<h3 class="inline-block text-base font-bold text-ink-primary border-b-2 border-accent-pop pb-0.5">
 				Income
@@ -155,7 +155,7 @@
 	<!-- Income Rows -->
 	<div class="divide-y divide-border">
 		{#if incomes.length === 0}
-			<div class="px-5 py-3 text-xs text-ink-muted">
+			<div class="px-3.5 sm:px-5 py-3 text-xs text-ink-muted">
 				No planned income sources for this month yet.
 			</div>
 		{:else}
@@ -168,11 +168,11 @@
 						data-testid="income-row"
 						onclick={() => toggleRow(row.income.id)}
 						onkeydown={(e) => handleRowKeydown(e, row.income.id)}
-						class="group cursor-pointer px-5 py-2.5 grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-3 hover:bg-surface-hover/50 transition-colors"
+						class="group cursor-pointer px-3.5 sm:px-5 py-2.5 grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-center gap-2 sm:gap-3 hover:bg-surface-hover/50 transition-colors"
 					>
-						<div class="min-w-0 flex items-center gap-2">
+						<div class="min-w-0 flex items-start sm:items-center gap-1.5 sm:gap-2">
 							<svg
-								class="w-3.5 h-3.5 shrink-0 text-ink-muted transition-transform duration-150 {expandedRows[row.income.id] ? 'rotate-90' : ''}"
+								class="w-3.5 h-3.5 mt-0.5 sm:mt-0 shrink-0 text-ink-muted transition-transform duration-150 {expandedRows[row.income.id] ? 'rotate-90' : ''}"
 								viewBox="0 0 24 24"
 								fill="none"
 								stroke="currentColor"
@@ -181,29 +181,33 @@
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span class="truncate text-sm font-medium text-ink-primary">
-								{row.income.name}
-							</span>
-							<span
-								data-testid="income-status-badge"
-								class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {row.isPaid
-									? 'bg-status-good-bg text-status-good'
-									: 'bg-subtle text-ink-secondary border border-border'}"
-							>
-								{row.isPaid ? 'Paid' : 'Upcoming'}
-							</span>
-							<button
-								type="button"
-								disabled={isSubmitting}
-								onclick={(e) => {
-									e.stopPropagation();
-									void handleDelete(row.income.id);
-								}}
-								aria-label={`Remove ${row.income.name}`}
-								class="text-[11px] text-status-danger opacity-0 group-hover:opacity-100 focus:opacity-100 hover:underline transition-opacity shrink-0"
-							>
-								Remove
-							</button>
+							<div class="min-w-0 flex-1 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-y-1 gap-x-2">
+								<span class="text-sm font-medium leading-snug text-ink-primary break-words sm:truncate">
+									{row.income.name}
+								</span>
+								<div class="flex flex-wrap items-center gap-1.5">
+									<span
+										data-testid="income-status-badge"
+										class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {row.isPaid
+											? 'bg-status-good-bg text-status-good'
+											: 'bg-subtle text-ink-secondary border border-border'}"
+									>
+										{row.isPaid ? 'Paid' : 'Upcoming'}
+									</span>
+									<button
+										type="button"
+										disabled={isSubmitting}
+										onclick={(e) => {
+											e.stopPropagation();
+											void handleDelete(row.income.id);
+										}}
+										aria-label={`Remove ${row.income.name}`}
+										class="text-[11px] text-status-danger sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:underline transition-opacity shrink-0"
+									>
+										Remove
+									</button>
+								</div>
+							</div>
 						</div>
 						<div class="text-right text-xs font-mono text-ink-muted">
 							{fmt(row.income.amount)}
@@ -228,7 +232,7 @@
 	</div>
 
 	<!-- Footer / Inline Add Income -->
-	<div class="px-5 py-2.5 bg-subtle border-t border-border">
+	<div class="px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border">
 		{#if showAddForm}
 			<form onsubmit={handleAdd} class="space-y-2">
 				<div class="flex flex-col sm:flex-row gap-2">

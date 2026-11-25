@@ -32,7 +32,7 @@
 <nav
 	aria-label="Category focus"
 	data-testid="category-focus-pills"
-	class="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar"
+	class="flex flex-wrap items-center gap-1.5 sm:gap-2"
 >
 	{#each pills as pill (pill.id)}
 		<button
