@@ -31,3 +31,28 @@ spec:
     - name: http
       port: 80
       targetPort: http
+{{- if .Values.temporal.worker.enabled }}
+---
+# Demo SimpleFIN bridge, reachable by the sync worker pod.
+#
+# ClusterIP only and never wired into the ingress: the bridge authenticates callers with
+# the per-workspace credential pair stored in demo_simplefin_state, which is the right
+# check for server-side callers but is not a reason to advertise it outside the cluster.
+# Restricting it further is the job of the NetworkPolicy tracked in #129.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "budget-app.fullname" . }}-backend-bridge
+  labels:
+    app: budget-backend
+    {{- include "budget-app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: budget-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: bridge
+      port: {{ include "budget-app.bridgePort" . }}
+      targetPort: bridge
+{{- end }}

@@ -16,8 +16,11 @@ import (
 // processes holding the per-workspace capability baked into the stored access URL
 // (the API itself during /api/v1/bank/simplefin/claim, and the Temporal sync
 // worker); neither has an OIDC bearer token, so putting this behind AuthMiddleware
-// would break demo bank sync. Serving it on a loopback-only listener instead keeps
-// it reachable to those callers while making it unreachable from other pods.
+// would break demo bank sync. That stored capability pair is therefore the only
+// gate, which is why the bridge never appears on the public ingress. The loopback
+// default keeps it reachable from the API process alone; a Helm install with the
+// sync worker in its own Deployment binds it routably and exposes it only through
+// the cluster-internal backend-bridge Service. Narrowing that further is #129.
 func MockBridgeRouter(pool *pgxpool.Pool) chi.Router {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
