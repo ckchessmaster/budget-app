@@ -15,6 +15,7 @@
 	} from '$lib/notifications/push';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
+	import { pwaInstall } from '$lib/stores/pwaInstall.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
 
 	let workspaceNameInput = $state('');
@@ -434,7 +435,7 @@
 				</div>
 
 				<form onsubmit={handleSaveWorkspace} class="flex flex-wrap items-end gap-2">
-					<div class="flex-1 min-w-52">
+					<div class="flex-1 min-w-0 w-full sm:min-w-52">
 						<label for="ws-name-input" class="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
 							Workspace Name
 						</label>
@@ -468,7 +469,7 @@
 						Inbound Receipt Email Alias
 					</span>
 					<div class="flex flex-wrap items-center gap-2">
-						<code class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono text-slate-800 dark:text-slate-200">
+						<code class="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono text-slate-800 dark:text-slate-200 break-all">
 							{demo.inboundReceiptAlias || '—'}
 						</code>
 						<button
@@ -519,6 +520,35 @@
 						</button>
 					{/each}
 				</div>
+
+				{#if pwaInstall.canInstall || pwaInstall.statusMessage}
+					<div class="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<p class="text-xs font-semibold text-slate-800 dark:text-slate-200">Install App</p>
+							<p class="text-xs text-slate-500 dark:text-slate-400">
+								Install Budget App to your home screen or desktop for offline-ready access.
+							</p>
+							{#if pwaInstall.statusMessage}
+								<p role="status" class="text-xs font-medium text-emerald-600 dark:text-emerald-400 mt-1">
+									{pwaInstall.statusMessage}
+								</p>
+							{/if}
+						</div>
+						{#if pwaInstall.canInstall}
+							<button
+								type="button"
+								data-testid="settings-install-app-btn"
+								aria-disabled={pwaInstall.installing ? 'true' : undefined}
+								onclick={() => {
+									if (!pwaInstall.installing) void pwaInstall.promptInstall();
+								}}
+								class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white aria-disabled:opacity-50"
+							>
+								{pwaInstall.installing ? 'Installing...' : 'Install App'}
+							</button>
+						{/if}
+					</div>
+				{/if}
 			</section>
 
 			<!-- Section 5: Push Notifications -->

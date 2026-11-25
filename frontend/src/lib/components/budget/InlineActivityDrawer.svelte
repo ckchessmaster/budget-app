@@ -41,7 +41,7 @@
 <div
 	data-testid="inline-activity-drawer"
 	class={embedded
-		? 'bg-subtle/70 border-t border-border px-5 py-2.5'
+		? 'bg-subtle/70 border-t border-border px-3.5 sm:px-5 py-2.5'
 		: 'mt-2.5 pt-2.5 border-t border-border'}
 >
 	{#if sortedTransactions.length === 0}
@@ -57,7 +57,7 @@
 						<span class="text-ink-secondary truncate">
 							{fmtShortDate(tx.date)} · {tx.merchant}
 						</span>
-						<span class="text-ink-muted shrink-0">({tx.accountName})</span>
+						<span class="text-ink-muted max-w-[40%] truncate">({tx.accountName})</span>
 						{#if tx.status === 'PENDING'}
 							<span class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn px-1.5 py-0.5 text-[10px] font-medium">
 								Pending

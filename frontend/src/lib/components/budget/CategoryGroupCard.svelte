@@ -63,14 +63,14 @@
 	aria-label={groupName}
 	data-testid="category-group-card"
 	style="border-left: 3px solid {color.stroke};"
-	class="rounded-2xl border bg-surface shadow-xs overflow-hidden transition-shadow {highlighted
+	class="rounded-2xl border bg-surface shadow-xs transition-shadow {highlighted
 		? `border-accent-pop ring-2 ${color.ringClass}`
 		: 'border-border'}"
 >
 	<!-- Group Header -->
 	<div
 		style="background-color: {color.stroke}14;"
-		class="px-5 pt-4 pb-3 border-b border-border grid grid-cols-[minmax(0,1fr)_88px_96px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-end gap-3"
+		class="rounded-t-2xl px-3.5 sm:px-5 pt-4 pb-3 border-b border-border grid grid-cols-[minmax(0,1fr)_76px_88px] sm:grid-cols-[minmax(0,1fr)_104px_116px] items-end gap-2 sm:gap-3"
 	>
 		<div class="relative flex items-center gap-2 min-w-0">
 			{#if onChangeGroupColor}
@@ -152,7 +152,7 @@
 	</div>
 
 	<!-- Footer -->
-	<div class="px-5 py-2.5 bg-subtle border-t border-border flex items-center justify-between gap-2">
+	<div class="rounded-b-2xl px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border flex items-center justify-between gap-2">
 		<button
 			type="button"
 			onclick={() => onAddCategoryInGroup(groupName)}

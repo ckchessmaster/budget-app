@@ -76,11 +76,12 @@
 
 <header
 	data-testid="budget-header"
+	style="padding-top: env(safe-area-inset-top, 0px);"
 	class="sticky top-0 z-30 w-full bg-surface border-b border-border shrink-0 select-none"
 >
-	<div class="max-w-[1440px] mx-auto px-3 sm:px-6 min-h-14 py-2 flex items-center justify-between gap-2 sm:gap-4">
-		<!-- Left Cluster: Brand, Month Selector, Left to Budget Pill -->
-		<div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-wrap">
+	<div class="max-w-[1440px] mx-auto px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 lg:flex-nowrap lg:gap-4">
+		<!-- Group 1: Brand & Month Selector -->
+		<div class="order-1 flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
 			<a href="/budget" class="flex items-center gap-2 shrink-0 group">
 				<span class="w-7 h-7 rounded-lg bg-accent-primary text-accent-primary-text flex items-center justify-center font-bold text-sm transition-opacity group-hover:opacity-90">
 					$
@@ -96,13 +97,13 @@
 					aria-label="Previous month"
 					data-testid="prev-month-btn"
 					onclick={() => shiftMonth(-1)}
-					class="rounded-md px-2 py-0.5 text-xs text-ink-secondary hover:bg-surface-hover hover:text-ink-primary transition-colors"
+					class="rounded-md px-1.5 sm:px-2 py-0.5 text-xs text-ink-secondary hover:bg-surface-hover hover:text-ink-primary transition-colors"
 				>
 					&lsaquo;
 				</button>
 				<span
 					data-testid="month-label"
-					class="text-xs font-semibold text-ink-primary px-2 min-w-[82px] text-center"
+					class="text-xs font-semibold text-ink-primary px-1.5 sm:px-2 min-w-[74px] sm:min-w-[82px] text-center"
 				>
 					{monthLabel}
 				</span>
@@ -111,7 +112,7 @@
 					aria-label="Next month"
 					data-testid="next-month-btn"
 					onclick={() => shiftMonth(1)}
-					class="rounded-md px-2 py-0.5 text-xs text-ink-secondary hover:bg-surface-hover hover:text-ink-primary transition-colors"
+					class="rounded-md px-1.5 sm:px-2 py-0.5 text-xs text-ink-secondary hover:bg-surface-hover hover:text-ink-primary transition-colors"
 				>
 					&rsaquo;
 				</button>
@@ -126,60 +127,67 @@
 					Today
 				</button>
 			{/if}
+		</div>
 
-			<div
-				data-testid="ready-to-assign-banner"
-				class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0 {readyState === 'balanced'
-					? 'bg-status-good-bg text-status-good'
-					: readyState === 'unassigned'
-						? 'bg-accent-tint text-accent-pop'
-						: 'bg-status-danger-bg text-status-danger'}"
-			>
-				{#if readyState === 'balanced'}
-					<span class="font-mono font-bold">$0.00</span>
-					<span>left to budget</span>
-				{:else if readyState === 'unassigned'}
-					<span class="font-mono font-bold">${fmt(summary?.readyToAssign ?? 0)}</span>
-					<span>left to budget</span>
-				{:else}
-					<span class="font-mono font-bold">-${fmt(summary?.readyToAssign ?? 0)}</span>
-					<span>over-budgeted</span>
+		<!-- Group 2: Left to Budget / Offline / Sync + Solvency & Catch Up -->
+		<div class="order-3 lg:order-2 basis-full lg:basis-auto flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 min-w-0 lg:flex-1">
+			<div class="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+				<div
+					data-testid="ready-to-assign-banner"
+					class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium shrink-0 {readyState === 'balanced'
+						? 'bg-status-good-bg text-status-good'
+						: readyState === 'unassigned'
+							? 'bg-accent-tint text-accent-pop'
+							: 'bg-status-danger-bg text-status-danger'}"
+				>
+					{#if readyState === 'balanced'}
+						<span class="font-mono font-bold">$0.00</span>
+						<span>left to budget</span>
+					{:else if readyState === 'unassigned'}
+						<span class="font-mono font-bold">${fmt(summary?.readyToAssign ?? 0)}</span>
+						<span>left to budget</span>
+					{:else}
+						<span class="font-mono font-bold">-${fmt(summary?.readyToAssign ?? 0)}</span>
+						<span>over-budgeted</span>
+					{/if}
+				</div>
+
+				{#if isOffline}
+					<span class="text-xs px-2 py-0.5 rounded-full bg-status-warn-bg text-status-warn font-medium">
+						Offline
+					</span>
+				{/if}
+
+				{#if queuedCount > 0 && onSyncNow}
+					<button
+						type="button"
+						onclick={onSyncNow}
+						disabled={syncing || isOffline}
+						class="text-xs px-2.5 py-1 rounded-lg bg-accent-pop text-accent-primary-text font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+					>
+						{syncing ? 'Syncing...' : `Sync (${queuedCount})`}
+					</button>
 				{/if}
 			</div>
 
-			{#if isOffline}
-				<span class="text-xs px-2 py-0.5 rounded-full bg-status-warn-bg text-status-warn font-medium">
-					Offline
-				</span>
-			{/if}
+			<div class="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
+				<SolvencyPopover {solvency} {accountCount} />
 
-			{#if queuedCount > 0 && onSyncNow}
-				<button
-					type="button"
-					onclick={onSyncNow}
-					disabled={syncing || isOffline}
-					class="text-xs px-2.5 py-1 rounded-lg bg-accent-pop text-accent-primary-text font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
-				>
-					{syncing ? 'Syncing...' : `Sync (${queuedCount})`}
-				</button>
-			{/if}
+				{#if toReviewCount > 0}
+					<button
+						type="button"
+						data-testid="catch-up-btn"
+						onclick={() => onOpenCatchUp?.()}
+						class="inline-flex items-center gap-1.5 rounded-lg bg-accent-pop text-accent-primary-text px-2.5 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
+					>
+						Catch Up ({toReviewCount})
+					</button>
+				{/if}
+			</div>
 		</div>
 
-		<!-- Right Cluster: Solvency Popover, Catch Up CTA, Accounts, Theme Toggle, Mobile Drawer Toggle -->
-		<div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
-			<SolvencyPopover {solvency} {accountCount} />
-
-			{#if toReviewCount > 0}
-				<button
-					type="button"
-					data-testid="catch-up-btn"
-					onclick={() => onOpenCatchUp?.()}
-					class="inline-flex items-center gap-1.5 rounded-lg bg-accent-pop text-accent-primary-text px-2.5 py-1.5 text-xs font-semibold hover:opacity-90 transition-opacity"
-				>
-					Catch Up ({toReviewCount})
-				</button>
-			{/if}
-
+		<!-- Group 3: Accounts, Settings, Theme Toggle, Mobile Drawer Toggle, Sign Out -->
+		<div class="order-2 lg:order-3 flex items-center gap-1.5 sm:gap-2 shrink-0 pr-0.5">
 			<a
 				href="/accounts"
 				class="hidden md:inline-flex items-center px-2 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover transition-colors"

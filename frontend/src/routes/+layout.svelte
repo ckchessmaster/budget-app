@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import DemoSimulatorDrawer from '$lib/components/demo/DemoSimulatorDrawer.svelte';
 	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
+	import InstallPromptBanner from '$lib/components/pwa/InstallPromptBanner.svelte';
 	import {
 		detectPushEnvironment,
 		dismissPushPrompt,
@@ -17,6 +18,7 @@
 	} from '$lib/notifications/push';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
+	import { pwaInstall } from '$lib/stores/pwaInstall.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
 
 	let { children } = $props();
@@ -58,6 +60,36 @@
 
 	onMount(() => {
 		theme.init();
+		const stopPwaInstall = pwaInstall.init();
+
+		const cleanups: Array<() => void> = [stopPwaInstall];
+		if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+			const hadController = Boolean(navigator.serviceWorker.controller);
+			let reloading = false;
+
+			const onControllerChange = () => {
+				if (hadController && !reloading) {
+					reloading = true;
+					window.location.reload();
+				}
+			};
+			const onVisibilityChange = () => {
+				if (document.visibilityState === 'visible') {
+					void navigator.serviceWorker.getRegistration().then((reg) => reg?.update().catch(() => {}));
+				}
+			};
+
+			navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+			document.addEventListener('visibilitychange', onVisibilityChange);
+			cleanups.push(() => {
+				navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+				document.removeEventListener('visibilitychange', onVisibilityChange);
+			});
+		}
+
+		return () => {
+			for (const fn of cleanups) fn();
+		};
 	});
 
 	$effect(() => {
@@ -86,8 +118,11 @@
 
 <div class="flex flex-col h-dvh w-full bg-canvas text-ink-primary overflow-hidden font-sans">
 	{#if !isBudgetRoute}
-		<header class="flex items-center justify-between gap-4 px-4 sm:px-6 bg-surface border-b border-border shrink-0 select-none">
-			<div class="flex items-center gap-6">
+		<header
+			style="padding-top: env(safe-area-inset-top, 0px);"
+			class="flex flex-wrap items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 bg-surface border-b border-border shrink-0 select-none"
+		>
+			<div class="flex items-center gap-3 sm:gap-6">
 				<a href="/budget" class="flex items-center gap-2.5 py-2.5 group">
 					<div class="w-8 h-8 rounded-lg bg-accent-primary text-accent-primary-text flex items-center justify-center font-bold text-lg group-hover:opacity-90 transition-opacity">
 						$
@@ -265,6 +300,10 @@
 				</button>
 			</div>
 		</div>
+	{/if}
+
+	{#if auth.isAuthenticated}
+		<InstallPromptBanner />
 	{/if}
 
 	<main class="flex-1 overflow-y-auto overscroll-contain-scroll">

@@ -8,7 +8,8 @@ import { handleNotificationClick, handlePushEvent } from '$lib/notifications/sw-
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = `budget-app-cache-${version}`;
-const ASSETS = [...build, ...files];
+const NEVER_PRECACHE = new Set(['/config.js', '/manifest.webmanifest']);
+const ASSETS = [...build, ...files.filter((file) => !NEVER_PRECACHE.has(file))];
 
 sw.addEventListener('install', (event) => {
 	event.waitUntil(
@@ -37,7 +38,7 @@ sw.addEventListener('fetch', (event) => {
 	event.respondWith(
 		(async () => {
 			const cache = await caches.open(CACHE_NAME);
-			if (ASSETS.includes(url.pathname)) {
+			if (url.pathname !== '/config.js' && ASSETS.includes(url.pathname)) {
 				const cached = await cache.match(url.pathname);
 				if (cached) return cached;
 			}

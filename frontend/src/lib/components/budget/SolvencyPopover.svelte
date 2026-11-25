@@ -94,7 +94,7 @@
 				role="dialog"
 				aria-label="Solvency breakdown"
 				data-testid="solvency-popover-panel"
-				class="absolute right-0 mt-2 w-72 z-40 rounded-xl border border-border bg-surface shadow-lg p-3.5 text-xs text-ink-primary"
+				class="fixed inset-x-3 mt-2 sm:absolute sm:inset-x-auto sm:right-0 sm:w-72 z-40 rounded-xl border border-border bg-surface shadow-lg p-3.5 text-xs text-ink-primary"
 			>
 				<div class="flex items-center justify-between gap-2 mb-2.5">
 					<h3 class="font-semibold text-ink-primary">Solvency Breakdown</h3>
