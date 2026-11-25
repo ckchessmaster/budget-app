@@ -73,10 +73,10 @@ Two workflows are registered on task queue `budget-sync-queue` in namespace `bud
 
 Triggers for bank sync are `POST /api/v1/bank/sync-now`, the demo simulator's `syncNow` flag, and
 a per-workspace Temporal Schedule (`bank-sync-<workspaceID>`, every 6h with 15m jitter) created
-lazily on first sync. Progress comes from `DescribeWorkflowExecution` behind
-`GET /api/v1/bank/sync-status/{workflow_id}`. There are no signals, queries, child workflows,
-or continue-as-new yet.
-
+lazily on first sync. Both schedules are created at runtime rather than by a migration, so a
+workspace that predates them only starts running on its next provision or sync. Progress comes
+from `DescribeWorkflowExecution` behind `GET /api/v1/bank/sync-status/{workflow_id}`. There are
+no signals, queries, child workflows, or continue-as-new yet.
 ### Required configuration, with no fallbacks
 
 | Variable | Rule |
@@ -117,11 +117,12 @@ and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
 5. **Register the workflow and activities** in
    [`backend/cmd/worker/main.go`](backend/cmd/worker/main.go). The worker binary is built into
    the backend image at `/usr/local/bin/worker`.
-6. **Remember where the worker runs.** It is a sidecar container in the API pod, and the demo
-   SimpleFIN bridge is served on a loopback-only listener in that same pod. A workflow step that
-   needs the bridge cannot be polled by a different replica, so do not raise
-   `backend.replicaCount` while relying on demo sync. [#135](https://github.com/ckchessmaster/budget-app/issues/135)
-   tracks separating the worker; until it lands, keep new workflows free of bridge dependencies.
+6. **Remember where the worker runs.** It is its own Deployment (`<release>-sync-worker`,
+   scaled by `temporal.worker.replicaCount`), not a sidecar in the API pod. It reaches the demo
+   SimpleFIN bridge over the cluster-internal `<release>-backend-bridge` Service, and the chart
+   refuses to render a loopback `MOCK_SIMPLEFIN_BASE_URL` while the worker is separate, because
+   that fails inside the workflow rather than at install time. The bridge is deliberately kept
+   off the ingress; narrowing it further is #129.
 7. **Workflow IDs embed the workspace ID.** `handleBankSyncStatus` authorizes a status read by
    checking that the ID contains the caller's workspace. Preserve that invariant for any new
    workflow, or fix the authorization deliberately rather than by accident.

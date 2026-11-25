@@ -1,0 +1,48 @@
+{{- if .Values.temporal.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "budget-app.fullname" . }}-sync-worker
+  labels:
+    app: budget-sync-worker
+    {{- include "budget-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.temporal.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app: budget-sync-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      # The worker reads Temporal, database and vault configuration from the same
+      # ConfigMap and Secret as the API, so a config change has to roll it too.
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app: budget-sync-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- include "budget-app.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["/usr/local/bin/worker"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "budget-app.fullname" . }}-config
+          env:
+            {{- include "budget-app.syncEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.temporal.worker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

@@ -49,7 +49,8 @@ type Config struct {
 	OIDCEnforceAudience bool
 	CORSAllowedOrigins  []string
 	// MockSimpleFINListenAddr binds the built-in fake SimpleFIN bridge. It defaults
-	// to loopback so no other pod can reach it.
+	// to loopback, which only the API process can reach; the chart sets a routable
+	// bind here when the sync worker runs as its own Deployment.
 	MockSimpleFINListenAddr string
 	MockSimpleFINBaseURL    string
 	VAPID                   notifications.VAPIDConfig
@@ -173,8 +174,8 @@ func (s *Server) Router() chi.Router {
 	return s.router
 }
 
-// BridgeRouter is the fake SimpleFIN bridge. It is served on its own loopback-only
-// listener rather than on the public router.
+// BridgeRouter is the fake SimpleFIN bridge. It is served on its own listener
+// rather than on the public router, so it never appears in the API's routes.
 func (s *Server) BridgeRouter() chi.Router {
 	return s.bridgeRouter
 }

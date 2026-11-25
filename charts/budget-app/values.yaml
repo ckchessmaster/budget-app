@@ -11,11 +11,11 @@ backend:
   # the ingress hosts below. The frontend proxies /api same-origin, so this is only
   # needed when the API is served from a different origin than the app.
   corsAllowedOrigins: []
-  # The built-in demo SimpleFIN bridge binds loopback by default (127.0.0.1:8090) so
-  # no other pod can reach it. The sync worker runs as a sidecar in this pod precisely
-  # because of that: containers in one pod share a network namespace. Override these
-  # only if the worker is genuinely moved to its own Deployment, which also means
-  # re-exposing the bridge on a Service and putting authentication back in front of it.
+  # The built-in demo SimpleFIN bridge. While the sync worker was a sidecar it could use
+  # loopback; as its own Deployment it reaches the bridge through the
+  # <release>-backend-bridge Service, so the defaults below follow temporal.worker.enabled.
+  # Override only to run the bridge somewhere else entirely.
+  mockSimplefinPort: 8090
   mockSimplefinListenAddr: ""
   mockSimplefinBaseUrl: ""
   resources:
@@ -59,6 +59,10 @@ temporal:
     # Polls budget-sync-queue. Disabling this leaves every sync accepted by the API
     # sitting in the queue forever, so it is on by default.
     enabled: true
+    # Worker capacity is now independent of backend.replicaCount, which is the point of
+    # running it separately. Raise this for throughput; the activities are idempotent per
+    # workspace transaction, so overlapping pollers during a rollout are safe.
+    replicaCount: 1
     resources:
       requests:
         cpu: 25m

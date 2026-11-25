@@ -126,3 +126,35 @@ Credentials shared by the API and the Temporal sync worker.
 {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Demo SimpleFIN bridge addressing.
+
+The bridge is served by the API process. While the sync worker shared the API pod it
+could reach it over loopback; as a separate Deployment it cannot, so the bridge binds a
+routable address and is reached through its own Service. Both values are overridable for
+installations that keep the worker co-located or run the bridge elsewhere.
+*/}}
+{{- define "budget-app.bridgePort" -}}
+{{- int (.Values.backend.mockSimplefinPort | default 8090) -}}
+{{- end -}}
+
+{{- define "budget-app.bridgeListenAddr" -}}
+{{- if .Values.backend.mockSimplefinListenAddr -}}
+{{- .Values.backend.mockSimplefinListenAddr -}}
+{{- else if .Values.temporal.worker.enabled -}}
+0.0.0.0:{{ include "budget-app.bridgePort" . }}
+{{- else -}}
+127.0.0.1:{{ include "budget-app.bridgePort" . }}
+{{- end -}}
+{{- end -}}
+
+{{- define "budget-app.bridgeBaseUrl" -}}
+{{- if .Values.backend.mockSimplefinBaseUrl -}}
+{{- .Values.backend.mockSimplefinBaseUrl -}}
+{{- else if .Values.temporal.worker.enabled -}}
+http://{{ include "budget-app.fullname" . }}-backend-bridge:{{ include "budget-app.bridgePort" . }}
+{{- else -}}
+http://127.0.0.1:{{ include "budget-app.bridgePort" . }}
+{{- end -}}
+{{- end -}}
