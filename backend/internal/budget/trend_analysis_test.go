@@ -3,6 +3,7 @@ package budget
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -219,8 +220,8 @@ func seedRecommendationTestFixture(t *testing.T, ctx context.Context, tx pgx.Tx,
 		t.Fatalf("link transfer in: %v", err)
 	}
 
-	// Dining: Aug = 410, Sep = 200 (checking) + 220 (CC) = 420, Oct = 430
-	// Plus noise that must be ignored: +50 inflow, -900 off-budget, -999 in Jul (M-4), -888 in Nov (M)
+	// Dining: Aug = 410, Sep = 200 (checking) + 220 (CC) - 50 (rebate) = 370, Oct = 430 => median 410
+	// Plus noise that must be ignored: -900 off-budget, -999 in Jul (M-4), -888 in Nov (M)
 	// Groceries: Aug = 480, Sep = 490, Oct = 500
 	// Zero Budget: Aug/Sep/Oct = 100
 	if _, err := tx.Exec(ctx, `
@@ -260,7 +261,7 @@ func TestComputeSpendRecommendations(t *testing.T) {
 			return err
 		}
 		if len(recs) != 4 {
-			t.Fatalf("got %d recommendations, want 4", len(recs))
+			return fmt.Errorf("got %d recommendations, want 4", len(recs))
 		}
 
 		byID := make(map[uuid.UUID]SpendRecommendation, len(recs))
@@ -269,11 +270,11 @@ func TestComputeSpendRecommendations(t *testing.T) {
 		}
 
 		diningRec := byID[diningID]
-		if diningRec.TrailingMedianSpend.StringFixed(2) != "420.00" ||
+		if diningRec.TrailingMedianSpend.StringFixed(2) != "410.00" ||
 			diningRec.CurrentPlanned.StringFixed(2) != "500.00" ||
-			diningRec.PercentageDeviation.StringFixed(4) != "0.1600" ||
+			diningRec.PercentageDeviation.StringFixed(4) != "0.1800" ||
 			!diningRec.ShouldPrompt {
-			t.Fatalf("unexpected dining recommendation: %+v", diningRec)
+			return fmt.Errorf("unexpected dining recommendation: %+v", diningRec)
 		}
 
 		grocRec := byID[groceriesID]
@@ -281,24 +282,24 @@ func TestComputeSpendRecommendations(t *testing.T) {
 			grocRec.CurrentPlanned.StringFixed(2) != "500.00" ||
 			grocRec.PercentageDeviation.StringFixed(4) != "0.0200" ||
 			grocRec.ShouldPrompt {
-			t.Fatalf("unexpected groceries recommendation: %+v", grocRec)
+			return fmt.Errorf("unexpected groceries recommendation: %+v", grocRec)
 		}
 
 		sinkRec := byID[sinkingID]
 		if sinkRec.TrailingMedianSpend.StringFixed(2) != "0.00" || sinkRec.ShouldPrompt {
-			t.Fatalf("expected dormant sinking fund not to prompt, got %+v", sinkRec)
+			return fmt.Errorf("expected dormant sinking fund not to prompt, got %+v", sinkRec)
 		}
 
 		zeroRec := byID[zeroID]
 		if zeroRec.TrailingMedianSpend.StringFixed(2) != "100.00" ||
 			zeroRec.PercentageDeviation.StringFixed(4) != "0.0000" ||
 			zeroRec.ShouldPrompt {
-			t.Fatalf("expected zero-planned category not to prompt, got %+v", zeroRec)
+			return fmt.Errorf("expected zero-planned category not to prompt, got %+v", zeroRec)
 		}
 
 		// Applying recommended target clears ShouldPrompt for Dining
 		baseSvc := NewBaselineService(NewBaselineRepo())
-		if err := baseSvc.SetMonthlyPlanned(ctx, tx, diningID, nov, decimal.NewFromInt(420)); err != nil {
+		if err := baseSvc.SetMonthlyPlanned(ctx, tx, diningID, nov, decimal.NewFromInt(410)); err != nil {
 			return err
 		}
 
@@ -308,10 +309,10 @@ func TestComputeSpendRecommendations(t *testing.T) {
 		}
 		for _, r := range recsAfter {
 			if r.CategoryID == diningID {
-				if r.CurrentPlanned.StringFixed(2) != "420.00" ||
+				if r.CurrentPlanned.StringFixed(2) != "410.00" ||
 					r.PercentageDeviation.StringFixed(4) != "0.0000" ||
 					r.ShouldPrompt {
-					t.Fatalf("expected dining prompt cleared after target update, got %+v", r)
+					return fmt.Errorf("expected dining prompt cleared after target update, got %+v", r)
 				}
 			}
 		}
@@ -342,7 +343,7 @@ func TestComputeSpendRecommendations(t *testing.T) {
 		for _, r := range febRecs {
 			if r.CategoryID == groceriesID {
 				if r.TrailingMedianSpend.StringFixed(2) != "310.00" || !r.ShouldPrompt {
-					t.Fatalf("unexpected year-boundary recommendation for groceries: %+v", r)
+					return fmt.Errorf("unexpected year-boundary recommendation for groceries: %+v", r)
 				}
 			}
 		}
@@ -426,7 +427,7 @@ func TestComputeSpendRecommendations_HTTPHandler(t *testing.T) {
 		putRec := doReq(
 			http.MethodPut,
 			"/api/v1/budget/categories/"+diningID.String(),
-			`{"year_month":"2026-11","original_planned":420}`,
+			`{"year_month":"2026-11","original_planned":410}`,
 			true,
 		)
 		if putRec.Code != http.StatusOK {
