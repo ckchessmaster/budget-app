@@ -100,7 +100,8 @@ func TestSeedDemoSandboxActivityIsIdempotent(t *testing.T) {
 		t.Fatalf("enable demo mode: %v", err)
 	}
 
-	sandboxID := uuid.NewSHA1(uuid.MustParse("2f2a1c48-6b0e-4c9f-9c1d-8a7f5e0d3b21"), []byte("demo-reset-"+wsID.String()))
+	// The same derivation the workflow and the status endpoint apply.
+	sandboxID := temporalinternal.DemoSandboxID(temporalinternal.DemoResetWorkflowIDPrefix + wsID.String())
 	input := activities.SeedDemoSandboxInput{
 		SyncScope: temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID},
 		SandboxID: sandboxID,

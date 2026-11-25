@@ -10,11 +10,6 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// demoSandboxNamespace namespaces the derived sandbox IDs. It is a fixed constant: the
-// sandbox workspace is generated from it plus the workflow ID, so it must be identical on
-// every replay and on every retry.
-var demoSandboxNamespace = uuid.MustParse("2f2a1c48-6b0e-4c9f-9c1d-8a7f5e0d3b21")
-
 // DemoResetInput is the scope plus whether to sync the fresh sandbox once it exists.
 type DemoResetInput struct {
 	temporalinternal.SyncScope
@@ -45,6 +40,8 @@ type DemoResetResult struct {
 // generated. That keeps it stable across replays, as workflow code requires, and stable
 // across activity retries, which is what lets step 4 delete-and-rebuild instead of
 // stacking a second sandbox under a new ID every time it runs.
+// temporalinternal.DemoSandboxID owns that derivation, because the status endpoint has to
+// apply the same rule to authorize a reset it can no longer match by workspace.
 func DemoResetWorkflow(ctx workflow.Context, input DemoResetInput) (*DemoResetResult, error) {
 	if input.WorkspaceID == uuid.Nil || input.UserID == uuid.Nil {
 		return nil, temporal.NewNonRetryableApplicationError(
@@ -52,7 +49,7 @@ func DemoResetWorkflow(ctx workflow.Context, input DemoResetInput) (*DemoResetRe
 	}
 
 	info := workflow.GetInfo(ctx)
-	sandboxID := uuid.NewSHA1(demoSandboxNamespace, []byte(info.WorkflowExecution.ID))
+	sandboxID := temporalinternal.DemoSandboxID(info.WorkflowExecution.ID)
 
 	quick := workflow.ActivityOptions{
 		StartToCloseTimeout: 60 * time.Second,
