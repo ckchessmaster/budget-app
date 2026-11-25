@@ -37,6 +37,7 @@
 	let targetCadence = $state<TargetCadence>('NONE');
 	let targetAmount = $state('');
 	let targetDate = $state('');
+	let startingBalance = $state('');
 	let isSubmitting = $state(false);
 	let errorMsg = $state('');
 
@@ -61,6 +62,7 @@
 				targetCadence = 'NONE';
 				targetAmount = '';
 				targetDate = '';
+				startingBalance = '';
 			}
 			errorMsg = '';
 		}
@@ -92,7 +94,8 @@
 		const nextSortOrder =
 			editingCategory?.sortOrder ??
 			Math.max(-1, ...allCategories.map((c) => c.sortOrder)) + 1;
-		const payload = {
+		const startingVal = Number(startingBalance);
+		const payload: Record<string, any> = {
 			name: name.trim(),
 			group_name: groupName.trim(),
 			monthly_budget: plannedVal,
@@ -104,6 +107,12 @@
 			target_date: targetDate ? targetDate : null,
 			sort_order: nextSortOrder
 		};
+		if (!editingCategory && Number.isFinite(startingVal) && startingVal > 0) {
+			payload.starting_balance = startingVal;
+			if (yearMonth) {
+				payload.year_month = yearMonth;
+			}
+		}
 
 		try {
 			if (editingCategory) {
@@ -270,6 +279,26 @@
 								<option value={cand.id}>{cand.groupName} — {cand.name}</option>
 							{/each}
 						</select>
+					</div>
+				{/if}
+
+				{#if !editingCategory && rolloverMode !== 'SWEEP'}
+					<div>
+						<label for="cat-starting-balance" class="block text-xs font-medium text-ink-secondary mb-1">
+							Starting Balance ($) <span class="text-ink-muted font-normal">(optional)</span>
+						</label>
+						<input
+							id="cat-starting-balance"
+							type="number"
+							step="0.01"
+							min="0"
+							placeholder="0.00"
+							bind:value={startingBalance}
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+						/>
+						<p class="mt-1 text-[11px] text-ink-muted">
+							Sets the initial carryover balance for this sinking fund in the current month.
+						</p>
 					</div>
 				{/if}
 
