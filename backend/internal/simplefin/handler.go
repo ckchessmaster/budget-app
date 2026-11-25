@@ -28,6 +28,7 @@ import (
 // cycle. The server wires the concrete starter in.
 type ClaimWorkflow interface {
 	Start(ctx context.Context, scope temporalinternal.SyncScope) (string, error)
+	Discover(ctx context.Context, scope temporalinternal.SyncScope) (string, error)
 }
 
 type ClaimTokenRequest struct {
@@ -157,6 +158,66 @@ func (h *Handler) ClaimToken(w http.ResponseWriter, r *http.Request) {
 				"workspace_id", wsID, "error", clearErr)
 		}
 		writeErr(w, http.StatusBadGateway, "failed_to_start_claim")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"workflow_id": workflowID,
+		"status":      "accepted",
+	})
+}
+
+// DiscoverAccounts starts a durable workflow to fetch accounts from an already-connected
+// SimpleFIN Bridge without claiming a new setup token.
+func (h *Handler) DiscoverAccounts(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.claim == nil {
+		slog.Error("simplefin discover requested but no workflow starter is configured")
+		writeErr(w, http.StatusServiceUnavailable, "temporal_unavailable")
+		return
+	}
+
+	var wsID uuid.UUID
+	var hasConnection bool
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		wsID, txErr = db.ActiveWorkspaceID(r.Context(), tx)
+		if txErr != nil {
+			return txErr
+		}
+		var accessURL *string
+		txErr = tx.QueryRow(r.Context(), `
+			SELECT encrypted_access_url
+			FROM simplefin_connections
+			WHERE workspace_id = $1
+		`, wsID).Scan(&accessURL)
+		if errors.Is(txErr, pgx.ErrNoRows) {
+			return nil
+		}
+		if txErr != nil {
+			return txErr
+		}
+		hasConnection = accessURL != nil && *accessURL != ""
+		return nil
+	})
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "workspace_not_found")
+		return
+	}
+	if !hasConnection {
+		writeErr(w, http.StatusNotFound, "simplefin_not_connected")
+		return
+	}
+
+	workflowID, err := h.claim.Discover(r.Context(), temporalinternal.SyncScope{WorkspaceID: wsID, UserID: userID})
+	if err != nil {
+		slog.Error("failed to start simplefin discover workflow",
+			"workspace_id", wsID, "error", err)
+		writeErr(w, http.StatusBadGateway, "failed_to_start_discover")
 		return
 	}
 

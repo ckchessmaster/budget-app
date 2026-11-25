@@ -79,27 +79,54 @@ async function authHeaders(): Promise<HeadersInit> {
  * Retry-After instead of being thrown at the user. This function drives that handoff:
  * it polls until the workflow settles and resolves with the discovered accounts.
  */
-export async function claimSimpleFINToken(
-	setupToken: string,
+async function pollSimpleFINAccountsWorkflow(
+	workflowId: string,
+	failureMessage: string,
 	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
 ): Promise<SimpleFINDiscoveredAccount[]> {
-	const started = await startSimpleFINClaim(setupToken);
-
 	const deadline = Date.now() + CLAIM_POLL_TIMEOUT_MS;
 	while (Date.now() < deadline) {
-		const status = await fetchWorkflowStatus<SimpleFINClaimResult>(started.workflow_id);
+		const status = await fetchWorkflowStatus<SimpleFINClaimResult>(workflowId);
 		onProgress?.(status);
 
 		if (status.status === 'COMPLETED') {
 			return Array.isArray(status.result?.accounts) ? status.result.accounts : [];
 		}
 		if (status.status === 'FAILED') {
-			throw new Error(status.last_error || 'SimpleFIN claim failed');
+			throw new Error(status.last_error || failureMessage);
 		}
 		await sleep(CLAIM_POLL_INTERVAL_MS);
 	}
 
-	throw new Error('Timed out waiting for the SimpleFIN claim to finish');
+	throw new Error('Timed out waiting for SimpleFIN workflow to finish');
+}
+
+export async function claimSimpleFINToken(
+	setupToken: string,
+	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
+): Promise<SimpleFINDiscoveredAccount[]> {
+	const started = await startSimpleFINClaim(setupToken);
+	return pollSimpleFINAccountsWorkflow(started.workflow_id, 'SimpleFIN claim failed', onProgress);
+}
+
+/**
+ * Fetch accounts from an already-connected SimpleFIN Bridge without claiming a new
+ * setup token.
+ */
+export async function discoverSimpleFINAccounts(
+	onProgress?: (status: WorkflowStatus<SimpleFINClaimResult>) => void
+): Promise<SimpleFINDiscoveredAccount[]> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/bank/simplefin/discover`, {
+		method: 'POST',
+		headers: await authHeaders()
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(err.error || `Failed to discover SimpleFIN accounts (${res.status})`);
+	}
+	const started: ClaimAcceptedResponse = await res.json();
+	return pollSimpleFINAccountsWorkflow(started.workflow_id, 'SimpleFIN account discovery failed', onProgress);
 }
 
 /** Start the durable claim. Returns as soon as the API has accepted the work. */

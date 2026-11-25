@@ -17,6 +17,7 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, vault crypto.Vault, claim 
 
 	r.Route("/api/v1/bank/simplefin", func(r chi.Router) {
 		r.Post("/claim", h.ClaimToken)
+		r.Post("/discover", h.DiscoverAccounts)
 		r.Post("/link", h.LinkAccounts)
 		r.Delete("/", h.Disconnect)
 	})

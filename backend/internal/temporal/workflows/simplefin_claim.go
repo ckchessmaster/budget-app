@@ -65,3 +65,33 @@ func SimpleFINClaimWorkflow(ctx workflow.Context, input SimpleFINClaimInput) (*S
 	}
 	return result, nil
 }
+
+// SimpleFINDiscoverWorkflow fetches accounts from an already-connected SimpleFIN Bridge
+// without claiming a new setup token.
+func SimpleFINDiscoverWorkflow(ctx workflow.Context, input SimpleFINClaimInput) (*SimpleFINClaimResult, error) {
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 90 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    5 * time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    5 * time.Minute,
+			MaximumAttempts:    6,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+
+	var claimActivities *activities.ClaimActivities
+
+	var discovered *activities.FetchDiscoveredAccountsResult
+	if err := workflow.ExecuteActivity(ctx, claimActivities.FetchDiscoveredAccountsActivity, input.SyncScope).Get(ctx, &discovered); err != nil {
+		return nil, err
+	}
+
+	result := &SimpleFINClaimResult{}
+	if discovered != nil {
+		result.Accounts = discovered.Accounts
+		result.AccountsDiscovered = len(discovered.Accounts)
+		result.Warnings = discovered.Warnings
+	}
+	return result, nil
+}

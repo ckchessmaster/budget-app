@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		claimSimpleFINToken,
+		discoverSimpleFINAccounts,
 		linkSimpleFINAccounts,
 		type LinkAccountMapping,
 		type SimpleFINDiscoveredAccount
@@ -174,6 +175,55 @@
 		}
 	}
 
+	function applyDiscoveredAccounts(
+		accounts: SimpleFINDiscoveredAccount[],
+		warningsFromWorkflow: string[]
+	) {
+		progressMsg = null;
+		claimWarnings = warningsFromWorkflow;
+		discovered = accounts;
+		mappings = accounts.map((a) => ({
+			external_account_id: a.id,
+			name: a.name,
+			type: inferAccountType(a.name),
+			card_mode: 'PAY_IN_FULL',
+			balance: a.balance,
+			selected: true
+		}));
+		step = 2;
+	}
+
+	async function handleDiscoverExisting() {
+		errorMsg = null;
+		clipboardHint = null;
+		loading = true;
+		claimWarnings = [];
+		progressMsg = 'Fetching accounts from your existing SimpleFIN connection...';
+		try {
+			let warningsFromWorkflow: string[] = [];
+			const accounts = await discoverSimpleFINAccounts((status) => {
+				if (status.status === 'RETRYING') {
+					const attempt = status.attempt ?? 2;
+					progressMsg = status.last_error
+						? `Bank is slow or rate limited — retrying (attempt ${attempt}): ${status.last_error}`
+						: `Bank is slow or rate limited — retrying (attempt ${attempt})...`;
+				} else if (status.status === 'COMPLETED') {
+					warningsFromWorkflow = status.result?.warnings ?? [];
+				} else {
+					progressMsg = 'Fetching accounts from your existing SimpleFIN connection...';
+				}
+			});
+			applyDiscoveredAccounts(accounts, warningsFromWorkflow);
+		} catch (err) {
+			progressMsg = null;
+			errorMsg = formatSimpleFINClaimError(
+				err instanceof Error ? err.message : 'Failed to fetch accounts'
+			);
+		} finally {
+			loading = false;
+		}
+	}
+
 	async function handleClaim(e: SubmitEvent) {
 		e.preventDefault();
 		submitAttempted = true;
@@ -204,18 +254,7 @@
 					progressMsg = 'Contacting your bank...';
 				}
 			});
-			progressMsg = null;
-			claimWarnings = warningsFromWorkflow;
-			discovered = accounts;
-			mappings = accounts.map((a) => ({
-				external_account_id: a.id,
-				name: a.name,
-				type: inferAccountType(a.name),
-				card_mode: 'PAY_IN_FULL',
-				balance: a.balance,
-				selected: true
-			}));
-			step = 2;
+			applyDiscoveredAccounts(accounts, warningsFromWorkflow);
 		} catch (err) {
 			progressMsg = null;
 			errorMsg = formatSimpleFINClaimError(
@@ -340,6 +379,26 @@
 				</button>
 			</div>
 		{:else if step === 1}
+			{#if isReconnect}
+				<div class="rounded-xl border border-accent-primary/30 bg-accent-tint/50 p-3.5 space-y-2">
+					<p class="text-xs font-semibold text-ink-primary">
+						Already connected to SimpleFIN
+					</p>
+					<p class="text-xs text-ink-secondary">
+						If you added a new bank or account in your SimpleFIN Bridge, you can fetch it using your existing connection without creating a new setup token.
+					</p>
+					<button
+						type="button"
+						onclick={handleDiscoverExisting}
+						disabled={isBusy}
+						data-testid="discover-existing-simplefin"
+						class="px-3 py-1.5 text-xs font-semibold bg-accent-primary hover:opacity-90 text-accent-primary-text rounded-md disabled:opacity-50 transition-opacity"
+					>
+						{loading ? 'Fetching...' : 'Fetch Accounts from Existing Connection'}
+					</button>
+				</div>
+			{/if}
+
 			<p class="text-xs text-ink-secondary leading-relaxed">
 				SimpleFIN Bridge is a separate, read-only bank sync service (paid directly to SimpleFIN)
 				that connects your banks without sharing login passwords with Budget App.
