@@ -52,22 +52,25 @@ For the complete technical specification, architectural diagrams, and PostgreSQL
 
 ---
 
-## Planned Project Structure
+## Project Structure
 
 ```
 budget-app/
 ├── .editorconfig              # Consistent code formatting rules
 ├── .env.example               # Template for environment variables
 ├── .gitignore                 # Git ignore rules for Go, Svelte, Aspire, etc.
+├── AGENTS.md                  # Working notes, commands, and invariants for contributors
 ├── LICENSE                    # Repository license
 ├── README.md                  # Project overview and quickstart
 ├── docs/
+│   ├── DEVELOPMENT_WORKFLOW.md         # Contributor workflow and milestone scope
 │   ├── master_design_document.md       # Comprehensive architectural and system specs
-│   └── detailed_task_specifications.md # 62 agent-ready implementation task specs
+│   └── detailed_task_specifications.md # Granular implementation task specifications
 ├── apphost/                   # Microsoft Aspire TypeScript AppHost (orchestration)
 ├── backend/                   # Go API service and Temporal worker
 ├── frontend/                  # SvelteKit PWA client application
-└── k8s/                       # Production Kubernetes deployment manifests
+├── charts/budget-app/         # Helm chart (API, sync worker, frontend, opt-in VAPID & backup CronJob)
+└── scripts/backup/            # Asymmetric age + rclone PostgreSQL backup script, Dockerfile, and tests
 ```
 
 ---

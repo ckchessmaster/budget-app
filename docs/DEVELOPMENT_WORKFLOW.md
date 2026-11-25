@@ -18,9 +18,9 @@ All work in this repository is tracked across 7 Milestones (Milestones 1–5 and
 | **Milestone 2** | **Zero-Based Budget Engine & Ledger** | M2.1 – M2.3 | TASK-2.1.1 – 2.3.3 (10 tasks) | MVP (Done) |
 | **Milestone 3** | **Transactions, Accounts, & Offline Client** | M3.1 – M3.3 | TASK-3.1.1 – 3.3.3 (9 tasks) | MVP (Done) |
 | **Milestone 4** | **Banking Rails & Ingestion (SimpleFIN + Temporal)** | M4.1 – M4.2 | TASK-4.1.1 – 4.2.7 (10 tasks) | MVP (Done) |
-| **Milestone 5** | **Month-End Rollover & Automated Transitions** | M5.1 – M5.2 | TASK-5.1.1 – 5.2.4 (8 tasks) | MVP (Next) |
+| **Milestone 5** | **Month-End Rollover & Automated Transitions** | M5.1 – M5.2 | TASK-5.1.1 – 5.2.4 (8 tasks) | MVP (Done) |
 | **Milestone 6** | **Receipt Ingestion, Parsing, & Multi-Package Matching** | M6.1 – M6.3 | TASK-6.1.1 – 6.3.3 (8 tasks) | Post-MVP |
-| **Milestone 7** | **Push Notifications, Backup Pipeline, & Hardening** | M7.1 – M7.3 | TASK-7.1.1 – 7.3.2 (7 tasks) | MVP (M7.3 covered by Dockerfiles & Helm) |
+| **Milestone 7** | **Push Notifications, Backup Pipeline, & Hardening** | M7.1 – M7.3 | TASK-7.1.1 – 7.3.2 (7 tasks) | MVP (Done — M7.1, M7.2, & M7.3 via Dockerfiles & Helm) |
 
 For complete code contracts, SQL DDL schemas, mock fixtures, and mathematical formulas for every task, refer directly to [`docs/detailed_task_specifications.md`](detailed_task_specifications.md).
 
