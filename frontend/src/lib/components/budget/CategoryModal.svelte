@@ -95,7 +95,7 @@
 			editingCategory?.sortOrder ??
 			Math.max(-1, ...allCategories.map((c) => c.sortOrder)) + 1;
 		const startingVal = Number(startingBalance);
-		const payload: Record<string, any> = {
+		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
 			monthly_budget: plannedVal,
@@ -105,14 +105,14 @@
 			target_cadence: targetCadence,
 			target_amount: targetAmount ? Number(targetAmount) : null,
 			target_date: targetDate ? targetDate : null,
-			sort_order: nextSortOrder
+			sort_order: nextSortOrder,
+			...(!editingCategory && Number.isFinite(startingVal) && startingVal > 0
+				? {
+						starting_balance: startingVal,
+						...(yearMonth ? { year_month: yearMonth } : {})
+					}
+				: {})
 		};
-		if (!editingCategory && Number.isFinite(startingVal) && startingVal > 0) {
-			payload.starting_balance = startingVal;
-			if (yearMonth) {
-				payload.year_month = yearMonth;
-			}
-		}
 
 		try {
 			if (editingCategory) {
