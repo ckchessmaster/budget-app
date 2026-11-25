@@ -3,6 +3,7 @@ package budget
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 )
 
 type Handler struct {
@@ -139,12 +141,12 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 
 	var startYM time.Time
 	if req.YearMonth != nil && *req.YearMonth != "" {
-		parsedYM, err := parseYearMonth(*req.YearMonth)
+		parsedYM, err := time.Parse("2006-01", *req.YearMonth)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid year_month format, expected YYYY-MM")
 			return
 		}
-		startYM = parsedYM
+		startYM = NormalizeYearMonth(parsedYM)
 	} else {
 		startYM = NormalizeYearMonth(time.Now().UTC())
 	}
