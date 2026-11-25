@@ -29,6 +29,7 @@
 		onEditClick?: (categoryId: string) => void;
 		onUpdatePlanned?: (categoryId: string, newPlanned: number) => Promise<void> | void;
 		onFilterTransactions?: (categoryId: string) => void;
+		onDropTransaction?: (txId: string, categoryId: string) => Promise<void> | void;
 	}
 
 	let {
@@ -39,10 +40,12 @@
 		onCoverClick,
 		onEditClick,
 		onUpdatePlanned,
-		onFilterTransactions
+		onFilterTransactions,
+		onDropTransaction
 	}: Props = $props();
 
 	let isExpanded = $state(false);
+	let isDragOver = $state(false);
 	let editingPlanned = $state(false);
 	let plannedDraft = $state('');
 	let savingPlanned = $state(false);
@@ -141,9 +144,31 @@
 
 <div
 	data-testid="category-row-container"
-	class={embedded
+	ondragover={(e) => {
+		if (!onDropTransaction) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		isDragOver = true;
+	}}
+	ondragleave={() => {
+		isDragOver = false;
+	}}
+	ondrop={async (e) => {
+		isDragOver = false;
+		if (!onDropTransaction) return;
+		e.preventDefault();
+		const txId =
+			e.dataTransfer?.getData('application/x-budget-tx-id') ||
+			e.dataTransfer?.getData('text/plain');
+		if (txId) {
+			await onDropTransaction(txId, category.id);
+		}
+	}}
+	class="{embedded
 		? ''
-		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'}
+		: 'rounded-xl border border-border bg-surface hover:border-ink-muted/50 transition-colors overflow-hidden'} {isDragOver
+		? 'ring-2 ring-accent-primary bg-accent-tint/30'
+		: ''}"
 >
 	<div
 		role="button"
