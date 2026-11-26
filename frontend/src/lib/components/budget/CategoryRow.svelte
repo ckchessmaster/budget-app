@@ -685,9 +685,7 @@
 							: fundGoalMet
 								? 'bg-status-good'
 								: 'bg-accent-pop'}"
-						style="width: {fundGoalPct}%; {!isOverspent && !fundGoalMet && groupColor
-							? `background-color: ${groupColor.stroke};`
-							: ''}"
+						style="width: {fundGoalPct}%;"
 					></div>
 				</div>
 			</div>
@@ -701,9 +699,7 @@
 					class="absolute inset-y-0 left-0 transition-all duration-300 {isOverspent
 						? 'bg-status-danger'
 						: 'bg-accent-pop'}"
-					style="width: {fundTankPct}%; {!isOverspent && groupColor
-						? `background-color: ${groupColor.stroke};`
-						: ''}"
+					style="width: {fundTankPct}%;"
 				></div>
 			</div>
 		{:else if !organizeMode && !isFund}
@@ -719,9 +715,7 @@
 						: statusColor === 'amber'
 							? 'bg-status-warn'
 							: 'bg-accent-pop'}"
-					style="width: {clearedPct}%; {statusColor === 'green' && groupColor
-						? `background-color: ${groupColor.stroke};`
-						: ''}"
+					style="width: {clearedPct}%;"
 				></div>
 
 				<!-- Layer 2: Striped pending spend -->
