@@ -247,4 +247,34 @@ describe('TransactionDetailCard', () => {
 		await fireEvent.click(getByTestId('tx-detail-create-rule-btn'));
 		expect(onCreateRule).toHaveBeenCalledTimes(1);
 	});
+
+	it('pins Uncategorized at the top of the picker and provides a Clear button', async () => {
+		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
+
+		const { getByTestId, getByText } = render(TransactionDetailCard, {
+			props: {
+				transaction,
+				account,
+				categories,
+				onClose: vi.fn(),
+				onUpdateTransaction
+			}
+		});
+
+		const picker = getByTestId('tx-detail-category-picker');
+		const firstButton = picker.querySelector('button');
+		expect(firstButton?.getAttribute('data-testid')).toBe('tx-detail-category-clear');
+
+		await fireEvent.click(getByTestId('tx-detail-category-header-clear'));
+		await fireEvent.click(getByText('Save Changes'));
+
+		await waitFor(() =>
+			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-100', {
+				merchantClean: "Trader Joe's",
+				userNotes: 'Weekly groceries',
+				clearCategory: true,
+				clearPlannedIncome: true
+			})
+		);
+	});
 });

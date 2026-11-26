@@ -773,9 +773,21 @@
 								<label for="tx-detail-category-search" class="block text-[11px] font-medium text-ink-secondary">
 									Category
 								</label>
-								<span class="text-[11px] font-semibold text-ink-primary truncate max-w-[180px]">
-									{selectedTargetLabel}
-								</span>
+								<div class="flex items-center gap-2 min-w-0">
+									<span class="text-[11px] font-semibold text-ink-primary truncate max-w-[180px]">
+										{selectedTargetLabel}
+									</span>
+									{#if editCategoryId !== ''}
+										<button
+											type="button"
+											data-testid="tx-detail-category-header-clear"
+											onclick={() => (editCategoryId = '')}
+											class="shrink-0 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover transition-colors"
+										>
+											Clear
+										</button>
+									{/if}
+								</div>
 							</div>
 
 							<input
@@ -791,6 +803,19 @@
 								data-testid="tx-detail-category-picker"
 								class="max-h-52 overflow-y-auto overscroll-contain-scroll rounded-lg border border-border bg-canvas p-2.5 space-y-2"
 							>
+								{#if editCategoryId !== ''}
+									<div class="pb-1.5 border-b border-border">
+										<button
+											type="button"
+											data-testid="tx-detail-category-clear"
+											onclick={() => (editCategoryId = '')}
+											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
+										>
+											Uncategorized
+										</button>
+									</div>
+								{/if}
+
 								{#if filteredSuggestions.length > 0}
 									<div class="space-y-1">
 										<span class="block text-[10px] font-semibold uppercase tracking-wider text-accent-pop">
@@ -873,19 +898,6 @@
 											</button>
 										</div>
 									{/if}
-								{/if}
-
-								{#if editCategoryId !== ''}
-									<div class="pt-1 border-t border-border">
-										<button
-											type="button"
-											data-testid="tx-detail-category-clear"
-											onclick={() => (editCategoryId = '')}
-											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
-										>
-											Uncategorized
-										</button>
-									</div>
 								{/if}
 							</div>
 						</div>

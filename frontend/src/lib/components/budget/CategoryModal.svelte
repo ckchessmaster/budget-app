@@ -42,6 +42,7 @@
 	let targetCadence = $state<TargetCadence>('NONE');
 	let targetAmount = $state('');
 	let targetDate = $state('');
+	let dueDay = $state('');
 	let startingBalance = $state('');
 	let isSubmitting = $state(false);
 	let errorMsg = $state('');
@@ -64,6 +65,12 @@
 				targetAmount =
 					editingCategory.targetAmount != null ? editingCategory.targetAmount.toFixed(2) : '';
 				targetDate = editingCategory.targetDate ?? '';
+				const parsedDay =
+					editingCategory.rolloverMode === 'SWEEP' && editingCategory.targetDate
+						? Number(editingCategory.targetDate.slice(8, 10))
+						: NaN;
+				dueDay =
+					Number.isInteger(parsedDay) && parsedDay >= 1 && parsedDay <= 31 ? String(parsedDay) : '';
 				startingBalance =
 					editingCategory.carryoverBalance != null
 						? editingCategory.carryoverBalance.toFixed(2)
@@ -79,6 +86,7 @@
 				targetCadence = 'NONE';
 				targetAmount = '';
 				targetDate = '';
+				dueDay = '';
 				startingBalance = '';
 			}
 			errorMsg = '';
@@ -127,6 +135,17 @@
 			return;
 		}
 
+		let monthlyDueDate: string | null = null;
+		if (itemKind === 'EXPENSE' && String(dueDay).trim() !== '') {
+			const parsedDay = Number(dueDay);
+			if (!Number.isInteger(parsedDay) || parsedDay < 1 || parsedDay > 31) {
+				errorMsg = 'Due day must be a whole number between 1 and 31.';
+				isSubmitting = false;
+				return;
+			}
+			monthlyDueDate = `2000-01-${String(parsedDay).padStart(2, '0')}`;
+		}
+
 		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
@@ -135,9 +154,10 @@
 			sweep_target_category_id:
 				resolvedRolloverMode === 'SWEEP' && sweepTargetCategoryId ? sweepTargetCategoryId : null,
 			held_in_account_id: itemKind === 'FUND' && heldInAccountId ? heldInAccountId : null,
-			target_cadence: itemKind === 'FUND' ? targetCadence : 'NONE',
+			target_cadence:
+				itemKind === 'FUND' ? targetCadence : monthlyDueDate ? ('MONTHLY' as TargetCadence) : 'NONE',
 			target_amount: itemKind === 'FUND' && targetAmount ? Number(targetAmount) : null,
-			target_date: itemKind === 'FUND' && targetDate ? targetDate : null,
+			target_date: itemKind === 'FUND' ? (targetDate ? targetDate : null) : monthlyDueDate,
 			sort_order: nextSortOrder,
 			...(itemKind === 'FUND' && parsedStarting !== null
 				? {
@@ -297,7 +317,26 @@
 						/>
 					</div>
 
-					{#if itemKind === 'FUND'}
+					{#if itemKind === 'EXPENSE'}
+					<div>
+						<label for="cat-due-day" class="block text-xs font-medium text-ink-secondary mb-1">
+							Monthly Due Day (optional)
+						</label>
+						<input
+							id="cat-due-day"
+							type="number"
+							min="1"
+							max="31"
+							step="1"
+							bind:value={dueDay}
+							placeholder="e.g. 15 for the 15th of each month"
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+						/>
+						<p class="mt-1 text-[11px] text-ink-muted">
+							Shows a "Due" reminder pill until paid each month.
+						</p>
+					</div>
+				{:else if itemKind === 'FUND'}
 						<div>
 							<label for="cat-starting-balance" class="block text-xs font-medium text-ink-secondary mb-1">
 								{editingCategory ? 'Prior Saved Balance ($)' : 'Starting Balance ($)'}
@@ -333,7 +372,26 @@
 					</div>
 				{/if}
 
-				{#if itemKind === 'FUND'}
+				{#if itemKind === 'EXPENSE'}
+					<div>
+						<label for="cat-due-day" class="block text-xs font-medium text-ink-secondary mb-1">
+							Monthly Due Day (optional)
+						</label>
+						<input
+							id="cat-due-day"
+							type="number"
+							min="1"
+							max="31"
+							step="1"
+							bind:value={dueDay}
+							placeholder="e.g. 15 for the 15th of each month"
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+						/>
+						<p class="mt-1 text-[11px] text-ink-muted">
+							Shows a "Due" reminder pill until paid each month.
+						</p>
+					</div>
+				{:else if itemKind === 'FUND'}
 					<div>
 						<label for="cat-held-account" class="block text-xs font-medium text-ink-secondary mb-1">
 							Held in Account <span class="text-ink-muted font-normal">(optional)</span>

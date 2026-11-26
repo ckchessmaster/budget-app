@@ -1234,6 +1234,22 @@
 							/>
 
 							<div class="max-h-56 overflow-y-auto space-y-2">
+								{#if !isUnassigned}
+									<div class="pb-1.5 border-b border-border">
+										<button
+											type="button"
+											data-testid="quick-category-clear"
+											disabled={isSaving}
+											onclick={() =>
+												void (tx.plannedIncomeId && onAssignTransactionToIncome
+													? handleIncomeSelect(tx.id, null)
+													: handleCategorySelect(tx.id, ''))}
+											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
+										>
+											Uncategorized
+										</button>
+									</div>
+								{/if}
 
 								{#if visibleSuggestions.length > 0}
 									<div class="space-y-1" data-testid="quick-picker-suggestions">
@@ -1330,23 +1346,6 @@
 											</button>
 										</div>
 									{/if}
-								{/if}
-
-								{#if !isUnassigned}
-									<div class="pt-1 border-t border-border">
-										<button
-											type="button"
-											data-testid="quick-category-clear"
-											disabled={isSaving}
-											onclick={() =>
-												void (tx.plannedIncomeId && onAssignTransactionToIncome
-													? handleIncomeSelect(tx.id, null)
-													: handleCategorySelect(tx.id, ''))}
-											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
-										>
-											Uncategorized
-										</button>
-									</div>
 								{/if}
 							</div>
 						</div>

@@ -139,9 +139,17 @@
 		return 'Unassigned';
 	}
 
+	const MATCH_TYPE_LABELS: Record<string, string> = {
+		CONTAINS: 'Contains',
+		STARTS_WITH: 'Starts with',
+		ENDS_WITH: 'Ends with',
+		EXACT: 'Exact',
+		REGEX: 'Regex'
+	};
+
 	function formatConditions(rule: CategorizationRule): string[] {
 		const tags: string[] = [];
-		tags.push(rule.matchType === 'EXACT' ? 'Exact' : 'Contains');
+		tags.push(MATCH_TYPE_LABELS[rule.matchType] ?? 'Contains');
 		if (rule.direction !== 'ANY') {
 			tags.push(rule.direction === 'EXPENSE' ? 'Expense' : 'Inflow');
 		}

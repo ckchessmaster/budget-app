@@ -1,4 +1,4 @@
-export type RuleMatchType = 'CONTAINS' | 'EXACT';
+export type RuleMatchType = 'CONTAINS' | 'STARTS_WITH' | 'ENDS_WITH' | 'EXACT' | 'REGEX';
 export type RuleDirection = 'ANY' | 'EXPENSE' | 'INFLOW';
 export type SuggestionTargetType = 'CATEGORY' | 'PLANNED_INCOME';
 

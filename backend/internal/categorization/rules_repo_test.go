@@ -48,4 +48,21 @@ func TestNormalizeRuleFieldsValidation(t *testing.T) {
 			t.Fatalf("unexpected normalized rule: %+v", r)
 		}
 	})
+
+	t.Run("accepts starts_with, ends_with, and valid regex, rejects invalid regex", func(t *testing.T) {
+		for _, mt := range []string{MatchTypeStartsWith, MatchTypeEndsWith, MatchTypeRegex} {
+			r, err := normalizeRuleFields(mt, "coffee", DirectionAny, nil, nil, &catID, nil, nil)
+			if err != nil {
+				t.Fatalf("expected %s to be valid, got %v", mt, err)
+			}
+			if r.MatchType != mt {
+				t.Fatalf("expected match type %s, got %s", mt, r.MatchType)
+			}
+		}
+
+		_, err := normalizeRuleFields(MatchTypeRegex, "[unclosed", DirectionAny, nil, nil, &catID, nil, nil)
+		if !errors.Is(err, ErrInvalidRule) {
+			t.Fatalf("expected ErrInvalidRule for invalid regex, got %v", err)
+		}
+	})
 }
