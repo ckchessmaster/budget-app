@@ -186,13 +186,19 @@
 			</div>
 		</div>
 
-		<!-- Group 3: Accounts, Settings, Theme Toggle, Mobile Drawer Toggle, Sign Out -->
+		<!-- Group 3: Accounts, Rules, Settings, Theme Toggle, Mobile Drawer Toggle, Sign Out -->
 		<div class="order-2 lg:order-3 flex items-center gap-1.5 sm:gap-2 shrink-0 pr-0.5">
 			<a
 				href="/accounts"
 				class="hidden md:inline-flex items-center px-2 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover transition-colors"
 			>
 				Accounts
+			</a>
+			<a
+				href="/rules"
+				class="hidden sm:inline-flex items-center px-2 py-1.5 rounded-lg text-xs font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover transition-colors"
+			>
+				Rules
 			</a>
 
 			<a

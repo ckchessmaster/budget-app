@@ -119,7 +119,8 @@
 		const nextSortOrder =
 			editingCategory?.sortOrder ??
 			Math.max(-1, ...allCategories.map((c) => c.sortOrder)) + 1;
-		const parsedStarting = startingBalance.trim() === '' ? null : Number(startingBalance);
+		const startingStr = String(startingBalance ?? '').trim();
+		const parsedStarting = startingStr === '' ? null : Number(startingStr);
 		if (parsedStarting !== null && (!Number.isFinite(parsedStarting) || parsedStarting < 0)) {
 			errorMsg = 'Starting balance must be 0 or greater.';
 			isSubmitting = false;
@@ -134,9 +135,9 @@
 			sweep_target_category_id:
 				resolvedRolloverMode === 'SWEEP' && sweepTargetCategoryId ? sweepTargetCategoryId : null,
 			held_in_account_id: itemKind === 'FUND' && heldInAccountId ? heldInAccountId : null,
-			target_cadence: targetCadence,
-			target_amount: targetAmount ? Number(targetAmount) : null,
-			target_date: targetDate ? targetDate : null,
+			target_cadence: itemKind === 'FUND' ? targetCadence : 'NONE',
+			target_amount: itemKind === 'FUND' && targetAmount ? Number(targetAmount) : null,
+			target_date: itemKind === 'FUND' && targetDate ? targetDate : null,
 			sort_order: nextSortOrder,
 			...(itemKind === 'FUND' && parsedStarting !== null
 				? {
@@ -351,50 +352,50 @@
 							Track how much of a checking or savings account is reserved for this fund.
 						</p>
 					</div>
-				{/if}
 
-				<div class="grid grid-cols-3 gap-2">
-					<div>
-						<label for="cat-cadence" class="block text-xs font-medium text-ink-secondary mb-1">
-							Goal Cadence
-						</label>
-						<select
-							id="cat-cadence"
-							bind:value={targetCadence}
-							class="w-full rounded-lg border border-border bg-canvas px-2 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-						>
-							<option value="NONE">None</option>
-							<option value="MONTHLY">Monthly</option>
-							<option value="ANNUAL">Annual</option>
-							<option value="TARGET_DATE">Target Date</option>
-						</select>
+					<div class="grid grid-cols-3 gap-2">
+						<div>
+							<label for="cat-cadence" class="block text-xs font-medium text-ink-secondary mb-1">
+								Goal Cadence
+							</label>
+							<select
+								id="cat-cadence"
+								bind:value={targetCadence}
+								class="w-full rounded-lg border border-border bg-canvas px-2 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+							>
+								<option value="NONE">None</option>
+								<option value="MONTHLY">Monthly</option>
+								<option value="ANNUAL">Annual</option>
+								<option value="TARGET_DATE">Target Date</option>
+							</select>
+						</div>
+						<div>
+							<label for="cat-target-amt" class="block text-xs font-medium text-ink-secondary mb-1">
+								Goal Target ($)
+							</label>
+							<input
+								id="cat-target-amt"
+								type="number"
+								step="0.01"
+								min="0"
+								bind:value={targetAmount}
+								placeholder="Optional"
+								class="w-full rounded-lg border border-border bg-canvas px-2.5 py-2 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+						</div>
+						<div>
+							<label for="cat-target-date" class="block text-xs font-medium text-ink-secondary mb-1">
+								Target Date
+							</label>
+							<input
+								id="cat-target-date"
+								type="date"
+								bind:value={targetDate}
+								class="w-full rounded-lg border border-border bg-canvas px-2 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+							/>
+						</div>
 					</div>
-					<div>
-						<label for="cat-target-amt" class="block text-xs font-medium text-ink-secondary mb-1">
-							Goal Target ($)
-						</label>
-						<input
-							id="cat-target-amt"
-							type="number"
-							step="0.01"
-							min="0"
-							bind:value={targetAmount}
-							placeholder="Optional"
-							class="w-full rounded-lg border border-border bg-canvas px-2.5 py-2 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-						/>
-					</div>
-					<div>
-						<label for="cat-target-date" class="block text-xs font-medium text-ink-secondary mb-1">
-							Target Date
-						</label>
-						<input
-							id="cat-target-date"
-							type="date"
-							bind:value={targetDate}
-							class="w-full rounded-lg border border-border bg-canvas px-2 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-						/>
-					</div>
-				</div>
+				{/if}
 
 				{#if itemKind === 'FUND' && Number(targetAmount) > 0}
 					<label
