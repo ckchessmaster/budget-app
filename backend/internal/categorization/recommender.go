@@ -74,7 +74,7 @@ var keywordGroups = []keywordGroup{
 		categoryTerms: []string{"grocer", "supermarket", "food"},
 	},
 	{
-		merchantTerms: []string{"cafe", "coffee", "starbucks", "dunkin", "peet", "restaurant", "dining", "chipotle", "doordash", "ubereats", "grubhub", "pizza", "bakery", "bistro", "panera", "chick-fil-a", "mcdonald", "taco bell"},
+		merchantTerms: []string{"cafe", "coffee", "starbucks", "dunkin", "peet", "restaurant", "dining", "chipotle", "doordash", "dd *", "ubereats", "grubhub", "pizza", "bakery", "bistro", "panera", "chick-fil-a", "mcdonald", "taco bell"},
 		categoryTerms: []string{"dining", "restaurant", "coffee", "eating out", "takeout", "food"},
 	},
 	{
@@ -86,7 +86,7 @@ var keywordGroups = []keywordGroup{
 		categoryTerms: []string{"travel", "vacation", "flight", "hotel", "lodging"},
 	},
 	{
-		merchantTerms: []string{"netflix", "spotify", "hulu", "apple", "subscription", "disney", "youtube", "patreon", "icloud", "prime", "openai", "adobe", "dropbox", "ny times"},
+		merchantTerms: []string{"netflix", "spotify", "hulu", "apple", "subscription", "dashpass", "disney", "youtube", "patreon", "icloud", "prime", "openai", "adobe", "dropbox", "ny times"},
 		categoryTerms: []string{"subscription", "stream", "entertainment", "media", "software"},
 	},
 	{
@@ -508,7 +508,7 @@ func SuggestForMonth(
 	catRows, err := tx.Query(ctx, `
 		SELECT id, name, group_name
 		FROM categories
-		WHERE workspace_id = $1 AND is_archived = FALSE
+		WHERE workspace_id = $1
 		ORDER BY group_name ASC, sort_order ASC, name ASC
 	`, wsID)
 	if err != nil {

@@ -49,6 +49,8 @@
 	let editMerchant = $state('');
 	let editNotes = $state('');
 	let editCategoryId = $state('');
+	let categoryFilter = $state('');
+	let showIncomeInPicker = $state(false);
 	let saving = $state(false);
 	let deleting = $state(false);
 	let confirmDelete = $state(false);
@@ -102,6 +104,48 @@
 		return Array.from(groups.entries());
 	});
 
+	let filteredGroups = $derived.by(() => {
+		const q = categoryFilter.trim().toLowerCase();
+		if (!q) return groupedCategories;
+		return groupedCategories
+			.map(
+				([groupName, cats]) =>
+					[
+						groupName,
+						cats.filter(
+							(c) => c.name.toLowerCase().includes(q) || groupName.toLowerCase().includes(q)
+						)
+					] as [string, CategoryBudget[]]
+			)
+			.filter(([, cats]) => cats.length > 0);
+	});
+
+	let filteredIncomes = $derived.by(() => {
+		const q = categoryFilter.trim().toLowerCase();
+		if (!q) return incomes;
+		return incomes.filter((inc) => inc.name.toLowerCase().includes(q) || 'income'.includes(q));
+	});
+
+	let filteredSuggestions = $derived.by(() => {
+		const q = categoryFilter.trim().toLowerCase();
+		if (!q) return suggestions;
+		return suggestions.filter(
+			(s) =>
+				s.name.toLowerCase().includes(q) ||
+				(s.groupName ?? '').toLowerCase().includes(q)
+		);
+	});
+
+	let selectedTargetLabel = $derived.by(() => {
+		if (!editCategoryId) return 'Uncategorized';
+		if (editCategoryId.startsWith('income:')) {
+			const inc = incomeById.get(editCategoryId.slice('income:'.length));
+			return inc ? `Income: ${inc.name}` : 'Income';
+		}
+		const cat = categoryById.get(editCategoryId);
+		return cat ? cat.name : 'Selected';
+	});
+
 	function buildInitialSplitRows(tx: TransactionItemModel): DraftSplitRow[] {
 		if (tx.splits && tx.splits.length > 0) {
 			return tx.splits.map((s) => ({
@@ -137,6 +181,8 @@
 			editCategoryId = transaction.plannedIncomeId
 				? `income:${transaction.plannedIncomeId}`
 				: transaction.categoryId ?? '';
+			categoryFilter = '';
+			showIncomeInPicker = false;
 			confirmDelete = false;
 			errorMsg = null;
 			splitError = null;
@@ -717,53 +763,131 @@
 					</div>
 
 					{#if canCategorize}
-						{#if suggestions.length > 0}
-							<div class="space-y-1.5">
-								<span class="block text-[11px] font-medium text-accent-pop">Suggested</span>
-								<div class="flex flex-wrap gap-1.5">
-									{#each suggestions as sug (sug.categoryId ?? sug.plannedIncomeId ?? sug.name)}
+						{@const isExpenseTx = transaction.amount < 0}
+						{@const qCat = categoryFilter.trim()}
+						{@const showIncomeSection =
+							filteredIncomes.length > 0 &&
+							(!isExpenseTx || Boolean(transaction.plannedIncomeId) || qCat.length > 0 || showIncomeInPicker)}
+						<div class="space-y-1.5">
+							<div class="flex items-center justify-between gap-2">
+								<label for="tx-detail-category-search" class="block text-[11px] font-medium text-ink-secondary">
+									Category
+								</label>
+								<span class="text-[11px] font-semibold text-ink-primary truncate max-w-[180px]">
+									{selectedTargetLabel}
+								</span>
+							</div>
+
+							<input
+								id="tx-detail-category-search"
+								type="search"
+								aria-label="Search categories"
+								placeholder="Search categories..."
+								bind:value={categoryFilter}
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-1.5 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+
+							<div
+								data-testid="tx-detail-category-picker"
+								class="max-h-52 overflow-y-auto overscroll-contain-scroll rounded-lg border border-border bg-canvas p-2.5 space-y-2"
+							>
+								{#if filteredSuggestions.length > 0}
+									<div class="space-y-1">
+										<span class="block text-[10px] font-semibold uppercase tracking-wider text-accent-pop">
+											Suggested
+										</span>
+										<div class="flex flex-wrap gap-1.5">
+											{#each filteredSuggestions as sug (sug.categoryId ?? sug.plannedIncomeId ?? sug.name)}
+												<button
+													type="button"
+													data-testid="tx-detail-suggestion-chip"
+													disabled={saving}
+													onclick={() => void handleApplySuggestion(sug)}
+													class="inline-flex items-center gap-1 rounded-full border border-accent-pop/40 bg-accent-tint/70 px-2.5 py-0.5 text-[11px] font-semibold text-ink-primary hover:bg-accent-tint disabled:opacity-50"
+												>
+													<span>{sug.name}</span>
+													{#if sug.reason}
+														<span class="text-[10px] font-normal text-ink-secondary">· {sug.reason}</span>
+													{/if}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								{#if filteredGroups.length === 0 && !showIncomeSection && filteredSuggestions.length === 0}
+									<p class="text-[11px] text-ink-muted py-1 text-center">No matching categories</p>
+								{:else}
+									{#if showIncomeSection}
+										<div class="space-y-1">
+											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+												Income
+											</p>
+											<div class="flex flex-wrap gap-1.5">
+												{#each filteredIncomes as inc (inc.id)}
+													{@const val = `income:${inc.id}`}
+													<button
+														type="button"
+														onclick={() => (editCategoryId = val)}
+														class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors {editCategoryId === val
+															? 'border-status-good bg-status-good-bg text-status-good font-semibold'
+															: 'border-border bg-surface text-ink-primary hover:bg-surface-hover'}"
+													>
+														{inc.name}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/if}
+
+									{#each filteredGroups as [grp, cats] (grp)}
+										<div class="space-y-1">
+											<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+												{grp}
+											</p>
+											<div class="flex flex-wrap gap-1.5">
+												{#each cats as cat (cat.id)}
+													<button
+														type="button"
+														data-testid="tx-detail-category-option"
+														onclick={() => (editCategoryId = cat.id)}
+														class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors {editCategoryId === cat.id
+															? 'border-accent-pop bg-accent-tint text-accent-pop font-semibold'
+															: 'border-border bg-surface text-ink-primary hover:bg-surface-hover'}"
+													>
+														{cat.name}
+													</button>
+												{/each}
+											</div>
+										</div>
+									{/each}
+
+									{#if isExpenseTx && !qCat && !showIncomeInPicker && incomes.length > 0 && !transaction.plannedIncomeId}
+										<div class="pt-0.5">
+											<button
+												type="button"
+												onclick={() => (showIncomeInPicker = true)}
+												class="text-[10px] font-medium text-ink-muted hover:text-accent-pop"
+											>
+												Show income options
+											</button>
+										</div>
+									{/if}
+								{/if}
+
+								{#if editCategoryId !== ''}
+									<div class="pt-1 border-t border-border">
 										<button
 											type="button"
-											data-testid="tx-detail-suggestion-chip"
-											disabled={saving}
-											onclick={() => void handleApplySuggestion(sug)}
-											class="inline-flex items-center gap-1 rounded-full border border-accent-pop/40 bg-accent-tint/70 px-2.5 py-1 text-[11px] font-semibold text-ink-primary hover:bg-accent-tint disabled:opacity-50"
+											data-testid="tx-detail-category-clear"
+											onclick={() => (editCategoryId = '')}
+											class="rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-hover"
 										>
-											<span>{sug.name}</span>
-											{#if sug.reason}
-												<span class="text-[10px] font-normal text-ink-secondary">· {sug.reason}</span>
-											{/if}
+											Uncategorized
 										</button>
-									{/each}
-								</div>
-							</div>
-						{/if}
-
-						<div>
-							<label for="tx-detail-category" class="block text-[11px] font-medium text-ink-secondary mb-1">
-								Category
-							</label>
-							<select
-								id="tx-detail-category"
-								bind:value={editCategoryId}
-								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-							>
-								<option value="">Uncategorized</option>
-								{#if incomes.length > 0 && (transaction.amount > 0 || Boolean(transaction.plannedIncomeId))}
-									<optgroup label="Income">
-										{#each incomes as inc (inc.id)}
-											<option value={`income:${inc.id}`}>{inc.name}</option>
-										{/each}
-									</optgroup>
+									</div>
 								{/if}
-								{#each groupedCategories as [grp, cats] (grp)}
-									<optgroup label={grp}>
-										{#each cats as cat (cat.id)}
-											<option value={cat.id}>{cat.name}</option>
-										{/each}
-									</optgroup>
-								{/each}
-							</select>
+							</div>
 						</div>
 					{/if}
 

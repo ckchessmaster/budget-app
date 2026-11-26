@@ -41,7 +41,7 @@
 	let categoryId = $state('');
 	let plannedIncomeName = $state('');
 	let renameMerchant = $state('');
-	let requireReview = $state(false);
+	let requireReview = $state(true);
 	let isActive = $state(true);
 	let applyNow = $state(true);
 	let saving = $state(false);
@@ -93,7 +93,7 @@
 					plannedIncomeName = incomes[0]?.name ?? '';
 				}
 				renameMerchant = prefill?.renameMerchant ?? '';
-				requireReview = Boolean(prefill?.requireReview);
+				requireReview = prefill?.requireReview ?? true;
 				isActive = true;
 				applyNow = prefill?.applyNow ?? true;
 			}
@@ -119,8 +119,10 @@
 			return;
 		}
 
-		const parsedMin = minAmount.trim() !== '' ? Number(minAmount) : null;
-		const parsedMax = maxAmount.trim() !== '' ? Number(maxAmount) : null;
+		const minStr = String(minAmount ?? '').trim();
+		const maxStr = String(maxAmount ?? '').trim();
+		const parsedMin = minStr !== '' ? Number(minStr) : null;
+		const parsedMax = maxStr !== '' ? Number(maxStr) : null;
 		if (parsedMin !== null && (!Number.isFinite(parsedMin) || parsedMin < 0)) {
 			errorMsg = 'Minimum amount must be 0 or greater.';
 			return;
@@ -387,24 +389,51 @@
 				</div>
 			</div>
 
-			<div class="space-y-2">
-				<label class="flex items-start gap-2 text-xs text-ink-primary cursor-pointer">
-					<input type="checkbox" bind:checked={requireReview} class="mt-0.5 rounded border-border" />
-					<span>
-						<span class="font-medium">Hold matched transactions in To Review</span>
-						<span class="block text-[11px] text-ink-secondary">
-							When off, synced posted transactions are categorized quietly and leave To Review automatically.
+			<div class="space-y-2.5">
+				<span class="block text-xs font-semibold text-ink-primary">
+					When this rule matches a synced transaction:
+				</span>
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+					<button
+						type="button"
+						data-testid="rule-review-keep-btn"
+						onclick={() => (requireReview = true)}
+						class="text-left rounded-xl border p-2.5 transition-colors {requireReview
+							? 'border-accent-pop bg-accent-tint/70'
+							: 'border-border bg-canvas hover:bg-surface-hover'}"
+					>
+						<span class="block text-xs font-semibold text-ink-primary">
+							Keep in To Review for approval
 						</span>
-					</span>
-				</label>
+						<span class="block text-[11px] text-ink-secondary mt-0.5">
+							Assigns the category, then waits for your 1-click Approve.
+						</span>
+					</button>
+
+					<button
+						type="button"
+						data-testid="rule-review-auto-btn"
+						onclick={() => (requireReview = false)}
+						class="text-left rounded-xl border p-2.5 transition-colors {!requireReview
+							? 'border-accent-pop bg-accent-tint/70'
+							: 'border-border bg-canvas hover:bg-surface-hover'}"
+					>
+						<span class="block text-xs font-semibold text-ink-primary">
+							Auto-approve (skip To Review)
+						</span>
+						<span class="block text-[11px] text-ink-secondary mt-0.5">
+							Categorizes posted transactions silently with no review needed.
+						</span>
+					</button>
+				</div>
 
 				{#if editingRule}
-					<label class="flex items-center gap-2 text-xs text-ink-primary cursor-pointer">
+					<label class="flex items-center gap-2 text-xs text-ink-primary cursor-pointer pt-1">
 						<input type="checkbox" bind:checked={isActive} class="rounded border-border" />
 						<span class="font-medium">Rule enabled</span>
 					</label>
 				{:else}
-					<label class="flex items-center gap-2 text-xs text-ink-primary cursor-pointer">
+					<label class="flex items-center gap-2 text-xs text-ink-primary cursor-pointer pt-1">
 						<input type="checkbox" bind:checked={applyNow} class="rounded border-border" />
 						<span class="font-medium">Also apply to existing uncategorized transactions now</span>
 					</label>

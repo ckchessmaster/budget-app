@@ -73,7 +73,7 @@ describe('TransactionDetailCard', () => {
 		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
 		const onClose = vi.fn();
 
-		const { getByText, getByLabelText, getByRole } = render(TransactionDetailCard, {
+		const { getByText, getByLabelText, getByRole, getByTestId } = render(TransactionDetailCard, {
 			props: {
 				transaction,
 				account,
@@ -91,9 +91,15 @@ describe('TransactionDetailCard', () => {
 		expect(getByText('CHRISCHECKING (1602)')).toBeTruthy();
 		expect(getByText('Bank Sync')).toBeTruthy();
 
+		// Search filters category pills
+		await fireEvent.input(getByLabelText('Search categories'), { target: { value: 'House' } });
+		expect(getByTestId('tx-detail-category-picker').textContent).toContain('Household');
+		expect(getByTestId('tx-detail-category-picker').textContent).not.toContain('Groceries');
+		await fireEvent.input(getByLabelText('Search categories'), { target: { value: '' } });
+
 		await fireEvent.input(getByLabelText('Merchant'), { target: { value: 'Trader Joes Market' } });
 		await fireEvent.input(getByLabelText('Notes'), { target: { value: 'Snacks' } });
-		await fireEvent.change(getByLabelText('Category'), { target: { value: '' } });
+		await fireEvent.click(getByTestId('tx-detail-category-clear'));
 		await fireEvent.click(getByRole('button', { name: 'Save Changes' }));
 
 		await waitFor(() => {

@@ -30,6 +30,7 @@
 	let isBudgetRoute = $derived(currentPath === '/budget' || currentPath.startsWith('/budget/'));
 	let isBudgetActive = $derived(currentPath === '/' || currentPath.startsWith('/budget'));
 	let isAccountsActive = $derived(currentPath.startsWith('/accounts'));
+	let isRulesActive = $derived(currentPath.startsWith('/rules'));
 	let isSettingsActive = $derived(currentPath.startsWith('/settings'));
 	let isSyncing = $derived(demo.syncStatus === 'running' || demo.syncStatus === 'retrying');
 
@@ -160,6 +161,15 @@
 							: 'text-ink-secondary hover:text-ink-primary'}"
 					>
 						Accounts
+					</a>
+					<a
+						href="/rules"
+						aria-current={isRulesActive ? 'page' : undefined}
+						class="relative px-3 py-3.5 text-xs font-semibold transition-colors {isRulesActive
+							? 'text-accent-pop after:content-[""] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-accent-pop'
+							: 'text-ink-secondary hover:text-ink-primary'}"
+					>
+						Rules
 					</a>
 				</nav>
 			</div>
