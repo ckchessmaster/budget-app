@@ -35,10 +35,13 @@ describe('CoverDrawer', () => {
 			}
 		});
 
-		const select = getByLabelText('Move Money From') as HTMLSelectElement;
+		const donorTrigger = getByLabelText('Move Money From');
+		await fireEvent.click(donorTrigger);
+		const donorOptions = document.querySelectorAll('[data-testid="cover-donor-option"]');
 		// Only donor with available > 0 should be selectable
-		expect(select.options.length).toBe(1);
-		expect(select.options[0].value).toBe('cat-donor');
+		expect(donorOptions.length).toBe(1);
+		expect(donorOptions[0].textContent).toContain('Dining');
+		await fireEvent.click(donorTrigger);
 
 		const amountInput = getByLabelText('Amount ($)') as HTMLInputElement;
 		expect(amountInput.value).toBe('35.00');

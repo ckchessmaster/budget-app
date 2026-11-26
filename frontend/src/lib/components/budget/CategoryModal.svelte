@@ -7,6 +7,7 @@
 	} from '$lib/api/budget';
 	import type { CategoryBudget, RolloverMode, TargetCadence } from '$lib/types/budget';
 	import type { AccountItem } from '$lib/types/transaction';
+	import CategorySearchPicker from './CategorySearchPicker.svelte';
 
 	interface Props {
 		isOpen: boolean;
@@ -359,16 +360,15 @@
 						<label for="cat-sweep-target" class="flex items-center gap-1 text-xs font-medium text-ink-secondary mb-1">
 							<span>Sweep Leftover To (optional)</span>
 						</label>
-						<select
+						<CategorySearchPicker
 							id="cat-sweep-target"
+							categories={sweepCandidates}
 							bind:value={sweepTargetCategoryId}
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
-						>
-							<option value="">Ready to Assign</option>
-							{#each sweepCandidates as cand}
-								<option value={cand.id}>{cand.groupName} — {cand.name}</option>
-							{/each}
-						</select>
+							ariaLabel="Sweep Leftover To (optional)"
+							emptyOptionLabel="Ready to Assign"
+							collapsible={true}
+							testIdPrefix="cat-sweep-target"
+						/>
 					</div>
 				{/if}
 

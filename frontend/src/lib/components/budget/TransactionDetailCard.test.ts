@@ -154,9 +154,11 @@ describe('TransactionDetailCard', () => {
 		await fireEvent.click(getByTestId('tx-detail-split-btn'));
 		expect(getByTestId('tx-split-editor')).toBeTruthy();
 
-		await fireEvent.change(getByLabelText('Split 1 category'), { target: { value: 'cat-1' } });
+		await fireEvent.click(getByLabelText('Split 1 category'));
+		await fireEvent.click(getByTestId('split-0-cat-list').querySelectorAll('button')[0]!);
 		await fireEvent.input(getByLabelText('Split 1 amount'), { target: { value: '30.00' } });
-		await fireEvent.change(getByLabelText('Split 2 category'), { target: { value: 'cat-2' } });
+		await fireEvent.click(getByLabelText('Split 2 category'));
+		await fireEvent.click(getByTestId('split-1-cat-list').querySelectorAll('button')[1]!);
 		await fireEvent.click(getByTestId('split-fill-remaining-1'));
 		await fireEvent.input(getByLabelText('Split 2 note'), { target: { value: 'Soap' } });
 
