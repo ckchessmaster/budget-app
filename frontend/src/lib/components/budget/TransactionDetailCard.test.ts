@@ -279,4 +279,42 @@ describe('TransactionDetailCard', () => {
 			})
 		);
 	});
+
+	it('allows changing budget month with a date mismatch warning and ignoring from review', async () => {
+		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
+
+		const { getByTestId, getByText } = render(TransactionDetailCard, {
+			props: {
+				transaction: {
+					...transaction,
+					categoryId: null,
+					transactionDate: '2026-10-30'
+				},
+				account,
+				categories,
+				onClose: vi.fn(),
+				onUpdateTransaction
+			}
+		});
+
+		const monthInput = getByTestId('tx-detail-budget-month') as HTMLInputElement;
+		await fireEvent.input(monthInput, { target: { value: '2026-11' } });
+		expect(getByTestId('tx-detail-budget-month-warning').textContent).toContain('Date mismatch');
+
+		await fireEvent.click(getByText('Save Changes'));
+		await waitFor(() =>
+			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-100', {
+				merchantClean: "Trader Joe's",
+				userNotes: 'Weekly groceries',
+				budgetMonth: '2026-11',
+				clearCategory: true,
+				clearPlannedIncome: true
+			})
+		);
+
+		await fireEvent.click(getByTestId('tx-detail-ignore-review-btn'));
+		await waitFor(() =>
+			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-100', { reviewIgnored: true })
+		);
+	});
 });

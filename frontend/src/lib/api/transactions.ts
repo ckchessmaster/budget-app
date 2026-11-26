@@ -43,12 +43,14 @@ function mapTransaction(raw: any): TransactionItemModel {
 		categoryId: raw.category_id ?? null,
 		plannedIncomeId: raw.planned_income_id ?? null,
 		transactionDate: String(raw.transaction_date).slice(0, 10),
+		budgetMonth: raw.budget_month ? String(raw.budget_month).slice(0, 7) : null,
 		userNotes: raw.user_notes ?? null,
 		isCleared: Boolean(raw.is_cleared),
 		isTransfer: Boolean(raw.is_transfer),
 		categorizedBy: raw.categorized_by === 'RULE' ? 'RULE' : 'MANUAL',
 		appliedRuleId: raw.applied_rule_id ?? null,
 		needsReview: Boolean(raw.needs_review),
+		reviewIgnored: Boolean(raw.review_ignored),
 		settledDelta: raw.settled_delta != null ? num(raw.settled_delta) : null,
 		splits: Array.isArray(raw.splits)
 			? raw.splits.map((s: any) => ({
@@ -67,6 +69,7 @@ export async function fetchTransactions(params?: {
 	categoryId?: string;
 	status?: string;
 	month?: string;
+	toReview?: boolean;
 	page?: number;
 	limit?: number;
 }): Promise<{ items: TransactionItemModel[]; total: number }> {
@@ -76,6 +79,7 @@ export async function fetchTransactions(params?: {
 	if (params?.categoryId) qs.set('category_id', params.categoryId);
 	if (params?.status) qs.set('status', params.status);
 	if (params?.month) qs.set('month', params.month);
+	if (params?.toReview) qs.set('to_review', 'true');
 	if (params?.page) qs.set('page', String(params.page));
 	if (params?.limit) qs.set('limit', String(params.limit));
 
@@ -141,6 +145,12 @@ export async function updateTransaction(
 	if (payload.isCleared !== undefined) body.is_cleared = payload.isCleared;
 	if (payload.amount !== undefined) body.amount = payload.amount;
 	if (payload.approveReview !== undefined) body.approve_review = payload.approveReview;
+	if (payload.clearBudgetMonth) {
+		body.clear_budget_month = true;
+	} else if (payload.budgetMonth !== undefined) {
+		body.budget_month = payload.budgetMonth;
+	}
+	if (payload.reviewIgnored !== undefined) body.review_ignored = payload.reviewIgnored;
 
 	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
@@ -180,6 +190,20 @@ export async function replaceTransactionSplits(
 		throw new Error(errBody.error || `Failed to update transaction splits (${res.status})`);
 	}
 	return mapTransaction(await res.json());
+}
+
+export async function ignoreReviewBefore(beforeMonth: string): Promise<{ updated: number }> {
+	const { apiBaseUrl } = getAppConfig();
+	const res = await fetch(`${apiBaseUrl}/api/v1/transactions/ignore-review-before`, {
+		method: 'POST',
+		headers: await authHeaders(),
+		body: JSON.stringify({ before_month: beforeMonth })
+	});
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.error || `Failed to skip older reviews (${res.status})`);
+	}
+	return res.json();
 }
 
 export async function deleteTransaction(id: string): Promise<void> {

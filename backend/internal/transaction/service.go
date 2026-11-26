@@ -19,6 +19,7 @@ type Service interface {
 	GetTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*Transaction, error)
 	ListTransactions(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error)
 	UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID, req UpdateTransactionRequest) (*Transaction, error)
+	IgnoreReviewBefore(ctx context.Context, tx pgx.Tx, beforeMonth time.Time) (int64, error)
 	ReplaceSplits(ctx context.Context, tx pgx.Tx, id uuid.UUID, req ReplaceSplitsRequest) (*Transaction, error)
 	DeleteTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 }
@@ -269,6 +270,26 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 		}
 		existing.Amount = nextAmt
 	}
+	if req.ClearBudgetMonth {
+		existing.BudgetMonth = nil
+	} else if req.BudgetMonth != nil {
+		raw := *req.BudgetMonth
+		var parsed time.Time
+		var parseErr error
+		if len(raw) == 7 {
+			parsed, parseErr = time.Parse("2006-01", raw)
+		} else {
+			parsed, parseErr = time.Parse("2006-01-02", raw)
+		}
+		if parseErr != nil {
+			return nil, ErrInvalidBudgetMonth
+		}
+		normalized := time.Date(parsed.Year(), parsed.Month(), 1, 0, 0, 0, 0, time.UTC)
+		existing.BudgetMonth = &normalized
+	}
+	if req.ReviewIgnored != nil {
+		existing.ReviewIgnored = *req.ReviewIgnored
+	}
 
 	if err := s.repo.Update(ctx, tx, existing); err != nil {
 		return nil, err
@@ -287,6 +308,10 @@ func (s *service) UpdateTransaction(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	}
 
 	return existing, nil
+}
+
+func (s *service) IgnoreReviewBefore(ctx context.Context, tx pgx.Tx, beforeMonth time.Time) (int64, error) {
+	return s.repo.IgnoreReviewBefore(ctx, tx, beforeMonth)
 }
 
 // ReplaceSplits replaces the child split rows of a transaction atomically, or unsplits it
@@ -391,7 +416,9 @@ func (s *service) ReplaceSplits(ctx context.Context, tx pgx.Tx, id uuid.UUID, re
 			MerchantClean:       parent.MerchantClean,
 			CategoryID:          catID,
 			PlannedIncomeID:     incID,
+			ReviewIgnored:       parent.ReviewIgnored,
 			TransactionDate:     parent.TransactionDate,
+			BudgetMonth:         parent.BudgetMonth,
 			UserNotes:           splitNotes,
 			IsCleared:           parent.IsCleared,
 		}

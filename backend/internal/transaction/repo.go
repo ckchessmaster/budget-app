@@ -37,6 +37,7 @@ var (
 	ErrCannotSplitTransaction = errors.New("transaction cannot be split")
 	ErrEmptyMerchant          = errors.New("merchant_raw is required")
 	ErrMissingAccountID       = errors.New("account_id is required")
+	ErrInvalidBudgetMonth     = errors.New("invalid budget_month")
 )
 
 // Machine-readable rejection codes for a queued offline item. The durable replay reports
@@ -70,7 +71,9 @@ type Transaction struct {
 	CategorizedBy               string           `json:"categorized_by"`
 	AppliedRuleID               *uuid.UUID       `json:"applied_rule_id,omitempty"`
 	NeedsReview                 bool             `json:"needs_review"`
+	ReviewIgnored               bool             `json:"review_ignored"`
 	TransactionDate             time.Time        `json:"transaction_date"`
+	BudgetMonth                 *time.Time       `json:"budget_month"`
 	UserNotes                   *string          `json:"user_notes"`
 	IsCleared                   bool             `json:"is_cleared"`
 	CreatedAt                   time.Time        `json:"created_at"`
@@ -120,6 +123,9 @@ type UpdateTransactionRequest struct {
 	IsCleared          *bool            `json:"is_cleared"`
 	Amount             *decimal.Decimal `json:"amount"`
 	ApproveReview      bool             `json:"approve_review"`
+	BudgetMonth        *string          `json:"budget_month"`
+	ClearBudgetMonth   bool             `json:"clear_budget_month"`
+	ReviewIgnored      *bool            `json:"review_ignored"`
 }
 
 type TransactionFilter struct {
@@ -127,6 +133,7 @@ type TransactionFilter struct {
 	CategoryID *uuid.UUID `form:"category_id"`
 	Status     *string    `form:"status"`
 	Month      *time.Time `form:"month"`
+	ToReview   bool       `form:"to_review"`
 	Page       int        `form:"page,default=1"`
 	Limit      int        `form:"limit,default=50"`
 }
@@ -137,6 +144,7 @@ type Repo interface {
 	GetByClientID(ctx context.Context, tx pgx.Tx, clientID string) (*Transaction, error)
 	List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, int, error)
 	Update(ctx context.Context, tx pgx.Tx, t *Transaction) error
+	IgnoreReviewBefore(ctx context.Context, tx pgx.Tx, beforeMonth time.Time) (int64, error)
 	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 	DeleteSplitsByParent(ctx context.Context, tx pgx.Tx, parentID uuid.UUID) error
 	PropagateParentFieldsToSplits(ctx context.Context, tx pgx.Tx, parent *Transaction) error
@@ -173,20 +181,26 @@ func (r *pgRepo) Create(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 		t.CategorizedBy = "MANUAL"
 	}
 
+	var budgetMonthStr *string
+	if t.BudgetMonth != nil {
+		s := t.BudgetMonth.UTC().Format("2006-01-02")
+		budgetMonthStr = &s
+	}
+
 	return tx.QueryRow(ctx, `
 		INSERT INTO transactions (
 			id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 			origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
-			transfer_linked_transaction_id, categorized_by, applied_rule_id, needs_review,
-			transaction_date, user_notes, is_cleared, client_id
+			transfer_linked_transaction_id, categorized_by, applied_rule_id, needs_review, review_ignored,
+			transaction_date, budget_month, user_notes, is_cleared, client_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING is_transfer, created_at
 	`,
 		t.ID, t.WorkspaceID, t.AccountID, t.ParentTransactionID, t.ExternalTransactionID,
 		string(t.Origin), string(t.Status), t.Amount.Round(2), t.MerchantRaw, t.MerchantClean, t.CategoryID, t.PlannedIncomeID,
-		t.TransferLinkedTransactionID, t.CategorizedBy, t.AppliedRuleID, t.NeedsReview,
-		t.TransactionDate.UTC().Format("2006-01-02"), t.UserNotes, t.IsCleared,
+		t.TransferLinkedTransactionID, t.CategorizedBy, t.AppliedRuleID, t.NeedsReview, t.ReviewIgnored,
+		t.TransactionDate.UTC().Format("2006-01-02"), budgetMonthStr, t.UserNotes, t.IsCleared,
 		t.ClientID,
 	).Scan(&t.IsTransfer, &t.CreatedAt)
 }
@@ -215,15 +229,15 @@ func (r *pgRepo) getBy(ctx context.Context, tx pgx.Tx, predicate string, args ..
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
-		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review,
-		       transaction_date, user_notes, is_cleared, created_at
+		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review, review_ignored,
+		       transaction_date, budget_month, user_notes, is_cleared, created_at
 		FROM transactions
 		WHERE %s AND workspace_id = $%d
 	`, predicate, len(queryArgs)), queryArgs...).Scan(
 		&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
 		&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID, &t.PlannedIncomeID,
-		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.CategorizedBy, &t.AppliedRuleID, &t.NeedsReview,
-		&t.TransactionDate, &t.UserNotes, &t.IsCleared, &t.CreatedAt,
+		&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.CategorizedBy, &t.AppliedRuleID, &t.NeedsReview, &t.ReviewIgnored,
+		&t.TransactionDate, &t.BudgetMonth, &t.UserNotes, &t.IsCleared, &t.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -246,8 +260,8 @@ func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, wsID, parent
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
-		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review,
-		       transaction_date, user_notes, is_cleared, created_at
+		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review, review_ignored,
+		       transaction_date, budget_month, user_notes, is_cleared, created_at
 		FROM transactions
 		WHERE parent_transaction_id = $1 AND workspace_id = $2
 		ORDER BY created_at ASC
@@ -264,8 +278,8 @@ func (r *pgRepo) listSplitsByParent(ctx context.Context, tx pgx.Tx, wsID, parent
 		if err := rows.Scan(
 			&s.ID, &s.WorkspaceID, &s.AccountID, &s.ParentTransactionID, &s.ExternalTransactionID,
 			&originStr, &statusStr, &s.Amount, &s.MerchantRaw, &s.MerchantClean, &s.CategoryID, &s.PlannedIncomeID,
-			&s.TransferLinkedTransactionID, &s.IsTransfer, &s.SettledDelta, &s.CategorizedBy, &s.AppliedRuleID, &s.NeedsReview,
-			&s.TransactionDate, &s.UserNotes, &s.IsCleared, &s.CreatedAt,
+			&s.TransferLinkedTransactionID, &s.IsTransfer, &s.SettledDelta, &s.CategorizedBy, &s.AppliedRuleID, &s.NeedsReview, &s.ReviewIgnored,
+			&s.TransactionDate, &s.BudgetMonth, &s.UserNotes, &s.IsCleared, &s.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -314,9 +328,33 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		m := filter.Month.UTC()
 		start := time.Date(m.Year(), m.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end := start.AddDate(0, 1, 0)
-		where = append(where, fmt.Sprintf("transaction_date >= $%d AND transaction_date < $%d", argIdx, argIdx+1))
+		where = append(where, fmt.Sprintf("COALESCE(budget_month, date_trunc('month', transaction_date)::date) >= $%d AND COALESCE(budget_month, date_trunc('month', transaction_date)::date) < $%d", argIdx, argIdx+1))
 		args = append(args, start.Format("2006-01-02"), end.Format("2006-01-02"))
 		argIdx += 2
+	}
+	if filter.ToReview {
+		where = append(where, `review_ignored = FALSE AND (
+			status = 'PENDING'
+			OR (
+				is_transfer = FALSE
+				AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = transactions.account_id AND a.workspace_id = $1 AND a.is_on_budget = TRUE)
+				AND (
+					needs_review = TRUE
+					OR (
+						NOT EXISTS (SELECT 1 FROM transactions c WHERE c.parent_transaction_id = transactions.id AND c.workspace_id = $1)
+						AND category_id IS NULL
+						AND planned_income_id IS NULL
+					)
+					OR EXISTS (
+						SELECT 1 FROM transactions c
+						WHERE c.parent_transaction_id = transactions.id
+						  AND c.workspace_id = $1
+						  AND c.category_id IS NULL
+						  AND c.planned_income_id IS NULL
+					)
+				)
+			)
+		)`)
 	}
 
 	whereClause := strings.Join(where, " AND ")
@@ -332,8 +370,8 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 	listQuery := fmt.Sprintf(`
 		SELECT id, workspace_id, account_id, parent_transaction_id, external_transaction_id,
 		       origin, status, amount, merchant_raw, merchant_clean, category_id, planned_income_id,
-		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review,
-		       transaction_date, user_notes, is_cleared, created_at
+		       transfer_linked_transaction_id, is_transfer, settled_delta, categorized_by, applied_rule_id, needs_review, review_ignored,
+		       transaction_date, budget_month, user_notes, is_cleared, created_at
 		FROM transactions
 		WHERE %s
 		ORDER BY transaction_date DESC, created_at DESC
@@ -353,8 +391,8 @@ func (r *pgRepo) List(ctx context.Context, tx pgx.Tx, filter TransactionFilter) 
 		if err := rows.Scan(
 			&t.ID, &t.WorkspaceID, &t.AccountID, &t.ParentTransactionID, &t.ExternalTransactionID,
 			&originStr, &statusStr, &t.Amount, &t.MerchantRaw, &t.MerchantClean, &t.CategoryID, &t.PlannedIncomeID,
-			&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.CategorizedBy, &t.AppliedRuleID, &t.NeedsReview,
-			&t.TransactionDate, &t.UserNotes, &t.IsCleared, &t.CreatedAt,
+			&t.TransferLinkedTransactionID, &t.IsTransfer, &t.SettledDelta, &t.CategorizedBy, &t.AppliedRuleID, &t.NeedsReview, &t.ReviewIgnored,
+			&t.TransactionDate, &t.BudgetMonth, &t.UserNotes, &t.IsCleared, &t.CreatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -385,6 +423,11 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 	if t.CategorizedBy == "" {
 		t.CategorizedBy = "MANUAL"
 	}
+	var budgetMonthStr *string
+	if t.BudgetMonth != nil {
+		s := t.BudgetMonth.UTC().Format("2006-01-02")
+		budgetMonthStr = &s
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE transactions
 		SET category_id = $3,
@@ -396,10 +439,12 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 		    amount = $9,
 		    categorized_by = $10,
 		    applied_rule_id = $11,
-		    needs_review = $12
+		    needs_review = $12,
+		    review_ignored = $13,
+		    budget_month = $14
 		WHERE id = $1 AND workspace_id = $2
 	`, t.ID, wsID, t.CategoryID, t.PlannedIncomeID, t.MerchantClean, t.UserNotes, string(t.Status), t.IsCleared, t.Amount.Round(2),
-		t.CategorizedBy, t.AppliedRuleID, t.NeedsReview)
+		t.CategorizedBy, t.AppliedRuleID, t.NeedsReview, t.ReviewIgnored, budgetMonthStr)
 	if err != nil {
 		return err
 	}
@@ -407,6 +452,25 @@ func (r *pgRepo) Update(ctx context.Context, tx pgx.Tx, t *Transaction) error {
 		return ErrTransactionNotFound
 	}
 	return nil
+}
+
+func (r *pgRepo) IgnoreReviewBefore(ctx context.Context, tx pgx.Tx, beforeMonth time.Time) (int64, error) {
+	wsID, err := db.ActiveWorkspaceID(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Date(beforeMonth.UTC().Year(), beforeMonth.UTC().Month(), 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+	tag, err := tx.Exec(ctx, `
+		UPDATE transactions
+		SET review_ignored = TRUE
+		WHERE workspace_id = $1
+		  AND review_ignored = FALSE
+		  AND COALESCE(budget_month, date_trunc('month', transaction_date)::date) < $2::date
+	`, wsID, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (r *pgRepo) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
@@ -441,12 +505,19 @@ func (r *pgRepo) PropagateParentFieldsToSplits(ctx context.Context, tx pgx.Tx, p
 	if err != nil {
 		return err
 	}
+	var budgetMonthStr *string
+	if parent.BudgetMonth != nil {
+		s := parent.BudgetMonth.UTC().Format("2006-01-02")
+		budgetMonthStr = &s
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE transactions
 		SET merchant_clean = $3,
 		    status = $4,
-		    is_cleared = $5
+		    is_cleared = $5,
+		    review_ignored = $6,
+		    budget_month = $7
 		WHERE parent_transaction_id = $1 AND workspace_id = $2
-	`, parent.ID, wsID, parent.MerchantClean, string(parent.Status), parent.IsCleared)
+	`, parent.ID, wsID, parent.MerchantClean, string(parent.Status), parent.IsCleared, parent.ReviewIgnored, budgetMonthStr)
 	return err
 }

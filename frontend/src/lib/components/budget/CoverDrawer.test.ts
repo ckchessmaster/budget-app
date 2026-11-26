@@ -64,4 +64,49 @@ describe('CoverDrawer', () => {
 		});
 		expect(onSuccess).toHaveBeenCalledTimes(1);
 	});
+
+	it('allows covering overspending from Left to Budget via PUT /api/v1/budget/categories/{id}', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ status: 'updated' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+
+		const onSuccess = vi.fn();
+
+		const { getByRole, getByLabelText } = render(CoverDrawer, {
+			props: {
+				isOpen: true,
+				yearMonth: '2026-11-01',
+				overspentCategory: {
+					id: 'cat-overspent',
+					name: 'Groceries',
+					remaining: -11.6,
+					originalPlanned: 1200
+				},
+				availableDonors: [{ id: 'cat-donor', name: 'Emergency Fund', available: 0.01 }],
+				readyToAssign: 538.54,
+				onClose: vi.fn(),
+				onSuccess
+			}
+		});
+
+		const donorTrigger = getByLabelText('Move Money From');
+		expect(donorTrigger.textContent).toContain('Left to Budget (Unallocated)');
+
+		await fireEvent.click(getByRole('button', { name: 'Cover Overspend' }));
+
+		await waitFor(() => {
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		});
+
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toContain('/api/v1/budget/categories/cat-overspent');
+		expect(init.method).toBe('PUT');
+		expect(JSON.parse(init.body)).toEqual({
+			year_month: '2026-11-01',
+			original_planned: 1211.6
+		});
+		expect(onSuccess).toHaveBeenCalledTimes(1);
+	});
 });

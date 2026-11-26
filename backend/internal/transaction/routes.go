@@ -20,6 +20,7 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool, replay ReplayWorkflow, eva
 		r.Get("/", h.ListTransactions)
 		r.Post("/", h.CreateTransaction)
 		r.Post("/sync", h.SyncOfflineTransactions)
+		r.Post("/ignore-review-before", h.IgnoreReviewBefore)
 		r.Patch("/{id}", h.UpdateTransaction)
 		r.Put("/{id}/splits", h.ReplaceSplits)
 		r.Delete("/{id}", h.DeleteTransaction)

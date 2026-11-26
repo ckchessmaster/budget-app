@@ -59,14 +59,23 @@ export function isPendingTransaction(tx: TransactionItemModel): boolean {
 	return tx.status === 'PENDING' || tx.syncStatus === 'QUEUED';
 }
 
+export function effectiveBudgetMonth(tx: TransactionItemModel): string {
+	return tx.budgetMonth || tx.transactionDate.slice(0, 7);
+}
+
+export function hasBudgetMonthOverride(tx: TransactionItemModel): boolean {
+	return Boolean(tx.budgetMonth && tx.budgetMonth !== tx.transactionDate.slice(0, 7));
+}
+
 /**
  * Combined To Review predicate: uncategorized on-budget items, pending/queued items,
- * or auto-categorized items flagged for review.
+ * or auto-categorized items flagged for review (unless explicitly ignored from review).
  */
 export function isToReviewTransaction(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
 ): boolean {
+	if (tx.reviewIgnored) return false;
 	if (isPendingTransaction(tx)) return true;
 	if (isNewTransaction(tx, accountById)) return true;
 	if (tx.needsReview && !tx.isTransfer) {
@@ -83,6 +92,7 @@ export function getReviewBadgeKind(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
 ): 'pending' | 'review' | 'new' | null {
+	if (tx.reviewIgnored) return null;
 	if (isPendingTransaction(tx)) return 'pending';
 	if (isNewTransaction(tx, accountById)) return 'new';
 	if (tx.needsReview && !tx.isTransfer) {
@@ -115,7 +125,7 @@ export function isCatchUpTransaction(
 	tx: TransactionItemModel,
 	accountById: Map<string, AccountItem>
 ): boolean {
-	return tx.syncStatus !== 'QUEUED' && isNewTransaction(tx, accountById);
+	return !tx.reviewIgnored && tx.syncStatus !== 'QUEUED' && isNewTransaction(tx, accountById);
 }
 
 const KEYWORD_CATEGORY_HINTS: Array<{ keywords: string[]; categoryTerms: string[] }> = [
