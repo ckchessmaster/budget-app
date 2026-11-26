@@ -1,6 +1,7 @@
 package categorization
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,9 +15,39 @@ type MatchableTx struct {
 	Amount        decimal.Decimal
 }
 
+func normalizeMatchText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
 // PatternMatches checks whether pattern matches either merchant_clean or merchant_raw case-insensitively.
 func PatternMatches(matchType, pattern, merchantRaw string, merchantClean *string) bool {
-	pat := strings.ToLower(strings.TrimSpace(pattern))
+	mt := strings.ToUpper(strings.TrimSpace(matchType))
+	if mt == "" {
+		mt = MatchTypeContains
+	}
+
+	rawPat := strings.TrimSpace(pattern)
+	if rawPat == "" {
+		return false
+	}
+
+	if mt == MatchTypeRegex {
+		re, err := regexp.Compile("(?i)" + rawPat)
+		if err != nil {
+			return false
+		}
+		if merchantClean != nil {
+			if c := strings.TrimSpace(*merchantClean); c != "" && re.MatchString(c) {
+				return true
+			}
+		}
+		if r := strings.TrimSpace(merchantRaw); r != "" && re.MatchString(r) {
+			return true
+		}
+		return false
+	}
+
+	pat := normalizeMatchText(rawPat)
 	if pat == "" {
 		return false
 	}
@@ -24,23 +55,31 @@ func PatternMatches(matchType, pattern, merchantRaw string, merchantClean *strin
 	var candidates [2]string
 	n := 0
 	if merchantClean != nil {
-		if c := strings.ToLower(strings.TrimSpace(*merchantClean)); c != "" {
+		if c := normalizeMatchText(*merchantClean); c != "" {
 			candidates[n] = c
 			n++
 		}
 	}
-	if r := strings.ToLower(strings.TrimSpace(merchantRaw)); r != "" {
+	if r := normalizeMatchText(merchantRaw); r != "" {
 		candidates[n] = r
 		n++
 	}
 
-	exact := strings.EqualFold(strings.TrimSpace(matchType), MatchTypeExact)
 	for i := 0; i < n; i++ {
-		if exact {
+		switch mt {
+		case MatchTypeExact:
 			if candidates[i] == pat {
 				return true
 			}
-		} else {
+		case MatchTypeStartsWith:
+			if strings.HasPrefix(candidates[i], pat) {
+				return true
+			}
+		case MatchTypeEndsWith:
+			if strings.HasSuffix(candidates[i], pat) {
+				return true
+			}
+		case MatchTypeContains:
 			if strings.Contains(candidates[i], pat) {
 				return true
 			}

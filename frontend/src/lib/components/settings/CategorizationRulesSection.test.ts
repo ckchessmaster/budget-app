@@ -129,11 +129,34 @@ describe('CategorizationRulesSection', () => {
 
 		// Open New Rule modal & create
 		await fireEvent.click(getByTestId('new-rule-btn'));
+		expect((getByLabelText('Account (optional)') as HTMLSelectElement).value).toBe('');
+		expect((getByLabelText('Direction') as HTMLSelectElement).value).toBe('ANY');
+		const matchSelect = getByLabelText('Match Type') as HTMLSelectElement;
+		expect(Array.from(matchSelect.options).map((o) => o.value)).toEqual([
+			'CONTAINS',
+			'STARTS_WITH',
+			'ENDS_WITH',
+			'EXACT',
+			'REGEX'
+		]);
+		await fireEvent.change(matchSelect, { target: { value: 'STARTS_WITH' } });
+		await fireEvent.input(getByLabelText('Search categories'), {
+			target: { value: 'Grocer' }
+		});
+		await fireEvent.click(getByTestId('rule-category-option'));
 		await fireEvent.input(getByLabelText('Merchant Pattern'), {
 			target: { value: 'Whole Foods' }
 		});
 		await fireEvent.click(getByTestId('rule-modal-submit'));
 		await waitFor(() => expect(mockApi.createCategorizationRule).toHaveBeenCalledTimes(1));
+		expect(mockApi.createCategorizationRule).toHaveBeenCalledWith(
+			expect.objectContaining({
+				matchType: 'STARTS_WITH',
+				merchantPattern: 'Whole Foods',
+				accountId: null,
+				direction: 'ANY'
+			})
+		);
 
 		// Delete rule
 		await fireEvent.click(getAllByTestId('rule-row')[0].querySelector('button:nth-of-type(6)')!);

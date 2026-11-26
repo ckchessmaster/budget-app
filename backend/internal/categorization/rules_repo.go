@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,8 +29,13 @@ func normalizeRuleFields(
 	if mt == "" {
 		mt = MatchTypeContains
 	}
-	if mt != MatchTypeContains && mt != MatchTypeExact {
+	if !IsValidMatchType(mt) {
 		return Rule{}, fmt.Errorf("%w: invalid match_type", ErrInvalidRule)
+	}
+	if mt == MatchTypeRegex {
+		if _, err := regexp.Compile("(?i)" + pat); err != nil {
+			return Rule{}, fmt.Errorf("%w: invalid regex pattern", ErrInvalidRule)
+		}
 	}
 
 	dir := strings.ToUpper(strings.TrimSpace(direction))
@@ -513,8 +519,13 @@ func ApplySimilar(ctx context.Context, tx pgx.Tx, req ApplySimilarRequest) (int,
 	if mt == "" {
 		mt = MatchTypeContains
 	}
-	if mt != MatchTypeContains && mt != MatchTypeExact {
+	if !IsValidMatchType(mt) {
 		return 0, fmt.Errorf("%w: invalid match_type", ErrInvalidApplyRequest)
+	}
+	if mt == MatchTypeRegex {
+		if _, err := regexp.Compile("(?i)" + pat); err != nil {
+			return 0, fmt.Errorf("%w: invalid regex pattern", ErrInvalidApplyRequest)
+		}
 	}
 
 	dir := strings.ToUpper(strings.TrimSpace(req.Direction))

@@ -39,6 +39,7 @@
 	let maxAmount = $state('');
 	let targetKind = $state<'category' | 'income'>('category');
 	let categoryId = $state('');
+	let categoryFilter = $state('');
 	let plannedIncomeName = $state('');
 	let renameMerchant = $state('');
 	let requireReview = $state(true);
@@ -57,11 +58,30 @@
 		}
 		return Array.from(groups.entries());
 	});
+	let filteredGroupedCategories = $derived.by(() => {
+		const q = categoryFilter.trim().toLowerCase();
+		if (!q) return groupedCategories;
+		return groupedCategories
+			.map(
+				([groupName, cats]) =>
+					[
+						groupName,
+						cats.filter(
+							(c) => c.name.toLowerCase().includes(q) || groupName.toLowerCase().includes(q)
+						)
+					] as [string, CategoryBudget[]]
+			)
+			.filter(([, cats]) => cats.length > 0);
+	});
+	let selectedCategoryLabel = $derived(
+		categories.find((c) => c.id === categoryId)?.name ?? 'Select category...'
+	);
 
 	let wasOpen = false;
 	$effect(() => {
 		if (isOpen && !wasOpen) {
 			errorMsg = null;
+			categoryFilter = '';
 			if (editingRule) {
 				matchType = editingRule.matchType;
 				merchantPattern = editingRule.merchantPattern;
@@ -224,7 +244,10 @@
 						class="w-full rounded-lg border border-border bg-canvas px-2.5 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
 					>
 						<option value="CONTAINS">Contains</option>
+						<option value="STARTS_WITH">Starts with</option>
+						<option value="ENDS_WITH">Ends with</option>
 						<option value="EXACT">Exact match</option>
+						<option value="REGEX">Regex</option>
 					</select>
 				</div>
 
@@ -333,25 +356,55 @@
 				</div>
 
 				{#if targetKind === 'category'}
-					<div>
-						<label for="rule-category" class="block text-xs font-medium text-ink-secondary mb-1">
-							Category
-						</label>
-						<select
-							id="rule-category"
-							bind:value={categoryId}
-							required
-							class="w-full rounded-lg border border-border bg-canvas px-2.5 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+					<div class="space-y-1.5">
+						<div class="flex items-center justify-between gap-2">
+							<label for="rule-category-search" class="block text-xs font-medium text-ink-secondary">
+								Category
+							</label>
+							<span class="text-[11px] font-semibold text-ink-primary truncate max-w-[200px]">
+								{selectedCategoryLabel}
+							</span>
+						</div>
+
+						<input
+							id="rule-category-search"
+							type="search"
+							aria-label="Search categories"
+							placeholder="Search categories..."
+							bind:value={categoryFilter}
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-1.5 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+						/>
+
+						<div
+							data-testid="rule-category-picker"
+							class="max-h-44 overflow-y-auto overscroll-contain-scroll rounded-lg border border-border bg-canvas p-2.5 space-y-2"
 						>
-							<option value="">Select category...</option>
-							{#each groupedCategories as [grp, cats] (grp)}
-								<optgroup label={grp}>
-									{#each cats as cat (cat.id)}
-										<option value={cat.id}>{cat.name}</option>
-									{/each}
-								</optgroup>
-							{/each}
-						</select>
+							{#if filteredGroupedCategories.length === 0}
+								<p class="text-[11px] text-ink-muted py-1 text-center">No matching categories</p>
+							{:else}
+								{#each filteredGroupedCategories as [grp, cats] (grp)}
+									<div class="space-y-1">
+										<p class="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
+											{grp}
+										</p>
+										<div class="flex flex-wrap gap-1.5">
+											{#each cats as cat (cat.id)}
+												<button
+													type="button"
+													data-testid="rule-category-option"
+													onclick={() => (categoryId = cat.id)}
+													class="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors {categoryId === cat.id
+														? 'border-accent-pop bg-accent-tint text-accent-pop font-semibold'
+														: 'border-border bg-surface text-ink-primary hover:bg-surface-hover'}"
+												>
+													{cat.name}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/each}
+							{/if}
+						</div>
 					</div>
 				{:else}
 					<div>

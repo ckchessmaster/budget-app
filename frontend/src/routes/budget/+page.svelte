@@ -1034,8 +1034,8 @@
 		ruleModalPrefill = {
 			matchType: 'CONTAINS',
 			merchantPattern: tx.merchantClean?.trim() || tx.merchantRaw,
-			accountId: tx.accountId,
-			direction: tx.amount < 0 ? 'EXPENSE' : tx.amount > 0 ? 'INFLOW' : 'ANY',
+			accountId: null,
+			direction: 'ANY',
 			categoryId: incomeName ? null : opts?.categoryId ?? tx.categoryId ?? null,
 			plannedIncomeName: incomeName,
 			applyNow: true

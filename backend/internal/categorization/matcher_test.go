@@ -106,4 +106,85 @@ func TestRuleMatches(t *testing.T) {
 			t.Fatal("expected inactive rule not to match")
 		}
 	})
+
+	t.Run("contains normalizes extra whitespace", func(t *testing.T) {
+		r := Rule{
+			IsActive:        true,
+			MatchType:       MatchTypeContains,
+			MerchantPattern: "trader   joe's",
+			Direction:       DirectionAny,
+		}
+		if !RuleMatches(r, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-12.34),
+			MerchantRaw: "TRADER  JOE'S   #123",
+		}) {
+			t.Fatal("expected whitespace-normalized CONTAINS to match")
+		}
+	})
+
+	t.Run("starts_with, ends_with, and regex operators", func(t *testing.T) {
+		startsWithRule := Rule{
+			IsActive:        true,
+			MatchType:       MatchTypeStartsWith,
+			MerchantPattern: "sq *",
+			Direction:       DirectionAny,
+		}
+		if !RuleMatches(startsWithRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-5.50),
+			MerchantRaw: "SQ *BLUE BOTTLE",
+		}) {
+			t.Fatal("expected STARTS_WITH to match prefix")
+		}
+		if RuleMatches(startsWithRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-5.50),
+			MerchantRaw: "PAYPAL SQ *BLUE BOTTLE",
+		}) {
+			t.Fatal("expected STARTS_WITH not to match non-prefix")
+		}
+
+		endsWithRule := Rule{
+			IsActive:        true,
+			MatchType:       MatchTypeEndsWith,
+			MerchantPattern: "seattle",
+			Direction:       DirectionAny,
+		}
+		if !RuleMatches(endsWithRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-18.00),
+			MerchantRaw: "TRADER JOE'S SEATTLE",
+		}) {
+			t.Fatal("expected ENDS_WITH to match suffix")
+		}
+		if RuleMatches(endsWithRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-18.00),
+			MerchantRaw: "SEATTLE COFFEE",
+		}) {
+			t.Fatal("expected ENDS_WITH not to match non-suffix")
+		}
+
+		regexRule := Rule{
+			IsActive:        true,
+			MatchType:       MatchTypeRegex,
+			MerchantPattern: `^uber\s*(eats|trip)?`,
+			Direction:       DirectionAny,
+		}
+		if !RuleMatches(regexRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-22.00),
+			MerchantRaw: "UBER EATS #99",
+		}) {
+			t.Fatal("expected REGEX to match case-insensitively")
+		}
+		if RuleMatches(regexRule, MatchableTx{
+			AccountID:   acctA,
+			Amount:      decimal.NewFromFloat(-22.00),
+			MerchantRaw: "LYFT *UBER",
+		}) {
+			t.Fatal("expected anchored REGEX not to match mid-string")
+		}
+	})
 }

@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	MatchTypeContains = "CONTAINS"
-	MatchTypeExact    = "EXACT"
+	MatchTypeContains   = "CONTAINS"
+	MatchTypeStartsWith = "STARTS_WITH"
+	MatchTypeEndsWith   = "ENDS_WITH"
+	MatchTypeExact      = "EXACT"
+	MatchTypeRegex      = "REGEX"
 
 	DirectionAny     = "ANY"
 	DirectionExpense = "EXPENSE"
@@ -19,6 +22,16 @@ const (
 	TargetTypeCategory      = "CATEGORY"
 	TargetTypePlannedIncome = "PLANNED_INCOME"
 )
+
+// IsValidMatchType reports whether mt is a supported categorization rule operator.
+func IsValidMatchType(mt string) bool {
+	switch mt {
+	case MatchTypeContains, MatchTypeStartsWith, MatchTypeEndsWith, MatchTypeExact, MatchTypeRegex:
+		return true
+	default:
+		return false
+	}
+}
 
 var (
 	ErrRuleNotFound        = errors.New("categorization rule not found")

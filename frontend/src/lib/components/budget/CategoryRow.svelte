@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { InlineActivityItem, RolloverMode } from '$lib/types/budget';
-	import { isFixedCategory } from '$lib/utils/budgetCategoryKind';
 	import type { GroupColor } from '$lib/utils/budgetColors';
 	import InlineActivityDrawer from './InlineActivityDrawer.svelte';
 
@@ -11,6 +10,7 @@
 		rolloverMode?: RolloverMode;
 		heldInAccountId?: string | null;
 		targetAmount?: number | null;
+		targetDate?: string | null;
 		carryoverBalance?: number;
 		kind?: 'fixed' | 'variable';
 		originalPlanned: number;
@@ -121,19 +121,34 @@
 		isFund ? category.remaining < 0 : category.remaining < 0 || totalSpent > category.effectiveTarget
 	);
 
-	let isFixed = $derived(
-		!isFund &&
-			(category.kind
-				? category.kind === 'fixed'
-				: isFixedCategory(category.name, category.groupName))
-	);
-	let isFixedPaid = $derived(
-		totalSpent > 0 && (category.effectiveTarget <= 0 || totalSpent >= category.effectiveTarget - 0.005)
-	);
+	let dueInfo = $derived.by(() => {
+		if (isFund || !category.targetDate) return null;
+		const day = Number(category.targetDate.slice(8, 10));
+		if (!Number.isInteger(day) || day < 1 || day > 31) return null;
+
+		const now = new Date();
+		const year = now.getFullYear();
+		const month = now.getMonth();
+		const daysInMonth = new Date(year, month + 1, 0).getDate();
+		const clampedDay = Math.min(day, daysInMonth);
+		const dueDate = new Date(year, month, clampedDay);
+		const today = new Date(year, month, now.getDate());
+		const daysUntil = Math.round((dueDate.getTime() - today.getTime()) / 86_400_000);
+		const monthShort = dueDate.toLocaleDateString('en-US', { month: 'short' });
+		const isPaid =
+			totalSpent > 0 &&
+			(category.effectiveTarget <= 0 || totalSpent >= category.effectiveTarget - 0.005);
+
+		return {
+			label: isPaid ? 'Paid' : `Due ${monthShort} ${clampedDay}`,
+			isPaid,
+			isDueSoon: !isPaid && daysUntil <= 5
+		};
+	});
 
 	let statusColor = $derived.by(() => {
 		if (isOverspent) return 'red';
-		if (isFixed || isFund) return 'green';
+		if (isFund) return 'green';
 		if (category.effectiveTarget <= 0) return totalSpent > 0 ? 'red' : 'green';
 		const ratio = totalSpent / category.effectiveTarget;
 		if (ratio > 0.8) return 'amber';
@@ -160,6 +175,10 @@
 	);
 	let fundGoalMet = $derived(
 		isFund && category.targetAmount != null && category.targetAmount > 0 && category.remaining >= category.targetAmount
+	);
+	let fundPool = $derived(Math.max(priorSaved + category.effectiveTarget, 1));
+	let fundTankPct = $derived(
+		isFund ? Math.max(0, Math.min(100, (category.remaining / fundPool) * 100)) : 0
 	);
 
 	function fmt(n: number): string {
@@ -405,7 +424,7 @@
 						{category.name}
 					</span>
 
-					{#if !organizeMode && (isFixed || isFund || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick)}
+					{#if !organizeMode && (dueInfo || isFund || category.spentPending > 0 || (category.pacing && !category.pacing.isMet) || onEditClick)}
 						<div class="flex flex-wrap items-center gap-1.5">
 							{#if isFund}
 								<span
@@ -420,14 +439,16 @@
 									</span>
 								{/if}
 							{/if}
-							{#if isFixed}
+							{#if dueInfo}
 								<span
-									data-testid="fixed-status-badge"
-									class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {isFixedPaid
+									data-testid="due-status-badge"
+									class="inline-flex items-center shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold {dueInfo.isPaid
 										? 'bg-status-good-bg text-status-good'
-										: 'bg-subtle text-ink-secondary border border-border'}"
+										: dueInfo.isDueSoon
+											? 'bg-status-warn-bg text-status-warn border border-status-warn/30'
+											: 'bg-subtle text-ink-secondary border border-border'}"
 								>
-									{isFixedPaid ? 'Paid' : 'Upcoming'}
+									{dueInfo.label}
 								</span>
 							{/if}
 
@@ -583,6 +604,23 @@
 						<span>{fmt(category.remaining)}</span>
 						<span class="font-sans text-[10px] uppercase tracking-wider underline">Cover</span>
 					</button>
+				{:else if isFund}
+					{#if category.remaining > 0}
+						<span
+							data-testid="status-badge"
+							class="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2 py-0.5 text-xs font-mono font-bold text-accent-pop border border-accent-pop/25"
+						>
+							<span>{fmt(category.remaining)}</span>
+							<span class="font-sans text-[10px] font-semibold opacity-80">left</span>
+						</span>
+					{:else}
+						<span
+							data-testid="status-badge"
+							class="inline-flex items-center text-sm font-mono font-bold text-ink-muted"
+						>
+							{fmt(category.remaining)}
+						</span>
+					{/if}
 				{:else if displayMode === 'spent'}
 					<span
 						data-testid="status-badge"
@@ -629,7 +667,7 @@
 			</div>
 		{/if}
 
-		<!-- Goal Progress Bar (Funds with Target) or Slim Spend Bar (Variable Expenses) -->
+		<!-- Goal Progress Bar (Funds with Target), Reverse Spend Tank Bar (Funds without Target), or Slim Spend Bar (Monthly) -->
 		{#if !organizeMode && isFund && category.targetAmount && category.targetAmount > 0}
 			<div class="mt-2 ml-5 space-y-1">
 				<div class="flex items-center justify-between text-[10px] font-mono text-ink-secondary">
@@ -653,7 +691,22 @@
 					></div>
 				</div>
 			</div>
-		{:else if !organizeMode && !isFixed && !isFund}
+		{:else if !organizeMode && isFund}
+			<div
+				data-testid="fund-tank-progress-bar"
+				class="mt-2 ml-5 relative h-1.5 overflow-hidden rounded-full bg-subtle"
+			>
+				<div
+					data-testid="fund-tank-fill"
+					class="absolute inset-y-0 left-0 transition-all duration-300 {isOverspent
+						? 'bg-status-danger'
+						: 'bg-accent-pop'}"
+					style="width: {fundTankPct}%; {!isOverspent && groupColor
+						? `background-color: ${groupColor.stroke};`
+						: ''}"
+				></div>
+			</div>
+		{:else if !organizeMode && !isFund}
 			<div
 				data-testid="variable-progress-bar"
 				class="mt-2 ml-5 relative h-1.5 overflow-hidden rounded-full bg-subtle"

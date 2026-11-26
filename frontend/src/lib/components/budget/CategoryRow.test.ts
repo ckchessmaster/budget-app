@@ -61,13 +61,14 @@ describe('CategoryRow', () => {
 		expect(getByTestId('pending-badge').textContent?.trim()).toBe('+$25.00 pend');
 	});
 
-	it('renders Paid or Upcoming badge instead of progress bar for fixed categories', () => {
-		const { getByTestId, queryByTestId, unmount } = render(CategoryRow, {
+	it('renders Due or Paid badge alongside the spend bar when targetDate is set, and always shows spend bar on regular categories', () => {
+		const { getByTestId, unmount } = render(CategoryRow, {
 			props: {
 				category: {
 					id: 'cat-rent',
 					name: 'Rent/Mortgage',
 					groupName: 'Essentials',
+					targetDate: '2000-01-15',
 					originalPlanned: 2000,
 					effectiveTarget: 2000,
 					spentCleared: 2000,
@@ -78,8 +79,8 @@ describe('CategoryRow', () => {
 			}
 		});
 
-		expect(getByTestId('fixed-status-badge').textContent?.trim()).toBe('Paid');
-		expect(queryByTestId('variable-progress-bar')).toBeNull();
+		expect(getByTestId('due-status-badge').textContent?.trim()).toBe('Paid');
+		expect(getByTestId('variable-progress-bar')).toBeTruthy();
 		unmount();
 
 		const upcoming = render(CategoryRow, {
@@ -88,6 +89,7 @@ describe('CategoryRow', () => {
 					id: 'cat-util',
 					name: 'Utilities',
 					groupName: 'Essentials',
+					targetDate: '2000-01-28',
 					originalPlanned: 180,
 					effectiveTarget: 180,
 					spentCleared: 0,
@@ -98,8 +100,28 @@ describe('CategoryRow', () => {
 			}
 		});
 
-		expect(upcoming.getByTestId('fixed-status-badge').textContent?.trim()).toBe('Upcoming');
-		expect(upcoming.queryByTestId('variable-progress-bar')).toBeNull();
+		expect(upcoming.getByTestId('due-status-badge').textContent?.trim()).toMatch(/^Due [A-Z][a-z]{2} \d+$/);
+		expect(upcoming.getByTestId('variable-progress-bar')).toBeTruthy();
+		upcoming.unmount();
+
+		const noDue = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-netflix',
+					name: 'Netflix',
+					groupName: 'Services',
+					originalPlanned: 30,
+					effectiveTarget: 30,
+					spentCleared: 0,
+					spentPending: 0,
+					remaining: 30
+				},
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(noDue.queryByTestId('due-status-badge')).toBeNull();
+		expect(noDue.getByTestId('variable-progress-bar')).toBeTruthy();
 	});
 
 	it('expands and collapses inline activity drawer, hides Txns button, and fires onSelectTransaction cleanly', async () => {
@@ -388,8 +410,33 @@ describe('CategoryRow', () => {
 		expect(getByTestId('fund-meta-line').textContent).toContain('Prior $1,000.00');
 		expect(getByTestId('fund-meta-line').textContent).toContain('Spent $400.00');
 		expect(queryByTestId('overspent-badge')).toBeNull();
-		expect(getByTestId('status-badge').textContent?.trim()).toBe('$800.00');
+		expect(getByTestId('status-badge').textContent?.replace(/\s+/g, ' ').trim()).toBe('$800.00 left');
 		expect(getByTestId('fund-goal-progress-bar')).toBeTruthy();
 		expect(getByTestId('fund-goal-fill').getAttribute('style')).toContain('width: 40%');
+	});
+
+	it('renders reverse spend tank bar and left badge for Funds without a goal, even in spent displayMode', () => {
+		const { getByTestId } = render(CategoryRow, {
+			props: {
+				category: {
+					id: 'cat-med',
+					name: 'Medical Expenses',
+					groupName: 'Savings',
+					rolloverMode: 'ROLLOVER_BALANCE',
+					carryoverBalance: 500,
+					originalPlanned: 100,
+					effectiveTarget: 100,
+					spentCleared: 150,
+					spentPending: 0,
+					remaining: 450
+				},
+				displayMode: 'spent',
+				onCoverClick: vi.fn()
+			}
+		});
+
+		expect(getByTestId('status-badge').textContent?.replace(/\s+/g, ' ').trim()).toBe('$450.00 left');
+		expect(getByTestId('fund-tank-progress-bar')).toBeTruthy();
+		expect(getByTestId('fund-tank-fill').getAttribute('style')).toContain('width: 75%');
 	});
 });
