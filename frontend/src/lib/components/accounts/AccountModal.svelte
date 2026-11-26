@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { createAccount, deleteAccount, updateAccount } from '$lib/api/transactions';
+	import CategorySearchPicker from '$lib/components/budget/CategorySearchPicker.svelte';
 	import type {
 		AccountItem,
 		AccountType,
@@ -611,17 +612,14 @@
 								<label for="acct-debt-cat" class="block text-xs font-medium text-ink-secondary mb-1">
 									Debt Payoff Category
 								</label>
-								<select
+								<CategorySearchPicker
 									id="acct-debt-cat"
+									{categories}
 									bind:value={debtPayoffCategoryId}
-									required
-									class="w-full rounded-lg border border-border bg-canvas px-2.5 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-								>
-									<option value="">Select category...</option>
-									{#each categories as cat (cat.id)}
-										<option value={cat.id}>{cat.groupName} — {cat.name}</option>
-									{/each}
-								</select>
+									ariaLabel="Debt Payoff Category"
+									collapsible={true}
+									testIdPrefix="acct-debt-cat"
+								/>
 								{#if categories.length === 0}
 									<p class="text-[11px] text-status-warn mt-1">
 										No categories found. Create one on the Budget page first.

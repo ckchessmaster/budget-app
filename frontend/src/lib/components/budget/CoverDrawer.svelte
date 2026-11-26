@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { reallocateFunds } from '$lib/api/budget';
+	import CategorySearchPicker from './CategorySearchPicker.svelte';
 
 	export interface DonorCategory {
 		id: string;
@@ -115,17 +116,18 @@
 								No categories currently have a positive available balance to donate from.
 							</p>
 						{:else}
-							<select
+							<CategorySearchPicker
 								id="donor-select"
+								categories={selectableDonors.map((d) => ({
+									id: d.id,
+									name: d.name,
+									subtitle: `$${d.available.toFixed(2)} available`
+								}))}
 								bind:value={selectedDonorId}
-								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
-							>
-								{#each selectableDonors as donor}
-									<option value={donor.id}>
-										{donor.name} (${donor.available.toFixed(2)} available)
-									</option>
-								{/each}
-							</select>
+								ariaLabel="Move Money From"
+								collapsible={true}
+								testIdPrefix="cover-donor"
+							/>
 						{/if}
 					</div>
 

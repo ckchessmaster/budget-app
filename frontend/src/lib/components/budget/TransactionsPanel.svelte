@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { OfflineTransaction } from '$lib/offline/db';
 	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
+	import CategorySearchPicker from './CategorySearchPicker.svelte';
 	import type {
 		ApplySimilarPayload,
 		CategorizationSuggestion
@@ -722,23 +723,16 @@
 						<label class="block text-[11px] text-ink-secondary mb-0.5" for="qa-category">
 							Category
 						</label>
-						<select
+						<CategorySearchPicker
 							id="qa-category"
+							{categories}
 							bind:value={formCategoryId}
+							ariaLabel="Category"
+							emptyOptionLabel={isOffBudgetFormAccount ? 'Tracked account (not in budget)' : 'Uncategorized'}
+							collapsible={true}
 							disabled={isOffBudgetFormAccount}
-							class="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-ink-primary disabled:opacity-50 focus:border-accent-pop focus:outline-none"
-						>
-							<option value="">
-								{isOffBudgetFormAccount ? 'Tracked account (not in budget)' : 'Uncategorized'}
-							</option>
-							{#each groupedCategories as [grp, cats]}
-								<optgroup label={grp}>
-									{#each cats as cat}
-										<option value={cat.id}>{cat.name}</option>
-									{/each}
-								</optgroup>
-							{/each}
-						</select>
+							testIdPrefix="qa-cat"
+						/>
 					</div>
 				</div>
 
