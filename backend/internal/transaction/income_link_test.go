@@ -3,6 +3,7 @@ package transaction
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,10 @@ func (m *mockIncomeLinkRepo) DeleteSplitsByParent(_ context.Context, _ pgx.Tx, _
 
 func (m *mockIncomeLinkRepo) PropagateParentFieldsToSplits(_ context.Context, _ pgx.Tx, _ *Transaction) error {
 	return nil
+}
+
+func (m *mockIncomeLinkRepo) IgnoreReviewBefore(_ context.Context, _ pgx.Tx, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 func TestUpdateTransactionPlannedIncomeMutualExclusion(t *testing.T) {
