@@ -252,7 +252,10 @@ describe('TransactionsPanel', () => {
 		await fireEvent.click(getByRole('button', { name: '+ Add' }));
 		await fireEvent.input(getByLabelText('Merchant / Payee'), { target: { value: 'Whole Foods' } });
 		await fireEvent.input(getByLabelText('Amount ($)'), { target: { value: '42.50' } });
-		await fireEvent.change(getByLabelText('Category'), { target: { value: 'cat-groc' } });
+		await fireEvent.click(getByLabelText('Category'));
+		await fireEvent.click(
+			document.querySelector('[data-testid="qa-cat-list"] [data-testid="qa-cat-option"]')!
+		);
 		await fireEvent.click(getByRole('button', { name: 'Save Expense' }));
 
 		await waitFor(() => expect(onCreateTransaction).toHaveBeenCalledTimes(1));

@@ -7,6 +7,7 @@
 		TransactionItemModel,
 		UpdateTransactionPayload
 	} from '$lib/types/transaction';
+	import CategorySearchPicker from './CategorySearchPicker.svelte';
 
 	interface Props {
 		transaction: TransactionItemModel;
@@ -622,27 +623,14 @@
 						>
 							<div class="flex items-center gap-2">
 								<div class="flex-1 min-w-0">
-									<select
-										aria-label={`Split ${idx + 1} category`}
+									<CategorySearchPicker
+										{categories}
+										incomes={transaction.amount > 0 ? incomes : []}
 										bind:value={row.target}
-										class="w-full rounded-md border border-border bg-canvas px-2 py-1.5 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-									>
-										<option value="">Select category...</option>
-										{#if transaction.amount > 0 && incomes.length > 0}
-											<optgroup label="Income">
-												{#each incomes as inc (inc.id)}
-													<option value={`income:${inc.id}`}>{inc.name}</option>
-												{/each}
-											</optgroup>
-										{/if}
-										{#each groupedCategories as [grp, cats] (grp)}
-											<optgroup label={grp}>
-												{#each cats as cat (cat.id)}
-													<option value={cat.id}>{cat.name}</option>
-												{/each}
-											</optgroup>
-										{/each}
-									</select>
+										ariaLabel={`Split ${idx + 1} category`}
+										collapsible={true}
+										testIdPrefix={`split-${idx}-cat`}
+									/>
 								</div>
 
 								<div class="w-28 shrink-0 flex items-center gap-1">
