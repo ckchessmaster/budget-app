@@ -12,7 +12,9 @@
 		UpdateTransactionPayload
 	} from '$lib/types/transaction';
 	import {
+		effectiveBudgetMonth,
 		getReviewBadgeKind,
+		hasBudgetMonthOverride,
 		hasUncategorizedSplit,
 		isPendingTransaction,
 		isToReviewTransaction,
@@ -24,6 +26,7 @@
 	interface Props {
 		currentMonth: string;
 		transactions: TransactionItemModel[];
+		toReviewTransactions?: TransactionItemModel[];
 		queuedTransactions: OfflineTransaction[];
 		accounts: AccountItem[];
 		categories: CategoryBudget[];
@@ -50,6 +53,7 @@
 		) => void;
 		onApplySimilar?: (payload: ApplySimilarPayload) => Promise<number>;
 		onUpdateTransaction?: (txId: string, payload: UpdateTransactionPayload) => Promise<void>;
+		onIgnoreReviewBefore?: (beforeMonth: string) => Promise<number | void>;
 		onDeleteTransaction: (txId: string) => Promise<void>;
 		onSyncNow: () => Promise<void>;
 		onTransactionDragStart?: (txId: string) => void;
@@ -59,6 +63,7 @@
 	let {
 		currentMonth,
 		transactions,
+		toReviewTransactions,
 		queuedTransactions,
 		accounts,
 		categories,
@@ -76,6 +81,7 @@
 		onCreateRule,
 		onApplySimilar,
 		onUpdateTransaction,
+		onIgnoreReviewBefore,
 		onDeleteTransaction,
 		onSyncNow,
 		onTransactionDragStart,
@@ -96,6 +102,8 @@
 	let showIncomeInPicker = $state(false);
 	let openMenuTxId = $state<string | null>(null);
 	let confirmDeleteId = $state<string | null>(null);
+	let confirmIgnoreOlder = $state(false);
+	let ignoringOlder = $state(false);
 	let postCatAction = $state<{
 		tx: TransactionItemModel;
 		merchantPattern: string;
@@ -225,8 +233,24 @@
 		return [...offlineMapped, ...transactions];
 	});
 
-	let toReviewItems = $derived(
-		combinedItems.filter((tx) => isToReviewTransaction(tx, accountById))
+	let toReviewItems = $derived.by(() => {
+		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
+		const pool = [...offlineMapped, ...(toReviewTransactions ?? transactions)];
+		const seen = new Set<string>();
+		const out: TransactionItemModel[] = [];
+		for (const tx of pool) {
+			if (!seen.has(tx.id)) {
+				seen.add(tx.id);
+				if (isToReviewTransaction(tx, accountById)) {
+					out.push(tx);
+				}
+			}
+		}
+		return out;
+	});
+
+	let olderToReviewCount = $derived(
+		toReviewItems.filter((tx) => effectiveBudgetMonth(tx) < currentMonth).length
 	);
 
 	let filteredItems = $derived.by(() => {
@@ -378,6 +402,60 @@
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to apply to similar transactions.';
 			postCatAction = { ...current, applying: false };
+		}
+	}
+
+	function setSaving(txId: string, active: boolean) {
+		if (active) {
+			savingIds = { ...savingIds, [txId]: true };
+		} else {
+			const next = { ...savingIds };
+			delete next[txId];
+			savingIds = next;
+		}
+	}
+
+	async function handleIgnoreOlder() {
+		if (!onIgnoreReviewBefore) return;
+		ignoringOlder = true;
+		actionError = null;
+		try {
+			await onIgnoreReviewBefore(currentMonth);
+			confirmIgnoreOlder = false;
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Could not ignore older transactions.';
+		} finally {
+			ignoringOlder = false;
+		}
+	}
+
+	async function handleToggleIgnoreReview(tx: TransactionItemModel) {
+		if (!onUpdateTransaction) return;
+		setSaving(tx.id, true);
+		actionError = null;
+		try {
+			await onUpdateTransaction(tx.id, { reviewIgnored: !tx.reviewIgnored });
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Could not update review status.';
+		} finally {
+			setSaving(tx.id, false);
+		}
+	}
+
+	async function handleMoveToCurrentMonth(tx: TransactionItemModel) {
+		if (!onUpdateTransaction) return;
+		setSaving(tx.id, true);
+		actionError = null;
+		try {
+			const txMonth = tx.transactionDate.slice(0, 7);
+			await onUpdateTransaction(
+				tx.id,
+				currentMonth === txMonth ? { clearBudgetMonth: true } : { budgetMonth: currentMonth }
+			);
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Could not move transaction budget month.';
+		} finally {
+			setSaving(tx.id, false);
 		}
 	}
 
@@ -827,6 +905,47 @@
 
 	<!-- Transaction Feed -->
 	<div class="flex-1 overflow-y-auto overscroll-contain-scroll divide-y divide-border">
+		{#if activeSubTab === 'to_review' && olderToReviewCount > 0 && onIgnoreReviewBefore}
+			<div
+				data-testid="tx-ignore-older-banner"
+				class="px-3.5 py-2.5 bg-subtle/60 border-b border-border flex items-center justify-between gap-2 text-[11px]"
+			>
+				<span class="text-ink-secondary">
+					{olderToReviewCount} older unreviewed {olderToReviewCount === 1 ? 'item' : 'items'} from before {currentMonth}
+				</span>
+				{#if confirmIgnoreOlder}
+					<div class="flex items-center gap-1.5 shrink-0">
+						<button
+							type="button"
+							data-testid="tx-confirm-ignore-older-btn"
+							disabled={ignoringOlder}
+							onclick={() => void handleIgnoreOlder()}
+							class="px-2 py-1 rounded-md bg-status-warn-bg text-status-warn font-semibold hover:opacity-90 disabled:opacity-50"
+						>
+							{ignoringOlder ? 'Ignoring...' : 'Confirm ignore'}
+						</button>
+						<button
+							type="button"
+							disabled={ignoringOlder}
+							onclick={() => (confirmIgnoreOlder = false)}
+							class="px-2 py-1 rounded-md border border-border bg-surface text-ink-secondary hover:text-ink-primary"
+						>
+							Cancel
+						</button>
+					</div>
+				{:else}
+					<button
+						type="button"
+						data-testid="tx-ignore-older-btn"
+						onclick={() => (confirmIgnoreOlder = true)}
+						class="shrink-0 px-2.5 py-1 rounded-md border border-border bg-surface font-medium text-ink-primary hover:bg-surface-hover transition-colors"
+					>
+						Ignore older from review
+					</button>
+				{/if}
+			</div>
+		{/if}
+
 		{#if filteredItems.length === 0}
 			<div class="px-4 py-10 text-center space-y-1">
 				<p class="text-xs font-medium text-ink-secondary">
@@ -912,6 +1031,16 @@
 									>
 										{displayMerchant}
 									</span>
+
+									{#if hasBudgetMonthOverride(tx)}
+										<span
+											data-testid="tx-badge-budget-month"
+											class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+											title={`Counted in ${tx.budgetMonth} budget (transaction date: ${tx.transactionDate})`}
+										>
+											Budget: {tx.budgetMonth}
+										</span>
+									{/if}
 
 									{#if badgeKind === 'pending'}
 										<span
@@ -1122,6 +1251,34 @@
 													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
 												>
 													{hasSplits ? 'Edit splits' : 'Split transaction'}
+												</button>
+											{/if}
+											{#if !isQueued && onUpdateTransaction && effectiveBudgetMonth(tx) !== currentMonth}
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-move-month"
+													onclick={() => {
+														openMenuTxId = null;
+														void handleMoveToCurrentMonth(tx);
+													}}
+													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
+												>
+													Move to {currentMonth} budget
+												</button>
+											{/if}
+											{#if !isQueued && onUpdateTransaction && (tx.reviewIgnored || isToReviewTransaction(tx, accountById))}
+												<button
+													type="button"
+													role="menuitem"
+													data-testid="tx-menu-ignore-review"
+													onclick={() => {
+														openMenuTxId = null;
+														void handleToggleIgnoreReview(tx);
+													}}
+													class="w-full text-left px-3 py-1.5 text-ink-primary hover:bg-surface-hover transition-colors"
+												>
+													{tx.reviewIgnored ? 'Include in review' : 'Ignore from review'}
 												</button>
 											{/if}
 											<div class="my-1 border-t border-border"></div>

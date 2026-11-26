@@ -450,4 +450,67 @@ describe('TransactionsPanel', () => {
 		expect(getByText('Netflix')).toBeTruthy();
 		expect(getByTestId('tx-badge-auto')).toBeTruthy();
 	});
+
+	it('shows cross-month To Review items, budget month warning badge, and ignore-review actions', async () => {
+		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
+		const onIgnoreReviewBefore = vi.fn().mockResolvedValue(1);
+
+		const oldToReview: TransactionItemModel = {
+			id: 'tx-old-unreviewed',
+			accountId: 'acc-1',
+			origin: 'BANK_FEED',
+			status: 'POSTED',
+			amount: -45.0,
+			merchantRaw: 'Old Hardware Store',
+			categoryId: null,
+			transactionDate: '2026-10-28',
+			isCleared: true,
+			isTransfer: false
+		};
+
+		const overriddenTx: TransactionItemModel = {
+			id: 'tx-overridden',
+			accountId: 'acc-1',
+			origin: 'BANK_FEED',
+			status: 'POSTED',
+			amount: -120.0,
+			merchantRaw: 'Late Oct Utility',
+			categoryId: 'cat-dining',
+			transactionDate: '2026-10-30',
+			budgetMonth: '2026-11',
+			isCleared: true,
+			isTransfer: false
+		};
+
+		const { getByText, getByTestId, getByRole } = render(TransactionsPanel, {
+			props: {
+				...baseProps(),
+				currentMonth: '2026-11',
+				transactions: [overriddenTx],
+				toReviewTransactions: [oldToReview],
+				onUpdateTransaction,
+				onIgnoreReviewBefore
+			}
+		});
+
+		// To Review tab shows cross-month unreviewed item and bulk ignore banner
+		expect(getByText('Old Hardware Store')).toBeTruthy();
+		expect(getByTestId('tx-ignore-older-banner').textContent).toContain('1 older unreviewed');
+
+		// Confirm bulk ignore older
+		await fireEvent.click(getByTestId('tx-ignore-older-btn'));
+		await fireEvent.click(getByTestId('tx-confirm-ignore-older-btn'));
+		await waitFor(() => expect(onIgnoreReviewBefore).toHaveBeenCalledWith('2026-11'));
+
+		// Per-row menu: Ignore from review and Move to current month
+		await fireEvent.click(getByTestId('tx-row-menu-btn'));
+		await fireEvent.click(getByTestId('tx-menu-ignore-review'));
+		await waitFor(() =>
+			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-old-unreviewed', { reviewIgnored: true })
+		);
+
+		// All tab shows budget month override warning badge
+		await fireEvent.click(getByRole('tab', { name: /All/ }));
+		expect(getByTestId('tx-badge-budget-month').textContent).toContain('Budget: 2026-11');
+	});
 });

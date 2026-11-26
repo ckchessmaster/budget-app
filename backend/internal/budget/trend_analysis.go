@@ -123,7 +123,7 @@ func ComputeSpendRecommendations(
 
 	spendRows, err := tx.Query(ctx, `
 		SELECT t.category_id,
-		       date_trunc('month', t.transaction_date)::date AS spend_month,
+		       COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) AS spend_month,
 		       GREATEST(0, COALESCE(SUM(-t.amount), 0)) AS total_spent
 		FROM transactions t
 		INNER JOIN accounts a ON a.id = t.account_id
@@ -132,9 +132,9 @@ func ComputeSpendRecommendations(
 		  AND t.category_id IS NOT NULL
 		  AND t.is_transfer = FALSE
 		  AND a.is_on_budget = TRUE
-		  AND t.transaction_date >= $2::date
-		  AND t.transaction_date < $3::date
-		GROUP BY t.category_id, date_trunc('month', t.transaction_date)::date
+		  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) >= $2::date
+		  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) < $3::date
+		GROUP BY t.category_id, COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date)
 	`, workspaceID, m3, ym)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load trailing monthly spend for recommendations: %w", err)

@@ -108,6 +108,9 @@ func (h *Handler) ListTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.Month = &parsedMonth
 	}
+	if q.Get("to_review") == "true" {
+		filter.ToReview = true
+	}
 	if rawPage := q.Get("page"); rawPage != "" {
 		if p, err := strconv.Atoi(rawPage); err == nil && p > 0 {
 			filter.Page = p
@@ -204,6 +207,10 @@ func (h *Handler) UpdateTransaction(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "transaction_not_found")
 			return
 		}
+		if errors.Is(err, ErrInvalidBudgetMonth) {
+			writeErr(w, http.StatusBadRequest, "invalid_budget_month")
+			return
+		}
 		if errors.Is(err, ErrCannotSplitTransaction) {
 			writeErr(w, http.StatusUnprocessableEntity, err.Error())
 			return
@@ -288,6 +295,40 @@ func (h *Handler) DeleteTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) IgnoreReviewBefore(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req struct {
+		BeforeMonth string `json:"before_month"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	parsedMonth, err := time.Parse("2006-01", req.BeforeMonth)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid_before_month")
+		return
+	}
+
+	var updated int64
+	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
+		var txErr error
+		updated, txErr = h.svc.IgnoreReviewBefore(r.Context(), tx, parsedMonth)
+		return txErr
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed_to_ignore_review")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int64{"updated": updated})
 }
 
 // maxSyncRequestBodyBytes bounds the submitted batch on the way in.

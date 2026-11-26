@@ -273,8 +273,8 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 				  AND t.category_id IS NOT NULL
 				  AND t.is_transfer = FALSE
 				  AND a.is_on_budget = TRUE
-				  AND t.transaction_date >= $1::date
-				  AND t.transaction_date < $2::date
+				  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) >= $1::date
+				  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) < $2::date
 				GROUP BY t.category_id
 			)
 			SELECT c.id,

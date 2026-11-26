@@ -33,12 +33,14 @@ export interface TransactionItemModel {
 	categoryName?: string | null;
 	plannedIncomeId?: string | null;
 	transactionDate: string;
+	budgetMonth?: string | null;
 	userNotes?: string | null;
 	isCleared: boolean;
 	isTransfer?: boolean;
 	categorizedBy?: 'MANUAL' | 'RULE';
 	appliedRuleId?: string | null;
 	needsReview?: boolean;
+	reviewIgnored?: boolean;
 	syncStatus?: 'QUEUED' | 'SYNCING' | 'FAILED';
 	settledDelta?: number | null;
 	splits?: TransactionSplit[];
@@ -55,6 +57,9 @@ export interface UpdateTransactionPayload {
 	isCleared?: boolean;
 	amount?: number;
 	approveReview?: boolean;
+	budgetMonth?: string | null;
+	clearBudgetMonth?: boolean;
+	reviewIgnored?: boolean;
 }
 
 export type AccountType = 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment' | 'loan';

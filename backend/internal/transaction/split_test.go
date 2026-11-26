@@ -228,6 +228,9 @@ func (s *stubTxRepo) DeleteSplitsByParent(_ context.Context, _ pgx.Tx, _ uuid.UU
 func (s *stubTxRepo) PropagateParentFieldsToSplits(_ context.Context, _ pgx.Tx, _ *Transaction) error {
 	return nil
 }
+func (s *stubTxRepo) IgnoreReviewBefore(_ context.Context, _ pgx.Tx, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 func TestReplaceSplits_ValidationAndUnsplit(t *testing.T) {
 	txID := uuid.New()

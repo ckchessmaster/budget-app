@@ -19,6 +19,7 @@
 		fetchAccounts,
 		fetchSolvencyReport,
 		fetchTransactions,
+		ignoreReviewBefore,
 		replaceTransactionSplits,
 		updateTransaction
 	} from '$lib/api/transactions';
@@ -89,6 +90,7 @@
 
 	let budgetData = $state<MonthBudgetDetails | null>(null);
 	let transactions = $state<TransactionItemModel[]>([]);
+	let toReviewTransactions = $state<TransactionItemModel[]>([]);
 	let queuedTransactions = $state<OfflineTransaction[]>([]);
 	let accounts = $state<AccountItem[]>([]);
 	let solvency = $state<SolvencyReport | null>(null);
@@ -219,9 +221,10 @@
 			}
 
 			isOffline = false;
-			const [budgetRes, txRes, acctsRes, solvRes, recsRes, sugRes] = await Promise.all([
+			const [budgetRes, txRes, toReviewRes, acctsRes, solvRes, recsRes, sugRes] = await Promise.all([
 				fetchMonthBudget(month),
 				fetchTransactions({ month, limit: 200 }).catch(() => ({ items: [], total: 0 })),
+				fetchTransactions({ toReview: true, limit: 200 }).catch(() => ({ items: [], total: 0 })),
 				fetchAccounts().catch(() => []),
 				fetchSolvencyReport().catch(() => null),
 				fetchSpendRecommendations(month).catch(() => []),
@@ -231,6 +234,7 @@
 
 			budgetData = budgetRes;
 			transactions = txRes.items;
+			toReviewTransactions = toReviewRes.items;
 			accounts = acctsRes;
 			solvency = solvRes;
 			recommendations = recsRes;
@@ -855,7 +859,9 @@
 		if (!selectedTransactionId) return null;
 		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
 		return (
-			[...offlineMapped, ...transactions].find((tx) => tx.id === selectedTransactionId) ?? null
+			[...offlineMapped, ...transactions, ...toReviewTransactions].find(
+				(tx) => tx.id === selectedTransactionId
+			) ?? null
 		);
 	});
 
@@ -874,7 +880,12 @@
 		if (!coverCategoryId || !budgetData) return null;
 		const found = budgetData.categories.find((c) => c.id === coverCategoryId);
 		if (!found) return null;
-		return { id: found.id, name: found.name, remaining: found.remaining };
+		return {
+			id: found.id,
+			name: found.name,
+			remaining: found.remaining,
+			originalPlanned: found.originalPlanned
+		};
 	});
 
 	let availableDonors = $derived.by(() => {
@@ -905,10 +916,22 @@
 		return total;
 	});
 
+	let allToReviewPool = $derived.by(() => {
+		const seen = new Set<string>();
+		const out: TransactionItemModel[] = [];
+		for (const tx of [...toReviewTransactions, ...transactions]) {
+			if (!seen.has(tx.id)) {
+				seen.add(tx.id);
+				out.push(tx);
+			}
+		}
+		return out;
+	});
+
 	let toReviewCount = $derived.by(() => {
 		const offlineMapped = mapOfflineQueuedToTransactions(queuedTransactions, currentMonth);
 		let count = 0;
-		for (const tx of [...offlineMapped, ...transactions]) {
+		for (const tx of [...offlineMapped, ...allToReviewPool]) {
 			if (isToReviewTransaction(tx, accountById)) {
 				count++;
 			}
@@ -917,13 +940,13 @@
 	});
 
 	let catchUpItems = $derived(
-		transactions.filter((tx) => isCatchUpTransaction(tx, accountById))
+		allToReviewPool.filter((tx) => isCatchUpTransaction(tx, accountById))
 	);
 
 	let modalCatchUpItems = $derived.by(() =>
 		catchUpItems.length > 0
 			? catchUpItems
-			: transactions.filter(
+			: allToReviewPool.filter(
 					(tx) =>
 						isToReviewTransaction(tx, accountById) &&
 						isCategorizableTransaction(tx, accountById)
@@ -1014,6 +1037,12 @@
 	async function handleApproveReview(txId: string) {
 		await updateTransaction(txId, { approveReview: true });
 		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleIgnoreReviewBefore(beforeMonth: string): Promise<number> {
+		const res = await ignoreReviewBefore(beforeMonth);
+		await loadWorkspace(currentMonth, true);
+		return res.updated;
 	}
 
 	async function handleApplySimilar(payload: ApplySimilarPayload): Promise<number> {
@@ -1371,6 +1400,7 @@
 					<TransactionsPanel
 						{currentMonth}
 						{transactions}
+						{toReviewTransactions}
 						{queuedTransactions}
 						{accounts}
 						categories={budgetData?.categories ?? []}
@@ -1388,6 +1418,7 @@
 						onCreateRule={handleCreateRuleFromTx}
 						onApplySimilar={handleApplySimilar}
 						onUpdateTransaction={handleUpdateTransaction}
+						onIgnoreReviewBefore={handleIgnoreReviewBefore}
 						onDeleteTransaction={handleDeleteTransaction}
 						onSyncNow={handleSyncNow}
 						onTransactionDragStart={(id) => (draggingTxId = id)}
@@ -1408,6 +1439,7 @@
 	<TransactionsPanel
 		{currentMonth}
 		{transactions}
+		{toReviewTransactions}
 		{queuedTransactions}
 		{accounts}
 		categories={budgetData?.categories ?? []}
@@ -1425,6 +1457,7 @@
 		onCreateRule={handleCreateRuleFromTx}
 		onApplySimilar={handleApplySimilar}
 		onUpdateTransaction={handleUpdateTransaction}
+		onIgnoreReviewBefore={handleIgnoreReviewBefore}
 		onDeleteTransaction={handleDeleteTransaction}
 		onSyncNow={handleSyncNow}
 		onTransactionDragStart={(id) => (draggingTxId = id)}
@@ -1437,6 +1470,7 @@
 	yearMonth={`${currentMonth}-01`}
 	{overspentCategory}
 	{availableDonors}
+	readyToAssign={budgetData?.summary.readyToAssign ?? 0}
 	onClose={() => (coverCategoryId = null)}
 	onSuccess={() => {
 		coverCategoryId = null;

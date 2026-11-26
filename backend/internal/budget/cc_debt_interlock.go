@@ -347,8 +347,8 @@ func (s *pgCCDebtInterlockService) LoadCategoryCCSpendByMonth(
 		  AND t.is_transfer = FALSE
 		  AND a.is_on_budget = TRUE
 		  AND a.type = 'credit_card'
-		  AND t.transaction_date >= $1::date
-		  AND t.transaction_date < $2::date
+		  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) >= $1::date
+		  AND COALESCE(t.budget_month, date_trunc('month', t.transaction_date)::date) < $2::date
 		GROUP BY t.category_id, t.account_id
 		ORDER BY t.category_id ASC, t.account_id ASC
 	`, ym, nextYM, wsID)

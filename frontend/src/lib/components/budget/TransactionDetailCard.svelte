@@ -8,6 +8,7 @@
 		UpdateTransactionPayload
 	} from '$lib/types/transaction';
 	import CategorySearchPicker from './CategorySearchPicker.svelte';
+	import { isToReviewTransaction } from '$lib/utils/transactionReview';
 
 	interface Props {
 		transaction: TransactionItemModel;
@@ -50,6 +51,7 @@
 	let editMerchant = $state('');
 	let editNotes = $state('');
 	let editCategoryId = $state('');
+	let editBudgetMonth = $state('');
 	let categoryFilter = $state('');
 	let showIncomeInPicker = $state(false);
 	let saving = $state(false);
@@ -174,7 +176,7 @@
 		const splitSig = (transaction.splits ?? [])
 			.map((s) => `${s.id}:${s.amount}:${s.categoryId ?? ''}:${s.plannedIncomeId ?? ''}`)
 			.join(',');
-		const key = `${transaction.id}|${transaction.merchantClean ?? ''}|${transaction.userNotes ?? ''}|${transaction.categoryId ?? ''}|${transaction.plannedIncomeId ?? ''}|${splitSig}|${initialSplitMode ? 'split' : 'view'}`;
+		const key = `${transaction.id}|${transaction.merchantClean ?? ''}|${transaction.userNotes ?? ''}|${transaction.categoryId ?? ''}|${transaction.plannedIncomeId ?? ''}|${transaction.budgetMonth ?? ''}|${transaction.reviewIgnored ? '1' : '0'}|${splitSig}|${initialSplitMode ? 'split' : 'view'}`;
 		if (key !== lastHydratedKey) {
 			lastHydratedKey = key;
 			editMerchant = transaction.merchantClean?.trim() || transaction.merchantRaw;
@@ -182,6 +184,7 @@
 			editCategoryId = transaction.plannedIncomeId
 				? `income:${transaction.plannedIncomeId}`
 				: transaction.categoryId ?? '';
+			editBudgetMonth = transaction.budgetMonth ?? transaction.transactionDate.slice(0, 7);
 			categoryFilter = '';
 			showIncomeInPicker = false;
 			confirmDelete = false;
@@ -233,10 +236,16 @@
 		saving = true;
 		errorMsg = null;
 		try {
+			const txMonth = transaction.transactionDate.slice(0, 7);
 			const payload: UpdateTransactionPayload = {
 				merchantClean: trimmed,
 				userNotes: editNotes.trim()
 			};
+			if (editBudgetMonth && editBudgetMonth !== txMonth) {
+				payload.budgetMonth = editBudgetMonth;
+			} else if (transaction.budgetMonth) {
+				payload.clearBudgetMonth = true;
+			}
 			if (canCategorize) {
 				if (editCategoryId.startsWith('income:')) {
 					payload.plannedIncomeId = editCategoryId.slice('income:'.length);
@@ -268,6 +277,21 @@
 			}
 		} catch (err) {
 			errorMsg = err instanceof Error ? err.message : 'Failed to approve transaction.';
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function handleToggleIgnoreReview() {
+		if (!onUpdateTransaction) return;
+		saving = true;
+		errorMsg = null;
+		try {
+			await onUpdateTransaction(transaction.id, {
+				reviewIgnored: !transaction.reviewIgnored
+			});
+		} catch (err) {
+			errorMsg = err instanceof Error ? err.message : 'Failed to update review status.';
 		} finally {
 			saving = false;
 		}
@@ -892,6 +916,39 @@
 					{/if}
 
 					<div>
+						<div class="flex items-center justify-between mb-1">
+							<label for="tx-detail-budget-month" class="block text-[11px] font-medium text-ink-secondary">
+								Budget Month
+							</label>
+							{#if editBudgetMonth && editBudgetMonth !== transaction.transactionDate.slice(0, 7)}
+								<button
+									type="button"
+									data-testid="tx-detail-reset-budget-month"
+									onclick={() => (editBudgetMonth = transaction.transactionDate.slice(0, 7))}
+									class="text-[10px] font-medium text-accent-pop hover:underline"
+								>
+									Reset to tx date ({transaction.transactionDate.slice(0, 7)})
+								</button>
+							{/if}
+						</div>
+						<input
+							id="tx-detail-budget-month"
+							data-testid="tx-detail-budget-month"
+							type="month"
+							bind:value={editBudgetMonth}
+							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+						/>
+						{#if editBudgetMonth && editBudgetMonth !== transaction.transactionDate.slice(0, 7)}
+							<div
+								data-testid="tx-detail-budget-month-warning"
+								class="mt-1.5 rounded-lg border border-status-warn/40 bg-status-warn-bg px-2.5 py-1.5 text-[11px] text-status-warn"
+							>
+								Date mismatch: transaction date is {formatDate(transaction.transactionDate)}, but it will count toward the <strong>{editBudgetMonth}</strong> budget.
+							</div>
+						{/if}
+					</div>
+
+					<div>
 						<label for="tx-detail-notes" class="block text-[11px] font-medium text-ink-secondary mb-1">
 							Notes
 						</label>
@@ -926,6 +983,27 @@
 						</button>
 					</div>
 				</form>
+			{/if}
+
+			{#if !isQueued && onUpdateTransaction && (transaction.reviewIgnored || isToReviewTransaction(transaction, new Map(account ? [[account.id, account]] : [])))}
+				<div class="rounded-xl border border-border bg-subtle/40 p-3 flex items-center justify-between gap-2">
+					<p class="text-[11px] text-ink-secondary">
+						{#if transaction.reviewIgnored}
+							This transaction is ignored from <strong>To Review</strong>.
+						{:else}
+							Ignore this transaction to remove it from <strong>To Review</strong> without categorizing it.
+						{/if}
+					</p>
+					<button
+						type="button"
+						data-testid="tx-detail-ignore-review-btn"
+						disabled={saving || deleting}
+						onclick={() => void handleToggleIgnoreReview()}
+						class="shrink-0 px-2.5 py-1.5 rounded-lg border border-border bg-surface text-[11px] font-medium text-ink-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+					>
+						{transaction.reviewIgnored ? 'Include in review' : 'Ignore from review'}
+					</button>
+				</div>
 			{/if}
 
 			{#if onDeleteTransaction}

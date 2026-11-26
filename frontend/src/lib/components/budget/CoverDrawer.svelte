@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { reallocateFunds } from '$lib/api/budget';
+	import { reallocateFunds, updateMonthlyPlanned } from '$lib/api/budget';
 	import CategorySearchPicker from './CategorySearchPicker.svelte';
+
+	const LEFT_TO_BUDGET_ID = '__left_to_budget__';
 
 	export interface DonorCategory {
 		id: string;
@@ -11,8 +13,9 @@
 	interface Props {
 		isOpen: boolean;
 		yearMonth?: string;
-		overspentCategory: { id: string; name: string; remaining: number } | null;
+		overspentCategory: { id: string; name: string; remaining: number; originalPlanned?: number } | null;
 		availableDonors: DonorCategory[];
+		readyToAssign?: number;
 		onClose: () => void;
 		onSuccess: () => void;
 	}
@@ -22,11 +25,27 @@
 		yearMonth = new Date().toISOString().slice(0, 7) + '-01',
 		overspentCategory,
 		availableDonors,
+		readyToAssign = 0,
 		onClose,
 		onSuccess
 	}: Props = $props();
 
 	let selectableDonors = $derived(availableDonors.filter((d) => d.available > 0));
+	let pickerOptions = $derived.by(() => {
+		const opts = selectableDonors.map((d) => ({
+			id: d.id,
+			name: d.name,
+			subtitle: `$${d.available.toFixed(2)} available`
+		}));
+		if (readyToAssign > 0) {
+			opts.unshift({
+				id: LEFT_TO_BUDGET_ID,
+				name: 'Left to Budget (Unallocated)',
+				subtitle: `$${readyToAssign.toFixed(2)} available`
+			});
+		}
+		return opts;
+	});
 	let selectedDonorId = $state('');
 	let amountInput = $state('');
 	let reasonInput = $state('');
@@ -37,7 +56,7 @@
 		if (isOpen && overspentCategory) {
 			const deficit = Math.abs(overspentCategory.remaining);
 			amountInput = deficit > 0 ? deficit.toFixed(2) : '';
-			selectedDonorId = selectableDonors[0]?.id ?? '';
+			selectedDonorId = pickerOptions[0]?.id ?? '';
 			reasonInput = '';
 			errorMsg = '';
 		}
@@ -53,16 +72,27 @@
 			return;
 		}
 
+		if (selectedDonorId === LEFT_TO_BUDGET_ID && parsedAmount > readyToAssign + 0.001) {
+			errorMsg = `Amount exceeds Left to Budget ($${readyToAssign.toFixed(2)} available).`;
+			return;
+		}
+
 		isSubmitting = true;
 		errorMsg = '';
 		try {
-			await reallocateFunds({
-				year_month: yearMonth,
-				from_category_id: selectedDonorId,
-				to_category_id: overspentCategory.id,
-				amount: parsedAmount,
-				reason: reasonInput.trim() || `Cover ${overspentCategory.name} overspend`
-			});
+			if (selectedDonorId === LEFT_TO_BUDGET_ID) {
+				const nextPlanned =
+					Math.round(((overspentCategory.originalPlanned ?? 0) + parsedAmount) * 100) / 100;
+				await updateMonthlyPlanned(overspentCategory.id, yearMonth, nextPlanned);
+			} else {
+				await reallocateFunds({
+					year_month: yearMonth,
+					from_category_id: selectedDonorId,
+					to_category_id: overspentCategory.id,
+					amount: parsedAmount,
+					reason: reasonInput.trim() || `Cover ${overspentCategory.name} overspend`
+				});
+			}
 			onSuccess();
 		} catch (err: any) {
 			errorMsg = err?.message || 'Failed to transfer funds.';
@@ -111,18 +141,14 @@
 						<label for="donor-select" class="block text-xs font-medium text-ink-secondary mb-1.5">
 							Move Money From
 						</label>
-						{#if selectableDonors.length === 0}
+						{#if pickerOptions.length === 0}
 							<p class="rounded-lg border border-status-warn/30 bg-status-warn-bg p-3 text-xs text-status-warn">
-								No categories currently have a positive available balance to donate from.
+								No Left to Budget funds or categories with a positive available balance to cover from.
 							</p>
 						{:else}
 							<CategorySearchPicker
 								id="donor-select"
-								categories={selectableDonors.map((d) => ({
-									id: d.id,
-									name: d.name,
-									subtitle: `$${d.available.toFixed(2)} available`
-								}))}
+								categories={pickerOptions}
 								bind:value={selectedDonorId}
 								ariaLabel="Move Money From"
 								collapsible={true}
@@ -146,18 +172,24 @@
 						/>
 					</div>
 
-					<div>
-						<label for="cover-reason" class="block text-xs font-medium text-ink-secondary mb-1.5">
-							Reason (optional)
-						</label>
-						<input
-							id="cover-reason"
-							type="text"
-							placeholder="e.g., Extra groceries for guests"
-							bind:value={reasonInput}
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-						/>
-					</div>
+					{#if selectedDonorId !== LEFT_TO_BUDGET_ID}
+						<div>
+							<label for="cover-reason" class="block text-xs font-medium text-ink-secondary mb-1.5">
+								Reason (optional)
+							</label>
+							<input
+								id="cover-reason"
+								type="text"
+								placeholder="e.g., Extra groceries for guests"
+								bind:value={reasonInput}
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
+							/>
+						</div>
+					{:else}
+						<p class="text-xs text-ink-secondary">
+							Allocates unbudgeted funds directly into {overspentCategory.name}'s monthly plan.
+						</p>
+					{/if}
 
 					{#if errorMsg}
 						<p class="text-xs text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-lg px-3 py-2">
@@ -175,7 +207,7 @@
 						</button>
 						<button
 							type="submit"
-							disabled={isSubmitting || selectableDonors.length === 0}
+							disabled={isSubmitting || pickerOptions.length === 0}
 							class="rounded-lg bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-primary-text hover:opacity-90 disabled:opacity-50 transition-opacity"
 						>
 							{isSubmitting ? 'Transferring...' : 'Cover Overspend'}
