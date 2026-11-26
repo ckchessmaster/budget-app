@@ -9,12 +9,13 @@ type AccountDTO struct {
 }
 
 type TransactionDTO struct {
-	ID          string `json:"id"`
-	AccountID   string `json:"account"`
-	Posted      int64  `json:"posted"`
-	Amount      string `json:"amount"`
-	Description string `json:"description"`
-	Pending     bool   `json:"pending"`
+	ID           string `json:"id"`
+	AccountID    string `json:"account"`
+	Posted       int64  `json:"posted"`
+	TransactedAt int64  `json:"transacted_at,omitempty"`
+	Amount       string `json:"amount"`
+	Description  string `json:"description"`
+	Pending      bool   `json:"pending"`
 }
 
 type DataResponse struct {

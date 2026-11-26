@@ -150,6 +150,8 @@ func (c *httpClient) FetchData(ctx context.Context, accessURL string, startDate 
 	if !startDate.IsZero() {
 		q.Set("start-date", strconv.FormatInt(startDate.Unix(), 10))
 	}
+	// SimpleFIN omits pending transactions unless pending=1 is explicitly requested.
+	q.Set("pending", "1")
 	cleanURL.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cleanURL.String(), nil)

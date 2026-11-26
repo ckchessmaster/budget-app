@@ -129,7 +129,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 		}
 		amt = amt.Round(2)
 
-		txDate := time.Unix(dto.Posted, 0).UTC()
+		txDate := transactionDate(dto)
 		status := "POSTED"
 		isCleared := true
 		if dto.Pending {
@@ -330,4 +330,16 @@ func reconcileSplitsOnSettle(
 		}
 	}
 	return nil
+}
+
+// transactionDate resolves the effective date for a SimpleFIN transaction.
+// SimpleFIN sets posted=0 for pending authorizations and may provide transacted_at instead.
+func transactionDate(dto simplefin.TransactionDTO) time.Time {
+	if dto.Posted > 0 {
+		return time.Unix(dto.Posted, 0).UTC()
+	}
+	if dto.TransactedAt > 0 {
+		return time.Unix(dto.TransactedAt, 0).UTC()
+	}
+	return time.Now().UTC()
 }
