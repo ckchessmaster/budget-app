@@ -12,25 +12,25 @@ import (
 )
 
 type CategoryBudgetView struct {
-	ID                    uuid.UUID        `json:"id"`
-	Name                  string           `json:"name"`
-	GroupName             string           `json:"group_name"`
-	RolloverMode          RolloverMode     `json:"rollover_mode"`
-	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
-	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
-	TargetAmount          *decimal.Decimal `json:"target_amount"`
-	TargetDate            *time.Time       `json:"target_date"`
+	ID                      uuid.UUID        `json:"id"`
+	Name                    string           `json:"name"`
+	GroupName               string           `json:"group_name"`
+	RolloverMode            RolloverMode     `json:"rollover_mode"`
+	SweepTargetCategoryID   *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID         *uuid.UUID       `json:"held_in_account_id"`
+	TargetAmount            *decimal.Decimal `json:"target_amount"`
+	TargetDate              *time.Time       `json:"target_date"`
 	TargetCadence           string           `json:"target_cadence"`
 	SortOrder               int              `json:"sort_order"`
 	BudgetAlertEnabled      bool             `json:"budget_alert_enabled"`
 	BudgetAlertThresholdPct int              `json:"budget_alert_threshold_pct"`
 	OriginalPlanned         decimal.Decimal  `json:"original_planned"`
-	CarryoverBalance      decimal.Decimal  `json:"carryover_balance"`
-	EffectiveTarget       decimal.Decimal  `json:"effective_target"`
-	SpentCleared          decimal.Decimal  `json:"spent_cleared"`
-	SpentPending          decimal.Decimal  `json:"spent_pending"`
-	Remaining             decimal.Decimal  `json:"remaining"`
-	Pacing                *PacingResult    `json:"pacing,omitempty"`
+	CarryoverBalance        decimal.Decimal  `json:"carryover_balance"`
+	EffectiveTarget         decimal.Decimal  `json:"effective_target"`
+	SpentCleared            decimal.Decimal  `json:"spent_cleared"`
+	SpentPending            decimal.Decimal  `json:"spent_pending"`
+	Remaining               decimal.Decimal  `json:"remaining"`
+	Pacing                  *PacingResult    `json:"pacing,omitempty"`
 }
 
 type MonthBudgetDetails struct {

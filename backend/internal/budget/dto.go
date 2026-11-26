@@ -9,15 +9,15 @@ import (
 )
 
 type CreateCategoryRequest struct {
-	Name                  string           `json:"name"`
-	GroupName             string           `json:"group_name"`
-	MonthlyBudget         decimal.Decimal  `json:"monthly_budget"`
-	RolloverMode          string           `json:"rollover_mode"`
-	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
-	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
-	TargetAmount          *decimal.Decimal `json:"target_amount"`
-	TargetDate            *string          `json:"target_date"`
-	TargetCadence         string           `json:"target_cadence"`
+	Name                    string           `json:"name"`
+	GroupName               string           `json:"group_name"`
+	MonthlyBudget           decimal.Decimal  `json:"monthly_budget"`
+	RolloverMode            string           `json:"rollover_mode"`
+	SweepTargetCategoryID   *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID         *uuid.UUID       `json:"held_in_account_id"`
+	TargetAmount            *decimal.Decimal `json:"target_amount"`
+	TargetDate              *string          `json:"target_date"`
+	TargetCadence           string           `json:"target_cadence"`
 	SortOrder               int              `json:"sort_order"`
 	StartingBalance         *decimal.Decimal `json:"starting_balance,omitempty"`
 	YearMonth               *string          `json:"year_month,omitempty"`
