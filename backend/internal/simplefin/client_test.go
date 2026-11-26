@@ -24,6 +24,10 @@ func TestSimpleFINClient(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			if got := r.URL.Query().Get("pending"); got != "1" {
+				http.Error(w, "missing pending=1 query parameter", http.StatusBadRequest)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(DataResponse{
 				Accounts: []AccountDTO{
 					{
