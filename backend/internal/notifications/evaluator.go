@@ -82,11 +82,21 @@ func (e *NotificationEvaluator) WithClock(nowFn func() time.Time) *NotificationE
 // ComputeBurnRatio computes spent / totalBudget and reports whether it meets or
 // exceeds SpendingVelocityThreshold (0.80).
 func ComputeBurnRatio(spent, totalBudget decimal.Decimal) (decimal.Decimal, bool) {
+	return ComputeBurnRatioForThreshold(spent, totalBudget, 80)
+}
+
+// ComputeBurnRatioForThreshold computes spent / totalBudget and reports whether it
+// meets or exceeds thresholdPct% (falling back to 80% when thresholdPct <= 0).
+func ComputeBurnRatioForThreshold(spent, totalBudget decimal.Decimal, thresholdPct int) (decimal.Decimal, bool) {
 	if !totalBudget.IsPositive() || !spent.IsPositive() {
 		return decimal.Zero, false
 	}
+	threshold := SpendingVelocityThreshold
+	if thresholdPct > 0 {
+		threshold = decimal.NewFromInt(int64(thresholdPct)).Div(decimal.NewFromInt(100))
+	}
 	ratio := spent.Div(totalBudget)
-	return ratio, spent.GreaterThanOrEqual(totalBudget.Mul(SpendingVelocityThreshold))
+	return ratio, spent.GreaterThanOrEqual(totalBudget.Mul(threshold))
 }
 
 // DaysUntilStatementDue calculates the number of days from today's UTC date until
@@ -120,9 +130,12 @@ func DaysUntilStatementDue(now time.Time, dueDay int) (int, bool) {
 func EvaluateSpendingVelocityCandidates(categories []budget.CategoryBudgetView) []SpendingAlertCandidate {
 	var candidates []SpendingAlertCandidate
 	for _, cat := range categories {
+		if !cat.BudgetAlertEnabled {
+			continue
+		}
 		totalBudget := cat.CarryoverBalance.Add(cat.EffectiveTarget).Round(2)
 		totalSpent := cat.SpentCleared.Add(cat.SpentPending).Round(2)
-		ratio, exceeded := ComputeBurnRatio(totalSpent, totalBudget)
+		ratio, exceeded := ComputeBurnRatioForThreshold(totalSpent, totalBudget, cat.BudgetAlertThresholdPct)
 		if !exceeded {
 			continue
 		}
@@ -279,6 +292,8 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			)
 			SELECT c.id,
 			       c.name,
+			       c.budget_alert_enabled,
+			       c.budget_alert_threshold_pct,
 			       COALESCE(mcb.original_planned, c.monthly_budget) AS original_planned,
 			       COALESCE(mcb.carryover_balance, 0) AS carryover_balance,
 			       COALESCE(cr.net_transfer, 0) AS net_transfer,
@@ -305,6 +320,8 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			if err := catRows.Scan(
 				&v.ID,
 				&v.Name,
+				&v.BudgetAlertEnabled,
+				&v.BudgetAlertThresholdPct,
 				&v.OriginalPlanned,
 				&v.CarryoverBalance,
 				&netTransfer,

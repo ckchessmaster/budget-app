@@ -41,8 +41,10 @@ type Category struct {
 	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
 	TargetAmount          *decimal.Decimal `json:"target_amount"`
 	TargetDate            *time.Time       `json:"target_date"`
-	TargetCadence         string           `json:"target_cadence"`
-	SortOrder             int              `json:"sort_order"`
+	TargetCadence           string           `json:"target_cadence"`
+	SortOrder               int              `json:"sort_order"`
+	BudgetAlertEnabled      bool             `json:"budget_alert_enabled"`
+	BudgetAlertThresholdPct int              `json:"budget_alert_threshold_pct"`
 }
 
 type MonthlyCategoryBudget struct {

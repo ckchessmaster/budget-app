@@ -152,17 +152,20 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		startYM = NormalizeYearMonth(time.Now().UTC())
 	}
 
+	alertEnabled, alertThresholdPct := resolveBudgetAlertConfig(req.BudgetAlertEnabled, req.BudgetAlertThresholdPct)
 	cat := &Category{
-		Name:                  req.Name,
-		GroupName:             req.GroupName,
-		MonthlyBudget:         req.MonthlyBudget,
-		RolloverMode:          RolloverMode(req.RolloverMode),
-		SweepTargetCategoryID: req.SweepTargetCategoryID,
-		HeldInAccountID:       req.HeldInAccountID,
-		TargetAmount:          req.TargetAmount,
-		TargetDate:            targetDate,
-		TargetCadence:         req.TargetCadence,
-		SortOrder:             req.SortOrder,
+		Name:                    req.Name,
+		GroupName:               req.GroupName,
+		MonthlyBudget:           req.MonthlyBudget,
+		RolloverMode:            RolloverMode(req.RolloverMode),
+		SweepTargetCategoryID:   req.SweepTargetCategoryID,
+		HeldInAccountID:         req.HeldInAccountID,
+		TargetAmount:            req.TargetAmount,
+		TargetDate:              targetDate,
+		TargetCadence:           req.TargetCadence,
+		SortOrder:               req.SortOrder,
+		BudgetAlertEnabled:      alertEnabled,
+		BudgetAlertThresholdPct: alertThresholdPct,
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {
@@ -280,18 +283,21 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		startYM = NormalizeYearMonth(time.Now().UTC())
 	}
 
+	alertEnabled, alertThresholdPct := resolveBudgetAlertConfig(req.BudgetAlertEnabled, req.BudgetAlertThresholdPct)
 	cat := &Category{
-		ID:                    catID,
-		Name:                  req.Name,
-		GroupName:             req.GroupName,
-		MonthlyBudget:         req.MonthlyBudget,
-		RolloverMode:          RolloverMode(req.RolloverMode),
-		SweepTargetCategoryID: req.SweepTargetCategoryID,
-		HeldInAccountID:       req.HeldInAccountID,
-		TargetAmount:          req.TargetAmount,
-		TargetDate:            targetDate,
-		TargetCadence:         req.TargetCadence,
-		SortOrder:             req.SortOrder,
+		ID:                      catID,
+		Name:                    req.Name,
+		GroupName:               req.GroupName,
+		MonthlyBudget:           req.MonthlyBudget,
+		RolloverMode:            RolloverMode(req.RolloverMode),
+		SweepTargetCategoryID:   req.SweepTargetCategoryID,
+		HeldInAccountID:         req.HeldInAccountID,
+		TargetAmount:            req.TargetAmount,
+		TargetDate:              targetDate,
+		TargetCadence:           req.TargetCadence,
+		SortOrder:               req.SortOrder,
+		BudgetAlertEnabled:      alertEnabled,
+		BudgetAlertThresholdPct: alertThresholdPct,
 	}
 
 	err = db.WithWorkspaceTx(r.Context(), h.pool, userID, func(tx pgx.Tx) error {

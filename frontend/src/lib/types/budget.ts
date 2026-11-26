@@ -18,6 +18,8 @@ export interface CategoryBudget {
 	targetDate: string | null;
 	targetCadence: TargetCadence;
 	sortOrder: number;
+	budgetAlertEnabled?: boolean;
+	budgetAlertThresholdPct?: number;
 	originalPlanned: number;
 	carryoverBalance?: number;
 	effectiveTarget: number;
@@ -65,6 +67,8 @@ export interface CreateCategoryPayload {
 	sort_order?: number;
 	starting_balance?: number;
 	year_month?: string;
+	budget_alert_enabled?: boolean;
+	budget_alert_threshold_pct?: number;
 }
 
 export interface ReallocatePayload {
