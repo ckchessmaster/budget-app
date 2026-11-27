@@ -92,6 +92,7 @@
 
 	let localDB = new BudgetLocalDB();
 	let loadSeq = 0;
+	let hasAutoFlushedOnBoot = false;
 
 	let budgetData = $state<MonthBudgetDetails | null>(null);
 	let transactions = $state<TransactionItemModel[]>([]);
@@ -161,10 +162,72 @@
 		}
 	});
 
+	function isNetworkError(err: unknown): boolean {
+		return (typeof navigator !== 'undefined' && !navigator.onLine) || err instanceof TypeError;
+	}
+
+	async function loadFromOfflineCache(month: string, seq: number) {
+		isOffline = true;
+		recommendations = [];
+		suggestionsByTxId = {};
+		const [cachedAccts, cachedCats, cachedSnapshot] = await Promise.all([
+			localDB.getCachedAccounts(),
+			localDB.getCachedCategories(),
+			localDB.getCachedBudgetSnapshot(month).catch(() => undefined)
+		]);
+		if (seq !== loadSeq) return;
+
+		accounts = cachedAccts.map((a) => ({
+			id: a.id,
+			name: a.name,
+			type: a.type as AccountItem['type'],
+			currentBalance: a.currentBalance,
+			isOnBudget: a.isOnBudget,
+			cardMode: (a.cardMode as AccountItem['cardMode']) ?? 'PAY_IN_FULL',
+			aprPercentage: 0,
+			externalAccountId: null,
+			initialDebtBaseline: 0,
+			statementDueDay: null,
+			debtPayoffCategoryId: null
+		}));
+
+		if (!budgetData && (cachedCats.length > 0 || cachedSnapshot)) {
+			const sortedCats = [...cachedCats].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+			budgetData = {
+				summary: cachedSnapshot?.summary ?? {
+					yearMonth: `${month}-01`,
+					totalIncomeExpected: 0,
+					totalAllocated: 0,
+					readyToAssign: 0,
+					totalSpentCleared: 0,
+					totalSpentPending: 0,
+					isUnbalanced: false
+				},
+				categories: sortedCats.map((c, idx) => ({
+					id: c.id,
+					name: c.name,
+					groupName: c.groupName,
+					rolloverMode: 'SWEEP',
+					sweepTargetCategoryId: null,
+					targetAmount: null,
+					targetDate: null,
+					targetCadence: 'NONE',
+					sortOrder: c.sortOrder ?? idx,
+					originalPlanned: c.originalPlanned ?? 0,
+					effectiveTarget: c.effectiveTarget ?? 0,
+					spentCleared: c.spentCleared ?? 0,
+					spentPending: c.spentPending ?? 0,
+					remaining: c.remaining
+				})),
+				incomes: cachedSnapshot?.incomes ?? []
+			};
+		}
+	}
+
 	async function loadWorkspace(month: string, silent = false) {
 		const seq = ++loadSeq;
 		await auth.ready();
-		if (!auth.isAuthenticated) {
+		if (!auth.isAuthenticated && !auth.canAccessOffline) {
 			void goto('/login');
 			return;
 		}
@@ -174,66 +237,25 @@
 		errorMsg = '';
 
 		try {
-			const pending = await localDB.getPendingQueue();
+			const workspaceId = demo.workspaceId || undefined;
+			let pending = await localDB.getPendingQueue(workspaceId);
 			if (seq !== loadSeq) return;
 			queuedTransactions = pending;
 
-			if (typeof navigator !== 'undefined' && !navigator.onLine) {
-				isOffline = true;
-				recommendations = [];
-				suggestionsByTxId = {};
-				const [cachedAccts, cachedCats] = await Promise.all([
-					localDB.getCachedAccounts(),
-					localDB.getCachedCategories()
-				]);
-				if (seq !== loadSeq) return;
-				accounts = cachedAccts.map((a) => ({
-					id: a.id,
-					name: a.name,
-					type: a.type as AccountItem['type'],
-					currentBalance: a.currentBalance,
-					isOnBudget: a.isOnBudget,
-					cardMode: (a.cardMode as AccountItem['cardMode']) ?? 'PAY_IN_FULL',
-					aprPercentage: 0,
-					externalAccountId: null,
-					initialDebtBaseline: 0,
-					statementDueDay: null,
-					debtPayoffCategoryId: null
-				}));
-				if (!budgetData && cachedCats.length > 0) {
-					budgetData = {
-						summary: {
-							yearMonth: `${month}-01`,
-							totalIncomeExpected: 0,
-							totalAllocated: 0,
-							readyToAssign: 0,
-							totalSpentCleared: 0,
-							totalSpentPending: 0,
-							isUnbalanced: false
-						},
-						categories: cachedCats.map((c, idx) => ({
-							id: c.id,
-							name: c.name,
-							groupName: c.groupName,
-							rolloverMode: 'SWEEP',
-							sweepTargetCategoryId: null,
-							targetAmount: null,
-							targetDate: null,
-							targetCadence: 'NONE',
-							sortOrder: idx,
-							originalPlanned: 0,
-							effectiveTarget: 0,
-							spentCleared: 0,
-							spentPending: 0,
-							remaining: c.remaining
-						})),
-						incomes: []
-					};
-				}
+			if ((typeof navigator !== 'undefined' && !navigator.onLine) || !auth.isAuthenticated) {
+				await loadFromOfflineCache(month, seq);
 				return;
 			}
 
 			isOffline = false;
+			if (!hasAutoFlushedOnBoot && pending.length > 0) {
+				hasAutoFlushedOnBoot = true;
+				await flushOfflineQueue(localDB, undefined, undefined, { workspaceId }).catch(() => null);
+				pending = await localDB.getPendingQueue(workspaceId);
+				if (seq !== loadSeq) return;
+				queuedTransactions = pending;
+			}
+
 			const [budgetRes, txRes, toReviewRes, acctsRes, solvRes, recsRes, sugRes] = await Promise.all([
 				fetchMonthBudget(month),
 				fetchTransactions({ month, limit: 200 }).catch(() => ({ items: [], total: 0 })),
@@ -278,12 +300,27 @@
 						id: c.id,
 						name: c.name,
 						groupName: c.groupName,
-						remaining: c.remaining
+						remaining: c.remaining,
+						originalPlanned: c.originalPlanned,
+						effectiveTarget: c.effectiveTarget,
+						spentCleared: c.spentCleared,
+						spentPending: c.spentPending,
+						sortOrder: c.sortOrder
 					}))
-				)
+				),
+				localDB.cacheBudgetSnapshot({
+					yearMonth: month,
+					summary: budgetRes.summary,
+					incomes: budgetRes.incomes,
+					updatedAt: Date.now()
+				})
 			]);
 		} catch (err: any) {
 			if (seq !== loadSeq) return;
+			if (isNetworkError(err)) {
+				await loadFromOfflineCache(month, seq);
+				return;
+			}
 			errorMsg = err?.message || 'Could not load budget workspace.';
 		} finally {
 			if (seq === loadSeq) {
@@ -294,16 +331,34 @@
 
 	$effect(() => {
 		const version = demo.dataVersion;
-		void loadWorkspace(currentMonth, version > 0);
+		const authed = auth.isAuthenticated;
+		if (authed || auth.canAccessOffline) {
+			void loadWorkspace(currentMonth, version > 0);
+		}
 	});
 
 	onMount(() => {
 		const stopListening = registerOnlineSyncListener(() => {
 			void loadWorkspace(currentMonth, true);
 		});
+		const onOnline = () => {
+			isOffline = false;
+			void (async () => {
+				if (!auth.isAuthenticated && auth.hasCachedSession) {
+					await auth.tryRestoreSession();
+				}
+				if (auth.isAuthenticated) {
+					await flushOfflineQueue(localDB, undefined, undefined, {
+						workspaceId: demo.workspaceId || undefined
+					}).catch(() => null);
+					await loadWorkspace(currentMonth, true);
+				}
+			})();
+		};
 		const onOffline = () => {
 			isOffline = true;
 		};
+		window.addEventListener('online', onOnline);
 		window.addEventListener('offline', onOffline);
 
 		const mql = window.matchMedia('(min-width: 1024px)');
@@ -342,6 +397,7 @@
 
 		return () => {
 			stopListening();
+			window.removeEventListener('online', onOnline);
 			window.removeEventListener('offline', onOffline);
 			mql.removeEventListener('change', onMediaChange);
 			removeDialogLightDismiss?.();
@@ -1021,6 +1077,15 @@
 	}
 
 	async function handleCategorizeTransaction(txId: string, categoryId: string | null) {
+		const queuedItem = queuedTransactions.find((q) => q.localId === txId);
+		if (queuedItem) {
+			await localDB.updateQueuedTransaction(txId, {
+				categoryId,
+				syncStatus: 'QUEUED'
+			});
+			queuedTransactions = await localDB.getPendingQueue(demo.workspaceId || undefined);
+			return;
+		}
 		await updateTransaction(
 			txId,
 			categoryId ? { categoryId } : { clearCategory: true }
@@ -1107,6 +1172,23 @@
 	}
 
 	async function handleUpdateTransaction(txId: string, payload: UpdateTransactionPayload) {
+		const queuedItem = queuedTransactions.find((q) => q.localId === txId);
+		if (queuedItem) {
+			const patch: Parameters<BudgetLocalDB['updateQueuedTransaction']>[1] = {
+				syncStatus: 'QUEUED'
+			};
+			if (payload.merchantClean !== undefined) patch.merchantRaw = payload.merchantClean;
+			if (payload.userNotes !== undefined) patch.userNotes = payload.userNotes;
+			if (payload.amount !== undefined) patch.amount = payload.amount;
+			if (payload.clearCategory) {
+				patch.categoryId = null;
+			} else if (payload.categoryId !== undefined) {
+				patch.categoryId = payload.categoryId;
+			}
+			await localDB.updateQueuedTransaction(txId, patch);
+			queuedTransactions = await localDB.getPendingQueue(demo.workspaceId || undefined);
+			return;
+		}
 		await updateTransaction(txId, payload);
 		await loadWorkspace(currentMonth, true);
 	}
@@ -1155,6 +1237,52 @@
 		isRuleModalOpen = true;
 	}
 
+	async function queueTransactionLocally(payload: {
+		accountId: string;
+		amount: number;
+		merchantRaw: string;
+		categoryId: string | null;
+		transactionDate: string;
+	}) {
+		const offlineTx: OfflineTransaction = {
+			localId: `offline-${crypto.randomUUID()}`,
+			workspaceId: demo.workspaceId || undefined,
+			accountId: payload.accountId,
+			amount: payload.amount,
+			merchantRaw: payload.merchantRaw,
+			categoryId: payload.categoryId,
+			transactionDate: payload.transactionDate,
+			syncStatus: 'QUEUED',
+			createdAt: Date.now()
+		};
+		await localDB.queueTransaction(offlineTx);
+		if (payload.categoryId && budgetData) {
+			budgetData = {
+				...budgetData,
+				categories: budgetData.categories.map((c) =>
+					c.id === payload.categoryId
+						? { ...c, remaining: c.remaining + payload.amount }
+						: c
+				)
+			};
+			await localDB.cacheCategories(
+				budgetData.categories.map((c) => ({
+					id: c.id,
+					name: c.name,
+					groupName: c.groupName,
+					remaining: c.remaining,
+					originalPlanned: c.originalPlanned,
+					effectiveTarget: c.effectiveTarget,
+					spentCleared: c.spentCleared,
+					spentPending: c.spentPending,
+					sortOrder: c.sortOrder
+				}))
+			);
+		}
+		await requestBackgroundSync();
+		queuedTransactions = await localDB.getPendingQueue(demo.workspaceId || undefined);
+	}
+
 	async function handleCreateTransaction(payload: {
 		accountId: string;
 		amount: number;
@@ -1162,52 +1290,40 @@
 		categoryId: string | null;
 		transactionDate: string;
 	}) {
-		if (typeof navigator !== 'undefined' && !navigator.onLine) {
-			const offlineTx: OfflineTransaction = {
-				localId: `offline-${crypto.randomUUID()}`,
-				accountId: payload.accountId,
-				amount: payload.amount,
-				merchantRaw: payload.merchantRaw,
-				categoryId: payload.categoryId,
-				transactionDate: payload.transactionDate,
-				syncStatus: 'QUEUED',
-				createdAt: Date.now()
-			};
-			await localDB.queueTransaction(offlineTx);
-			if (payload.categoryId && budgetData) {
-				budgetData = {
-					...budgetData,
-					categories: budgetData.categories.map((c) =>
-						c.id === payload.categoryId
-							? { ...c, remaining: c.remaining + payload.amount }
-							: c
-					)
-				};
-				await localDB.cacheCategories(
-					budgetData.categories.map((c) => ({
-						id: c.id,
-						name: c.name,
-						groupName: c.groupName,
-						remaining: c.remaining
-					}))
-				);
-			}
-			await requestBackgroundSync();
-			queuedTransactions = await localDB.getPendingQueue();
+		if ((typeof navigator !== 'undefined' && !navigator.onLine) || !auth.isAuthenticated) {
+			await queueTransactionLocally(payload);
 			return;
 		}
 
-		await createTransaction({
-			accountId: payload.accountId,
-			totalAmount: payload.amount,
-			merchantRaw: payload.merchantRaw,
-			categoryId: payload.categoryId,
-			transactionDate: payload.transactionDate
-		});
+		try {
+			await createTransaction({
+				accountId: payload.accountId,
+				totalAmount: payload.amount,
+				merchantRaw: payload.merchantRaw,
+				categoryId: payload.categoryId,
+				transactionDate: payload.transactionDate
+			});
+		} catch (err) {
+			if (isNetworkError(err)) {
+				isOffline = true;
+				await queueTransactionLocally(payload);
+				return;
+			}
+			throw err;
+		}
 		await loadWorkspace(currentMonth, true);
 	}
 
 	async function handleDeleteTransaction(txId: string) {
+		const queuedItem = queuedTransactions.find((q) => q.localId === txId);
+		if (queuedItem) {
+			await localDB.deleteQueuedTransaction(txId);
+			queuedTransactions = await localDB.getPendingQueue(demo.workspaceId || undefined);
+			if (selectedTransactionId === txId) {
+				selectedTransactionId = null;
+			}
+			return;
+		}
 		await deleteTransaction(txId);
 		await loadWorkspace(currentMonth, true);
 	}
@@ -1215,7 +1331,9 @@
 	async function handleSyncNow() {
 		syncing = true;
 		try {
-			const flushed = await flushOfflineQueue(localDB);
+			const flushed = await flushOfflineQueue(localDB, undefined, undefined, {
+				workspaceId: demo.workspaceId || undefined
+			});
 			if (typeof navigator === 'undefined' || navigator.onLine) {
 				await demo.triggerSyncAndPoll();
 			}

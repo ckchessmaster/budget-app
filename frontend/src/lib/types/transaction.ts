@@ -42,6 +42,7 @@ export interface TransactionItemModel {
 	needsReview?: boolean;
 	reviewIgnored?: boolean;
 	syncStatus?: 'QUEUED' | 'SYNCING' | 'FAILED';
+	lastError?: string | null;
 	settledDelta?: number | null;
 	splits?: TransactionSplit[];
 }

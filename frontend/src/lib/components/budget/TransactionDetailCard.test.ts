@@ -317,4 +317,49 @@ describe('TransactionDetailCard', () => {
 			expect(onUpdateTransaction).toHaveBeenCalledWith('tx-100', { reviewIgnored: true })
 		);
 	});
+
+	it('allows editing and deleting failed offline queued transactions and displays sync error', async () => {
+		const onUpdateTransaction = vi.fn().mockResolvedValue(undefined);
+		const onDeleteTransaction = vi.fn().mockResolvedValue(undefined);
+		const onClose = vi.fn();
+
+		const { getByTestId, getByLabelText, getByText } = render(TransactionDetailCard, {
+			props: {
+				transaction: {
+					...transaction,
+					id: 'offline-123',
+					origin: 'MANUAL_OFFLINE',
+					status: 'PENDING',
+					merchantClean: null,
+					syncStatus: 'FAILED',
+					lastError: 'unknown_account'
+				},
+				account,
+				categories,
+				onClose,
+				onUpdateTransaction,
+				onDeleteTransaction
+			}
+		});
+
+		expect(getByTestId('tx-detail-sync-error').textContent).toContain('unknown_account');
+
+		await fireEvent.input(getByLabelText('Merchant'), { target: { value: 'Local Market' } });
+		await fireEvent.click(getByText('Save Changes'));
+		await waitFor(() =>
+			expect(onUpdateTransaction).toHaveBeenCalledWith('offline-123', {
+				merchantClean: 'Local Market',
+				userNotes: 'Weekly groceries',
+				categoryId: 'cat-1',
+				clearPlannedIncome: true
+			})
+		);
+
+		await fireEvent.click(getByTestId('tx-detail-delete-btn'));
+		await fireEvent.click(getByTestId('tx-detail-confirm-delete'));
+		await waitFor(() => {
+			expect(onDeleteTransaction).toHaveBeenCalledWith('offline-123');
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+	});
 });

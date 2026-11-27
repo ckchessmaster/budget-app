@@ -97,9 +97,14 @@ export class DemoStore {
 
 	async toggleDemo(enabled: boolean): Promise<void> {
 		this.loading = true;
+		const prevWorkspaceId = this.workspaceId;
 		try {
 			const s = await toggleDemoMode(enabled);
-			await new BudgetLocalDB().clearCaches().catch(() => {});
+			const localDB = new BudgetLocalDB();
+			await localDB.clearCaches().catch(() => {});
+			if (prevWorkspaceId && typeof localDB.clearQueuedForWorkspace === 'function') {
+				await localDB.clearQueuedForWorkspace(prevWorkspaceId).catch(() => {});
+			}
 			this.applySettings(s);
 			this.syncStatus = 'idle';
 			this.syncMessage = '';
@@ -119,9 +124,14 @@ export class DemoStore {
 
 	async resetDemo(): Promise<void> {
 		this.loading = true;
+		const prevWorkspaceId = this.workspaceId;
 		try {
 			const s = await resetDemoMode();
-			await new BudgetLocalDB().clearCaches().catch(() => {});
+			const localDB = new BudgetLocalDB();
+			await localDB.clearCaches().catch(() => {});
+			if (prevWorkspaceId && typeof localDB.clearQueuedForWorkspace === 'function') {
+				await localDB.clearQueuedForWorkspace(prevWorkspaceId).catch(() => {});
+			}
 			this.applySettings(s);
 			this.syncStatus = 'idle';
 			this.syncMessage = 'Demo sandbox reset to initial snapshot.';

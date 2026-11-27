@@ -15,6 +15,7 @@ const DEFAULT_POLL_TIMEOUT_MS = 60_000;
 export interface SyncFlushOptions {
 	pollIntervalMs?: number;
 	pollTimeoutMs?: number;
+	workspaceId?: string;
 }
 
 export interface ReplayRejection {
@@ -81,13 +82,18 @@ export async function flushOfflineQueue(
 	token?: string | null,
 	options: SyncFlushOptions = {}
 ): Promise<SyncFlushResult> {
-	const pending = await db.getPendingQueue();
+	const pending = await db.getPendingQueue(options.workspaceId);
 	if (pending.length === 0) {
 		return emptyResult();
 	}
 
 	const baseUrl = apiBaseUrl ?? getAppConfig().apiBaseUrl;
 	const authToken = token !== undefined ? token : await auth.getValidToken();
+	if (token === undefined && !authToken) {
+		// Session is unavailable (e.g. offline or awaiting re-authentication). Keep the queue
+		// untouched rather than firing an unauthenticated request that marks every item FAILED.
+		return { ...emptyResult(), queuedCount: pending.length };
+	}
 
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
@@ -118,15 +124,18 @@ export async function flushOfflineQueue(
 			})
 		});
 	} catch (err) {
+		// Network failures (offline / lie-fi) are transient: keep items QUEUED for automatic retry.
 		for (const item of pending) {
-			await db.updateSyncStatus(item.localId, 'FAILED');
+			await db.updateSyncStatus(item.localId, 'QUEUED');
 		}
 		throw err;
 	}
 
 	if (res.status !== 202) {
+		const isTransientEdgeFailure =
+			res.status === 401 || res.status === 429 || res.status >= 500;
 		for (const item of pending) {
-			await db.updateSyncStatus(item.localId, 'FAILED');
+			await db.updateSyncStatus(item.localId, isTransientEdgeFailure ? 'QUEUED' : 'FAILED');
 		}
 		throw new Error(`Offline sync failed (${res.status})`);
 	}
@@ -178,7 +187,14 @@ export async function flushOfflineQueue(
 
 		const rejection = rejected.get(item.localId);
 		if (rejection && rejection.retryable === false) {
-			await db.updateSyncStatus(item.localId, 'FAILED');
+			if (typeof db.updateQueuedTransaction === 'function') {
+				await db.updateQueuedTransaction(item.localId, {
+					syncStatus: 'FAILED',
+					lastError: rejection.message ?? rejection.reason ?? 'rejected'
+				});
+			} else {
+				await db.updateSyncStatus(item.localId, 'FAILED');
+			}
 			failedCount++;
 			rejections.push({
 				localId: item.localId,

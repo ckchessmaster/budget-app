@@ -265,4 +265,55 @@ describe('AuthStore session lifecycle', () => {
 			window.history.pushState({}, '', '/');
 		}
 	});
+
+	it('renews an expired stored session on boot when online', async () => {
+		mockGetUser.mockResolvedValue(session(LIVE_TOKEN, -1));
+		mockSigninSilent.mockResolvedValue(session(RENEWED_TOKEN, 3600));
+
+		const store = await readyStore();
+
+		expect(mockSigninSilent).toHaveBeenCalledWith({ prompt: 'none' });
+		expect(store.isAuthenticated).toBe(true);
+		expect(store.token).toBe(RENEWED_TOKEN);
+		expect(store.hasCachedSession).toBe(true);
+		expect(store.sessionExpired).toBe(false);
+	});
+
+	it('allows offline access with a cached session without calling signinSilent and restores when back online', async () => {
+		mockGetUser.mockResolvedValue(session(LIVE_TOKEN, -1));
+		mockSigninSilent.mockResolvedValue(session(RENEWED_TOKEN, 3600));
+
+		const onLineSpy = vi.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
+		try {
+			const store = await readyStore();
+
+			expect(mockSigninSilent).not.toHaveBeenCalled();
+			expect(store.isAuthenticated).toBe(false);
+			expect(store.hasCachedSession).toBe(true);
+			expect(store.cachedUser?.email).toBe('dev@example.com');
+			expect(store.canAccessOffline).toBe(true);
+			expect(store.sessionExpired).toBe(true);
+
+			onLineSpy.mockReturnValue(true);
+			const restored = await store.tryRestoreSession();
+			expect(restored).toBe(true);
+			expect(store.isAuthenticated).toBe(true);
+			expect(store.token).toBe(RENEWED_TOKEN);
+			expect(store.sessionExpired).toBe(false);
+		} finally {
+			onLineSpy.mockRestore();
+		}
+	});
+
+	it('clears cached session metadata on explicit logout', async () => {
+		mockGetUser.mockResolvedValue(session(LIVE_TOKEN, 3600));
+
+		const store = await readyStore();
+		expect(store.hasCachedSession).toBe(true);
+
+		await store.logout();
+		expect(store.hasCachedSession).toBe(false);
+		expect(store.cachedUser).toBeNull();
+		expect(store.canAccessOffline).toBe(false);
+	});
 });

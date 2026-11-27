@@ -66,11 +66,11 @@
 	let splitError = $state<string | null>(null);
 
 	let isQueued = $derived(
-		transaction.origin === 'MANUAL_OFFLINE' && transaction.syncStatus === 'QUEUED'
+		transaction.origin === 'MANUAL_OFFLINE' && Boolean(transaction.syncStatus)
 	);
 	let hasSplits = $derived(Boolean(transaction.splits && transaction.splits.length > 0));
 	let isOffBudget = $derived(account ? !account.isOnBudget : false);
-	let canCategorize = $derived(!isQueued && !transaction.isTransfer && !isOffBudget && !hasSplits);
+	let canCategorize = $derived(!transaction.isTransfer && !isOffBudget && !hasSplits);
 	let canSplit = $derived(
 		!isQueued && !transaction.isTransfer && !isOffBudget && transaction.amount !== 0
 	);
@@ -518,7 +518,7 @@
 					</span>
 				{/if}
 
-				{#if transaction.needsReview}
+				{#if transaction.needsReview && !isQueued}
 					<span class="inline-flex items-center rounded-full bg-status-warn-bg text-status-warn px-2 py-0.5 text-[11px] font-medium">
 						Needs review
 					</span>
@@ -535,6 +535,14 @@
 					{/if}
 				{/if}
 			</div>
+			{#if isQueued && transaction.syncStatus === 'FAILED'}
+				<p
+					data-testid="tx-detail-sync-error"
+					class="text-xs text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-lg px-3 py-2"
+				>
+					Sync failed{transaction.lastError ? `: ${transaction.lastError}` : ''}. Edit or delete this queued item, then retry sync.
+				</p>
+			{/if}
 		</div>
 
 		<!-- Metadata -->
@@ -756,7 +764,7 @@
 		{/if}
 
 		<!-- Edit / Delete Controls -->
-		{#if !isQueued && (onUpdateTransaction || onDeleteTransaction)}
+		{#if onUpdateTransaction || onDeleteTransaction}
 			{#if onUpdateTransaction}
 				<form onsubmit={handleSave} data-testid="tx-detail-edit-form" class="space-y-3 rounded-xl border border-border bg-subtle/40 p-3.5">
 					<p class="text-xs font-semibold text-ink-primary">Edit Details</p>
@@ -915,38 +923,40 @@
 						</div>
 					{/if}
 
-					<div>
-						<div class="flex items-center justify-between mb-1">
-							<label for="tx-detail-budget-month" class="block text-[11px] font-medium text-ink-secondary">
-								Budget Month
-							</label>
+					{#if !isQueued}
+						<div>
+							<div class="flex items-center justify-between mb-1">
+								<label for="tx-detail-budget-month" class="block text-[11px] font-medium text-ink-secondary">
+									Budget Month
+								</label>
+								{#if editBudgetMonth && editBudgetMonth !== transaction.transactionDate.slice(0, 7)}
+									<button
+										type="button"
+										data-testid="tx-detail-reset-budget-month"
+										onclick={() => (editBudgetMonth = transaction.transactionDate.slice(0, 7))}
+										class="text-[10px] font-medium text-accent-pop hover:underline"
+									>
+										Reset to tx date ({transaction.transactionDate.slice(0, 7)})
+									</button>
+								{/if}
+							</div>
+							<input
+								id="tx-detail-budget-month"
+								data-testid="tx-detail-budget-month"
+								type="month"
+								bind:value={editBudgetMonth}
+								class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
+							/>
 							{#if editBudgetMonth && editBudgetMonth !== transaction.transactionDate.slice(0, 7)}
-								<button
-									type="button"
-									data-testid="tx-detail-reset-budget-month"
-									onclick={() => (editBudgetMonth = transaction.transactionDate.slice(0, 7))}
-									class="text-[10px] font-medium text-accent-pop hover:underline"
+								<div
+									data-testid="tx-detail-budget-month-warning"
+									class="mt-1.5 rounded-lg border border-status-warn/40 bg-status-warn-bg px-2.5 py-1.5 text-[11px] text-status-warn"
 								>
-									Reset to tx date ({transaction.transactionDate.slice(0, 7)})
-								</button>
+									Date mismatch: transaction date is {formatDate(transaction.transactionDate)}, but it will count toward the <strong>{editBudgetMonth}</strong> budget.
+								</div>
 							{/if}
 						</div>
-						<input
-							id="tx-detail-budget-month"
-							data-testid="tx-detail-budget-month"
-							type="month"
-							bind:value={editBudgetMonth}
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary focus:border-accent-pop focus:outline-none"
-						/>
-						{#if editBudgetMonth && editBudgetMonth !== transaction.transactionDate.slice(0, 7)}
-							<div
-								data-testid="tx-detail-budget-month-warning"
-								class="mt-1.5 rounded-lg border border-status-warn/40 bg-status-warn-bg px-2.5 py-1.5 text-[11px] text-status-warn"
-							>
-								Date mismatch: transaction date is {formatDate(transaction.transactionDate)}, but it will count toward the <strong>{editBudgetMonth}</strong> budget.
-							</div>
-						{/if}
-					</div>
+					{/if}
 
 					<div>
 						<label for="tx-detail-notes" class="block text-[11px] font-medium text-ink-secondary mb-1">
