@@ -43,6 +43,8 @@ function mapCategory(raw: any): CategoryBudget {
 		targetDate: raw.target_date ? String(raw.target_date).slice(0, 10) : null,
 		targetCadence: raw.target_cadence ?? 'NONE',
 		sortOrder: raw.sort_order ?? 0,
+		budgetAlertEnabled: raw.budget_alert_enabled ?? true,
+		budgetAlertThresholdPct: raw.budget_alert_threshold_pct ?? 80,
 		originalPlanned: num(raw.original_planned),
 		carryoverBalance: num(raw.carryover_balance),
 		effectiveTarget: num(raw.effective_target),

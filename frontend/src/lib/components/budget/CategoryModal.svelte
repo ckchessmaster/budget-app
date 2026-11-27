@@ -45,6 +45,8 @@
 	let targetDate = $state('');
 	let dueDay = $state('');
 	let startingBalance = $state('');
+	let budgetAlertEnabled = $state(true);
+	let budgetAlertThresholdPct = $state('80');
 	let isSubmitting = $state(false);
 	let errorMsg = $state('');
 
@@ -76,6 +78,8 @@
 					editingCategory.carryoverBalance != null
 						? editingCategory.carryoverBalance.toFixed(2)
 						: '0.00';
+				budgetAlertEnabled = editingCategory.budgetAlertEnabled ?? true;
+				budgetAlertThresholdPct = String(editingCategory.budgetAlertThresholdPct ?? 80);
 			} else {
 				name = '';
 				groupName = defaultGroupName?.trim() || 'Essentials';
@@ -89,6 +93,8 @@
 				targetDate = '';
 				dueDay = '';
 				startingBalance = '';
+				budgetAlertEnabled = true;
+				budgetAlertThresholdPct = '80';
 			}
 			errorMsg = '';
 		}
@@ -147,6 +153,13 @@
 			monthlyDueDate = `2000-01-${String(parsedDay).padStart(2, '0')}`;
 		}
 
+		const parsedThreshold = Number(budgetAlertThresholdPct);
+		if (!Number.isInteger(parsedThreshold) || parsedThreshold < 1 || parsedThreshold > 200) {
+			errorMsg = 'Budget alert threshold must be a whole percentage between 1 and 200.';
+			isSubmitting = false;
+			return;
+		}
+
 		const payload = {
 			name: name.trim(),
 			group_name: groupName.trim(),
@@ -160,6 +173,8 @@
 			target_amount: itemKind === 'FUND' && targetAmount ? Number(targetAmount) : null,
 			target_date: itemKind === 'FUND' ? (targetDate ? targetDate : null) : monthlyDueDate,
 			sort_order: nextSortOrder,
+			budget_alert_enabled: budgetAlertEnabled,
+			budget_alert_threshold_pct: parsedThreshold,
 			...(itemKind === 'FUND' && parsedStarting !== null
 				? {
 						starting_balance: Math.round(parsedStarting * 100) / 100,
@@ -471,6 +486,46 @@
 						</span>
 					</label>
 				{/if}
+
+				<div class="rounded-lg border border-border bg-subtle px-3 py-2.5 space-y-2">
+					<div class="flex items-center justify-between gap-3">
+						<label for="cat-alert-enabled" class="flex items-center gap-2 cursor-pointer">
+							<input
+								id="cat-alert-enabled"
+								type="checkbox"
+								bind:checked={budgetAlertEnabled}
+								class="rounded border-border bg-canvas accent-accent-pop"
+							/>
+							<span class="text-xs font-medium text-ink-primary">
+								Budget limit notifications
+							</span>
+						</label>
+						{#if budgetAlertEnabled}
+							<div class="flex items-center gap-1.5">
+								<label for="cat-alert-threshold" class="text-[11px] text-ink-secondary">
+									Notify at
+								</label>
+								<input
+									id="cat-alert-threshold"
+									type="number"
+									min="1"
+									max="200"
+									step="1"
+									bind:value={budgetAlertThresholdPct}
+									class="w-16 rounded-md border border-border bg-canvas px-2 py-1 text-xs text-ink-primary text-right focus:border-accent-pop focus:outline-none"
+								/>
+								<span class="text-[11px] text-ink-secondary">%</span>
+							</div>
+						{/if}
+					</div>
+					<p class="text-[11px] text-ink-muted">
+						{#if budgetAlertEnabled}
+							Send a push alert when spending reaches {budgetAlertThresholdPct || '80'}% of this category's budget.
+						{:else}
+							Push alerts for spending limits are disabled for this category.
+						{/if}
+					</p>
+				</div>
 
 				{#if errorMsg}
 					<p class="text-xs text-status-danger bg-status-danger-bg border border-status-danger/30 rounded-lg px-3 py-2">

@@ -40,6 +40,9 @@ func sanitizeCategory(c *Category) error {
 	if c.TargetCadence == "" {
 		c.TargetCadence = "NONE"
 	}
+	if c.BudgetAlertThresholdPct <= 0 {
+		c.BudgetAlertThresholdPct = 80
+	}
 	return nil
 }
 
@@ -62,13 +65,15 @@ func (r *pgCategoryRepo) Create(ctx context.Context, tx pgx.Tx, c *Category) err
 		INSERT INTO categories (
 			id, workspace_id, name, group_name, monthly_budget,
 			rollover_mode, sweep_target_category_id, held_in_account_id, target_amount,
-			target_date, target_cadence, sort_order
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			target_date, target_cadence, sort_order,
+			budget_alert_enabled, budget_alert_threshold_pct
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`,
 		c.ID, c.WorkspaceID, c.Name, c.GroupName, c.MonthlyBudget,
 		string(c.RolloverMode), c.SweepTargetCategoryID, c.HeldInAccountID, c.TargetAmount,
 		c.TargetDate, c.TargetCadence, c.SortOrder,
+		c.BudgetAlertEnabled, c.BudgetAlertThresholdPct,
 	).Scan(&c.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create category: %w", err)
@@ -86,13 +91,15 @@ func (r *pgCategoryRepo) GetByID(ctx context.Context, tx pgx.Tx, id uuid.UUID) (
 	err = tx.QueryRow(ctx, `
 		SELECT id, workspace_id, name, group_name, monthly_budget,
 		       rollover_mode, sweep_target_category_id, held_in_account_id, target_amount,
-		       target_date, target_cadence, sort_order
+		       target_date, target_cadence, sort_order,
+		       budget_alert_enabled, budget_alert_threshold_pct
 		FROM categories
 		WHERE id = $1 AND workspace_id = $2
 	`, id, wsID).Scan(
 		&c.ID, &c.WorkspaceID, &c.Name, &c.GroupName, &c.MonthlyBudget,
 		&rolloverMode, &c.SweepTargetCategoryID, &c.HeldInAccountID, &c.TargetAmount,
 		&c.TargetDate, &c.TargetCadence, &c.SortOrder,
+		&c.BudgetAlertEnabled, &c.BudgetAlertThresholdPct,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -112,7 +119,8 @@ func (r *pgCategoryRepo) ListByWorkspace(ctx context.Context, tx pgx.Tx) ([]Cate
 	rows, err := tx.Query(ctx, `
 		SELECT id, workspace_id, name, group_name, monthly_budget,
 		       rollover_mode, sweep_target_category_id, held_in_account_id, target_amount,
-		       target_date, target_cadence, sort_order
+		       target_date, target_cadence, sort_order,
+		       budget_alert_enabled, budget_alert_threshold_pct
 		FROM categories
 		WHERE workspace_id = $1
 		ORDER BY sort_order ASC, group_name ASC, name ASC
@@ -130,6 +138,7 @@ func (r *pgCategoryRepo) ListByWorkspace(ctx context.Context, tx pgx.Tx) ([]Cate
 			&c.ID, &c.WorkspaceID, &c.Name, &c.GroupName, &c.MonthlyBudget,
 			&rolloverMode, &c.SweepTargetCategoryID, &c.HeldInAccountID, &c.TargetAmount,
 			&c.TargetDate, &c.TargetCadence, &c.SortOrder,
+			&c.BudgetAlertEnabled, &c.BudgetAlertThresholdPct,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan category: %w", err)
 		}
@@ -162,12 +171,15 @@ func (r *pgCategoryRepo) Update(ctx context.Context, tx pgx.Tx, c *Category) err
 		    target_amount = $9,
 		    target_date = $10,
 		    target_cadence = $11,
-		    sort_order = $12
+		    sort_order = $12,
+		    budget_alert_enabled = $13,
+		    budget_alert_threshold_pct = $14
 		WHERE id = $1 AND workspace_id = $2
 	`,
 		c.ID, wsID, c.Name, c.GroupName, c.MonthlyBudget,
 		string(c.RolloverMode), c.SweepTargetCategoryID, c.HeldInAccountID, c.TargetAmount,
 		c.TargetDate, c.TargetCadence, c.SortOrder,
+		c.BudgetAlertEnabled, c.BudgetAlertThresholdPct,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update category: %w", err)

@@ -9,21 +9,23 @@ import (
 )
 
 type CreateCategoryRequest struct {
-	Name                  string           `json:"name"`
-	GroupName             string           `json:"group_name"`
-	MonthlyBudget         decimal.Decimal  `json:"monthly_budget"`
-	RolloverMode          string           `json:"rollover_mode"`
-	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
-	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
-	TargetAmount          *decimal.Decimal `json:"target_amount"`
-	TargetDate            *string          `json:"target_date"`
-	TargetCadence         string           `json:"target_cadence"`
-	SortOrder             int              `json:"sort_order"`
-	StartingBalance       *decimal.Decimal `json:"starting_balance,omitempty"`
-	YearMonth             *string          `json:"year_month,omitempty"`
+	Name                    string           `json:"name"`
+	GroupName               string           `json:"group_name"`
+	MonthlyBudget           decimal.Decimal  `json:"monthly_budget"`
+	RolloverMode            string           `json:"rollover_mode"`
+	SweepTargetCategoryID   *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID         *uuid.UUID       `json:"held_in_account_id"`
+	TargetAmount            *decimal.Decimal `json:"target_amount"`
+	TargetDate              *string          `json:"target_date"`
+	TargetCadence           string           `json:"target_cadence"`
+	SortOrder               int              `json:"sort_order"`
+	StartingBalance         *decimal.Decimal `json:"starting_balance,omitempty"`
+	YearMonth               *string          `json:"year_month,omitempty"`
+	BudgetAlertEnabled      *bool            `json:"budget_alert_enabled,omitempty"`
+	BudgetAlertThresholdPct *int             `json:"budget_alert_threshold_pct,omitempty"`
 }
 
-func validateCategoryFields(name, groupName string, monthlyBudget decimal.Decimal, rolloverMode, targetCadence string) error {
+func validateCategoryFields(name, groupName string, monthlyBudget decimal.Decimal, rolloverMode, targetCadence string, alertThresholdPct *int) error {
 	name = strings.TrimSpace(name)
 	if len(name) < 1 || len(name) > 100 {
 		return fmt.Errorf("name must be between 1 and 100 characters")
@@ -45,6 +47,9 @@ func validateCategoryFields(name, groupName string, monthlyBudget decimal.Decima
 	default:
 		return fmt.Errorf("target_cadence must be one of NONE, MONTHLY, ANNUAL, TARGET_DATE")
 	}
+	if alertThresholdPct != nil && (*alertThresholdPct < 1 || *alertThresholdPct > 200) {
+		return fmt.Errorf("budget_alert_threshold_pct must be between 1 and 200")
+	}
 	return nil
 }
 
@@ -52,29 +57,43 @@ func (r *CreateCategoryRequest) Validate() error {
 	if r.TargetCadence == "" {
 		r.TargetCadence = "NONE"
 	}
-	return validateCategoryFields(r.Name, r.GroupName, r.MonthlyBudget, r.RolloverMode, r.TargetCadence)
+	return validateCategoryFields(r.Name, r.GroupName, r.MonthlyBudget, r.RolloverMode, r.TargetCadence, r.BudgetAlertThresholdPct)
 }
 
 type UpdateCategoryRequest struct {
-	Name                  string           `json:"name"`
-	GroupName             string           `json:"group_name"`
-	MonthlyBudget         decimal.Decimal  `json:"monthly_budget"`
-	RolloverMode          string           `json:"rollover_mode"`
-	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
-	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
-	TargetAmount          *decimal.Decimal `json:"target_amount"`
-	TargetDate            *string          `json:"target_date"`
-	TargetCadence         string           `json:"target_cadence"`
-	SortOrder             int              `json:"sort_order"`
-	StartingBalance       *decimal.Decimal `json:"starting_balance,omitempty"`
-	YearMonth             *string          `json:"year_month,omitempty"`
+	Name                    string           `json:"name"`
+	GroupName               string           `json:"group_name"`
+	MonthlyBudget           decimal.Decimal  `json:"monthly_budget"`
+	RolloverMode            string           `json:"rollover_mode"`
+	SweepTargetCategoryID   *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID         *uuid.UUID       `json:"held_in_account_id"`
+	TargetAmount            *decimal.Decimal `json:"target_amount"`
+	TargetDate              *string          `json:"target_date"`
+	TargetCadence           string           `json:"target_cadence"`
+	SortOrder               int              `json:"sort_order"`
+	StartingBalance         *decimal.Decimal `json:"starting_balance,omitempty"`
+	YearMonth               *string          `json:"year_month,omitempty"`
+	BudgetAlertEnabled      *bool            `json:"budget_alert_enabled,omitempty"`
+	BudgetAlertThresholdPct *int             `json:"budget_alert_threshold_pct,omitempty"`
 }
 
 func (r *UpdateCategoryRequest) Validate() error {
 	if r.TargetCadence == "" {
 		r.TargetCadence = "NONE"
 	}
-	return validateCategoryFields(r.Name, r.GroupName, r.MonthlyBudget, r.RolloverMode, r.TargetCadence)
+	return validateCategoryFields(r.Name, r.GroupName, r.MonthlyBudget, r.RolloverMode, r.TargetCadence, r.BudgetAlertThresholdPct)
+}
+
+func resolveBudgetAlertConfig(enabled *bool, thresholdPct *int) (bool, int) {
+	isEnabled := true
+	if enabled != nil {
+		isEnabled = *enabled
+	}
+	threshold := 80
+	if thresholdPct != nil {
+		threshold = *thresholdPct
+	}
+	return isEnabled, threshold
 }
 
 type ReallocateFundsDTO struct {

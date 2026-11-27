@@ -12,23 +12,25 @@ import (
 )
 
 type CategoryBudgetView struct {
-	ID                    uuid.UUID        `json:"id"`
-	Name                  string           `json:"name"`
-	GroupName             string           `json:"group_name"`
-	RolloverMode          RolloverMode     `json:"rollover_mode"`
-	SweepTargetCategoryID *uuid.UUID       `json:"sweep_target_category_id"`
-	HeldInAccountID       *uuid.UUID       `json:"held_in_account_id"`
-	TargetAmount          *decimal.Decimal `json:"target_amount"`
-	TargetDate            *time.Time       `json:"target_date"`
-	TargetCadence         string           `json:"target_cadence"`
-	SortOrder             int              `json:"sort_order"`
-	OriginalPlanned       decimal.Decimal  `json:"original_planned"`
-	CarryoverBalance      decimal.Decimal  `json:"carryover_balance"`
-	EffectiveTarget       decimal.Decimal  `json:"effective_target"`
-	SpentCleared          decimal.Decimal  `json:"spent_cleared"`
-	SpentPending          decimal.Decimal  `json:"spent_pending"`
-	Remaining             decimal.Decimal  `json:"remaining"`
-	Pacing                *PacingResult    `json:"pacing,omitempty"`
+	ID                      uuid.UUID        `json:"id"`
+	Name                    string           `json:"name"`
+	GroupName               string           `json:"group_name"`
+	RolloverMode            RolloverMode     `json:"rollover_mode"`
+	SweepTargetCategoryID   *uuid.UUID       `json:"sweep_target_category_id"`
+	HeldInAccountID         *uuid.UUID       `json:"held_in_account_id"`
+	TargetAmount            *decimal.Decimal `json:"target_amount"`
+	TargetDate              *time.Time       `json:"target_date"`
+	TargetCadence           string           `json:"target_cadence"`
+	SortOrder               int              `json:"sort_order"`
+	BudgetAlertEnabled      bool             `json:"budget_alert_enabled"`
+	BudgetAlertThresholdPct int              `json:"budget_alert_threshold_pct"`
+	OriginalPlanned         decimal.Decimal  `json:"original_planned"`
+	CarryoverBalance        decimal.Decimal  `json:"carryover_balance"`
+	EffectiveTarget         decimal.Decimal  `json:"effective_target"`
+	SpentCleared            decimal.Decimal  `json:"spent_cleared"`
+	SpentPending            decimal.Decimal  `json:"spent_pending"`
+	Remaining               decimal.Decimal  `json:"remaining"`
+	Pacing                  *PacingResult    `json:"pacing,omitempty"`
 }
 
 type MonthBudgetDetails struct {
@@ -125,6 +127,8 @@ func loadMonthCategoryViews(ctx context.Context, tx pgx.Tx, wsID uuid.UUID, ym t
 		       c.target_date,
 		       c.target_cadence,
 		       c.sort_order,
+		       c.budget_alert_enabled,
+		       c.budget_alert_threshold_pct,
 		       COALESCE(mcb.original_planned, c.monthly_budget) AS original_planned,
 		       COALESCE(mcb.carryover_balance, 0) AS carryover_balance,
 		       COALESCE(cr.net_transfer, 0) AS net_transfer,
@@ -154,6 +158,7 @@ func loadMonthCategoryViews(ctx context.Context, tx pgx.Tx, wsID uuid.UUID, ym t
 			&v.ID, &v.Name, &v.GroupName, &rolloverMode,
 			&v.SweepTargetCategoryID, &v.HeldInAccountID, &v.TargetAmount, &v.TargetDate,
 			&v.TargetCadence, &v.SortOrder,
+			&v.BudgetAlertEnabled, &v.BudgetAlertThresholdPct,
 			&v.OriginalPlanned, &v.CarryoverBalance, &netTransfer, &v.SpentCleared, &v.SpentPending,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan category budget view: %w", err)

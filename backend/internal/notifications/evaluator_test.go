@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
+	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -41,6 +42,56 @@ func TestComputeBurnRatio(t *testing.T) {
 				t.Fatalf("ComputeBurnRatio(%s, %s) exceeded = %v, want %v", tc.spent, tc.budget, got, tc.wantOver)
 			}
 		})
+	}
+}
+
+func TestEvaluateSpendingVelocityCandidatesPerCategoryConfig(t *testing.T) {
+	disabledID := uuid.New()
+	customLowID := uuid.New()
+	customHighID := uuid.New()
+	defaultID := uuid.New()
+
+	categories := []budget.CategoryBudgetView{
+		{
+			ID:                      disabledID,
+			Name:                    "Rent",
+			EffectiveTarget:         decimal.RequireFromString("2000.00"),
+			SpentCleared:            decimal.RequireFromString("2000.00"),
+			BudgetAlertEnabled:      false,
+			BudgetAlertThresholdPct: 80,
+		},
+		{
+			ID:                      customLowID,
+			Name:                    "Coffee",
+			EffectiveTarget:         decimal.RequireFromString("100.00"),
+			SpentCleared:            decimal.RequireFromString("50.00"),
+			BudgetAlertEnabled:      true,
+			BudgetAlertThresholdPct: 50,
+		},
+		{
+			ID:                      customHighID,
+			Name:                    "Groceries",
+			EffectiveTarget:         decimal.RequireFromString("100.00"),
+			SpentCleared:            decimal.RequireFromString("90.00"),
+			BudgetAlertEnabled:      true,
+			BudgetAlertThresholdPct: 100,
+		},
+		{
+			ID:                      defaultID,
+			Name:                    "Dining",
+			EffectiveTarget:         decimal.RequireFromString("100.00"),
+			SpentCleared:            decimal.RequireFromString("80.00"),
+			BudgetAlertEnabled:      true,
+			BudgetAlertThresholdPct: 0, // falls back to 80%
+		},
+	}
+
+	cands := EvaluateSpendingVelocityCandidates(categories)
+	if len(cands) != 2 {
+		t.Fatalf("expected 2 candidates, got %d: %+v", len(cands), cands)
+	}
+	if cands[0].CategoryID != customLowID || cands[1].CategoryID != defaultID {
+		t.Fatalf("unexpected candidates: %+v", cands)
 	}
 }
 
