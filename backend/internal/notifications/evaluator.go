@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -203,6 +204,47 @@ func buildSpendingAlertPayload(c SpendingAlertCandidate) NotificationPayload {
 			c.CategoryName,
 		),
 		URL: "/budget",
+		Tag: "spending-alert",
+	}
+}
+
+func buildGroupedSpendingAlertPayload(candidates []SpendingAlertCandidate) NotificationPayload {
+	if len(candidates) == 1 {
+		return buildSpendingAlertPayload(candidates[0])
+	}
+
+	sorted := make([]SpendingAlertCandidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if !sorted[i].BurnRatio.Equal(sorted[j].BurnRatio) {
+			return sorted[i].BurnRatio.GreaterThan(sorted[j].BurnRatio)
+		}
+		return sorted[i].CategoryName < sorted[j].CategoryName
+	})
+
+	const maxListed = 3
+	limit := len(sorted)
+	if limit > maxListed {
+		limit = maxListed
+	}
+	parts := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		pct := sorted[i].BurnRatio.Mul(decimal.NewFromInt(100)).Round(0)
+		parts = append(parts, fmt.Sprintf("%s (%s%%)", sorted[i].CategoryName, pct.String()))
+	}
+
+	var summary string
+	if len(sorted) > maxListed {
+		summary = fmt.Sprintf("%s, and %d more", strings.Join(parts, ", "), len(sorted)-maxListed)
+	} else {
+		summary = strings.Join(parts, ", ")
+	}
+
+	return NotificationPayload{
+		Title: fmt.Sprintf("Spending Alert: %d Categories", len(sorted)),
+		Body:  fmt.Sprintf("%s have reached their budget alert thresholds.", summary),
+		URL:   "/budget",
+		Tag:   "spending-alert",
 	}
 }
 
@@ -224,6 +266,7 @@ func buildStatementAlertPayload(c StatementAlertCandidate) NotificationPayload {
 			c.CheckingBalance.StringFixed(2),
 		),
 		URL: "/accounts",
+		Tag: fmt.Sprintf("statement-due-%s", c.AccountID),
 	}
 }
 
@@ -275,13 +318,43 @@ func buildSyncWarningPayload(c SyncWarningCandidate) NotificationPayload {
 		Title: "Bank Sync Warning",
 		Body:  fmt.Sprintf("%s. %s", warningText, instruction),
 		URL:   "/settings#bank",
+		Tag:   "sync-warning",
 	}
 }
 
-type pendingAlert struct {
+type claimedCooldown struct {
 	triggerType string
 	entityID    uuid.UUID
-	payload     NotificationPayload
+	prevSentAt  *time.Time
+}
+
+func (e *NotificationEvaluator) sendToRecipients(
+	ctx context.Context,
+	workspaceID, userID uuid.UUID,
+	recipients []uuid.UUID,
+	payload NotificationPayload,
+	now time.Time,
+	claims []claimedCooldown,
+) (sent bool, errs []error) {
+	succeededCount := 0
+	for _, recipientID := range recipients {
+		if err := e.push.SendNotification(ctx, recipientID, payload); err != nil {
+			errs = append(errs, err)
+		} else {
+			succeededCount++
+		}
+	}
+
+	if succeededCount == 0 && len(errs) > 0 {
+		for _, c := range claims {
+			if relErr := e.releaseCooldown(ctx, workspaceID, userID, c.triggerType, c.entityID, now, c.prevSentAt); relErr != nil {
+				errs = append(errs, relErr)
+			}
+		}
+		return false, errs
+	}
+
+	return succeededCount > 0, errs
 }
 
 func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspaceID, userID uuid.UUID) (EvaluationResult, error) {
@@ -481,31 +554,58 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 		recipients = []uuid.UUID{userID}
 	}
 
-	var queue []pendingAlert
+	var result EvaluationResult
+	var allErrs []error
+
+	var activeSpending []SpendingAlertCandidate
+	var spendingClaims []claimedCooldown
 	for _, cand := range EvaluateSpendingVelocityCandidates(categories) {
-		queue = append(queue, pendingAlert{
+		claimed, prevSentAt, err := e.claimCooldown(ctx, workspaceID, userID, TriggerSpendingVelocity, cand.CategoryID, now)
+		if err != nil {
+			allErrs = append(allErrs, err)
+			continue
+		}
+		if !claimed {
+			result.SuppressedByCooldown++
+			continue
+		}
+		activeSpending = append(activeSpending, cand)
+		spendingClaims = append(spendingClaims, claimedCooldown{
 			triggerType: TriggerSpendingVelocity,
 			entityID:    cand.CategoryID,
-			payload:     buildSpendingAlertPayload(cand),
+			prevSentAt:  prevSentAt,
 		})
 	}
+
+	if len(activeSpending) > 0 {
+		payload := buildGroupedSpendingAlertPayload(activeSpending)
+		sent, sendErrs := e.sendToRecipients(ctx, workspaceID, userID, recipients, payload, now, spendingClaims)
+		if sent {
+			result.SpendingAlertsSent++
+		}
+		allErrs = append(allErrs, sendErrs...)
+	}
+
+	type queuedAlert struct {
+		triggerType string
+		entityID    uuid.UUID
+		payload     NotificationPayload
+	}
+	var queue []queuedAlert
 	for _, cand := range EvaluateStatementDueCandidates(accounts, now) {
-		queue = append(queue, pendingAlert{
+		queue = append(queue, queuedAlert{
 			triggerType: TriggerStatementDue,
 			entityID:    cand.AccountID,
 			payload:     buildStatementAlertPayload(cand),
 		})
 	}
 	for _, cand := range EvaluateSyncWarningCandidates(workspaceID, syncWarnings) {
-		queue = append(queue, pendingAlert{
+		queue = append(queue, queuedAlert{
 			triggerType: TriggerSyncWarning,
 			entityID:    cand.EntityID,
 			payload:     buildSyncWarningPayload(cand),
 		})
 	}
-
-	var result EvaluationResult
-	var allErrs []error
 
 	for _, item := range queue {
 		claimed, prevSentAt, err := e.claimCooldown(ctx, workspaceID, userID, item.triggerType, item.entityID, now)
@@ -518,34 +618,28 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			continue
 		}
 
-		succeededCount := 0
-		var sendErrs []error
-		for _, recipientID := range recipients {
-			if err := e.push.SendNotification(ctx, recipientID, item.payload); err != nil {
-				sendErrs = append(sendErrs, err)
-			} else {
-				succeededCount++
-			}
-		}
-
-		if succeededCount == 0 && len(sendErrs) > 0 {
-			if relErr := e.releaseCooldown(ctx, workspaceID, userID, item.triggerType, item.entityID, now, prevSentAt); relErr != nil {
-				sendErrs = append(sendErrs, relErr)
-			}
-		} else if succeededCount > 0 {
+		sent, sendErrs := e.sendToRecipients(
+			ctx,
+			workspaceID,
+			userID,
+			recipients,
+			item.payload,
+			now,
+			[]claimedCooldown{{
+				triggerType: item.triggerType,
+				entityID:    item.entityID,
+				prevSentAt:  prevSentAt,
+			}},
+		)
+		if sent {
 			switch item.triggerType {
-			case TriggerSpendingVelocity:
-				result.SpendingAlertsSent++
 			case TriggerStatementDue:
 				result.StatementAlertsSent++
 			case TriggerSyncWarning:
 				result.SyncWarningsSent++
 			}
 		}
-
-		if len(sendErrs) > 0 {
-			allErrs = append(allErrs, sendErrs...)
-		}
+		allErrs = append(allErrs, sendErrs...)
 	}
 
 	return result, errors.Join(allErrs...)

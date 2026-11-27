@@ -607,3 +607,173 @@ func TestEvaluator_SyncWarningsAndCooldownIntegration(t *testing.T) {
 		t.Fatalf("expected new distinct warning to send, got res=%+v sent=%d", res3, len(push.sent))
 	}
 }
+
+func TestBuildGroupedSpendingAlertPayload(t *testing.T) {
+	dining := SpendingAlertCandidate{
+		CategoryID:   uuid.New(),
+		CategoryName: "Dining",
+		TotalBudget:  decimal.RequireFromString("100.00"),
+		TotalSpent:   decimal.RequireFromString("82.00"),
+		BurnRatio:    decimal.RequireFromString("0.82"),
+	}
+	groceries := SpendingAlertCandidate{
+		CategoryID:   uuid.New(),
+		CategoryName: "Groceries",
+		TotalBudget:  decimal.RequireFromString("200.00"),
+		TotalSpent:   decimal.RequireFromString("220.00"),
+		BurnRatio:    decimal.RequireFromString("1.10"),
+	}
+	coffee := SpendingAlertCandidate{
+		CategoryID:   uuid.New(),
+		CategoryName: "Coffee",
+		TotalBudget:  decimal.RequireFromString("50.00"),
+		TotalSpent:   decimal.RequireFromString("45.00"),
+		BurnRatio:    decimal.RequireFromString("0.90"),
+	}
+	travel := SpendingAlertCandidate{
+		CategoryID:   uuid.New(),
+		CategoryName: "Travel",
+		TotalBudget:  decimal.RequireFromString("300.00"),
+		TotalSpent:   decimal.RequireFromString("255.00"),
+		BurnRatio:    decimal.RequireFromString("0.85"),
+	}
+
+	// Single candidate keeps the detailed single-category format.
+	single := buildGroupedSpendingAlertPayload([]SpendingAlertCandidate{dining})
+	if single.Title != "Spending Alert: Dining" || single.URL != "/budget" || single.Tag != "spending-alert" {
+		t.Fatalf("unexpected single payload: %+v", single)
+	}
+	if !strings.Contains(single.Body, "$82.00 of $100.00 (82%)") {
+		t.Fatalf("unexpected single body: %q", single.Body)
+	}
+
+	// Multiple candidates (<= 3) are sorted by burn ratio descending and grouped.
+	two := buildGroupedSpendingAlertPayload([]SpendingAlertCandidate{dining, groceries})
+	if two.Title != "Spending Alert: 2 Categories" || two.URL != "/budget" || two.Tag != "spending-alert" {
+		t.Fatalf("unexpected grouped-2 payload: %+v", two)
+	}
+	wantTwoBody := "Groceries (110%), Dining (82%) have reached their budget alert thresholds."
+	if two.Body != wantTwoBody {
+		t.Fatalf("grouped-2 body = %q, want %q", two.Body, wantTwoBody)
+	}
+
+	// More than 3 candidates lists top 3 and summarizes the rest.
+	four := buildGroupedSpendingAlertPayload([]SpendingAlertCandidate{dining, groceries, coffee, travel})
+	if four.Title != "Spending Alert: 4 Categories" {
+		t.Fatalf("grouped-4 title = %q, want Spending Alert: 4 Categories", four.Title)
+	}
+	wantFourBody := "Groceries (110%), Coffee (90%), Travel (85%), and 1 more have reached their budget alert thresholds."
+	if four.Body != wantFourBody {
+		t.Fatalf("grouped-4 body = %q, want %q", four.Body, wantFourBody)
+	}
+}
+
+func TestEvaluator_GroupedSpendingAlertsAndCooldownIntegration(t *testing.T) {
+	adminPool, appPool := openTestPools(t)
+	ctx := context.Background()
+
+	wsID := uuid.New()
+	userID := uuid.New()
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name) VALUES ($1, 'Grouped Alerts WS')", wsID); err != nil {
+		t.Fatalf("failed to seed workspace: %v", err)
+	}
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')", wsID, userID); err != nil {
+		t.Fatalf("failed to seed member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id = $1", wsID)
+	})
+
+	var checkingID, catDiningID, catGroceryID, catCoffeeID, catTravelID uuid.UUID
+	err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO accounts (workspace_id, name, type, current_balance, is_on_budget)
+			VALUES ($1, 'Checking', 'checking', 2000.00, TRUE)
+			RETURNING id
+		`, wsID).Scan(&checkingID); err != nil {
+			return err
+		}
+		for _, cat := range []struct {
+			name string
+			dst  *uuid.UUID
+		}{
+			{"Dining", &catDiningID},
+			{"Groceries", &catGroceryID},
+			{"Coffee", &catCoffeeID},
+			{"Travel", &catTravelID},
+		} {
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO categories (workspace_id, name, group_name, monthly_budget, sort_order)
+				VALUES ($1, $2, 'General', 100.00, 1)
+				RETURNING id
+			`, wsID, cat.name).Scan(cat.dst); err != nil {
+				return err
+			}
+		}
+
+		// Three categories exceed threshold simultaneously.
+		for _, txn := range []struct {
+			catID  uuid.UUID
+			amount string
+		}{
+			{catDiningID, "-85.00"},
+			{catGroceryID, "-110.00"},
+			{catCoffeeID, "-92.00"},
+		} {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO transactions (workspace_id, account_id, category_id, origin, status, amount, merchant_raw, transaction_date, is_cleared)
+				VALUES ($1, $2, $3, 'MANUAL_OFFLINE', 'POSTED', $4, 'Merchant', '2026-05-10', TRUE)
+			`, wsID, checkingID, txn.catID, txn.amount); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to seed data: %v", err)
+	}
+
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+
+	// 1) Total push failure releases all 3 category cooldowns.
+	failingPush := &recordingPushService{enabled: true, sendErr: errors.New("push error")}
+	resFail, err := NewEvaluator(appPool, failingPush).WithClock(func() time.Time { return now }).EvaluateWorkspace(ctx, wsID, userID)
+	if err == nil || resFail.SpendingAlertsSent != 0 {
+		t.Fatalf("expected failure and 0 sent, got res=%+v err=%v", resFail, err)
+	}
+
+	// 2) Healthy push sends 1 grouped notification covering all 3 categories.
+	push := &recordingPushService{enabled: true}
+	res1, err := NewEvaluator(appPool, push).WithClock(func() time.Time { return now }).EvaluateWorkspace(ctx, wsID, userID)
+	if err != nil {
+		t.Fatalf("EvaluateWorkspace #1 failed: %v", err)
+	}
+	if res1.SpendingAlertsSent != 1 || res1.SuppressedByCooldown != 0 || len(push.sent) != 1 {
+		t.Fatalf("expected 1 grouped spending alert, got res=%+v sent=%d", res1, len(push.sent))
+	}
+	if push.sent[0].Title != "Spending Alert: 3 Categories" || push.sent[0].Tag != "spending-alert" {
+		t.Fatalf("unexpected grouped payload: %+v", push.sent[0])
+	}
+
+	// 3) 1 hour later, a 4th category goes over: first 3 are suppressed, only Travel alerts.
+	if err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO transactions (workspace_id, account_id, category_id, origin, status, amount, merchant_raw, transaction_date, is_cleared)
+			VALUES ($1, $2, $3, 'MANUAL_OFFLINE', 'POSTED', -88.00, 'Airline', '2026-05-10', TRUE)
+		`, wsID, checkingID, catTravelID)
+		return err
+	}); err != nil {
+		t.Fatalf("failed to insert travel txn: %v", err)
+	}
+
+	res2, err := NewEvaluator(appPool, push).WithClock(func() time.Time { return now.Add(1 * time.Hour) }).EvaluateWorkspace(ctx, wsID, userID)
+	if err != nil {
+		t.Fatalf("EvaluateWorkspace #2 failed: %v", err)
+	}
+	if res2.SpendingAlertsSent != 1 || res2.SuppressedByCooldown != 3 || len(push.sent) != 2 {
+		t.Fatalf("expected 1 new alert + 3 suppressed, got res=%+v sent=%d", res2, len(push.sent))
+	}
+	if push.sent[1].Title != "Spending Alert: Travel" {
+		t.Fatalf("expected single-category alert for Travel, got %+v", push.sent[1])
+	}
+}

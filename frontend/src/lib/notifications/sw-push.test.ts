@@ -19,13 +19,15 @@ describe('sw-push', () => {
 					JSON.stringify({
 						title: 'Spending Alert: Dining',
 						body: '85% spent this month',
-						url: '/budget'
+						url: '/budget',
+						tag: 'spending-alert'
 					})
 				)
 			).toEqual({
 				title: 'Spending Alert: Dining',
 				body: '85% spent this month',
-				url: '/budget'
+				url: '/budget',
+				tag: 'spending-alert'
 			});
 		});
 
@@ -110,6 +112,40 @@ describe('sw-push', () => {
 				icon: '/favicon.png',
 				badge: '/favicon.png',
 				data: { url: '/accounts' }
+			});
+		});
+
+		it('forwards notification tag when provided in the payload', async () => {
+			let pending: Promise<unknown> | undefined;
+			const showNotification = vi.fn().mockResolvedValue(undefined);
+			const registration: NotificationRegistrationLike = { showNotification };
+
+			handlePushEvent(
+				{
+					data: {
+						text: () =>
+							JSON.stringify({
+								title: 'Spending Alert: 3 Categories',
+								body: 'Groceries (110%), Dining (85%), Coffee (80%) have reached their budget alert thresholds.',
+								url: '/budget',
+								tag: 'spending-alert'
+							})
+					},
+					waitUntil: (promise) => {
+						pending = promise;
+					}
+				},
+				registration
+			);
+
+			await pending;
+
+			expect(showNotification).toHaveBeenCalledWith('Spending Alert: 3 Categories', {
+				body: 'Groceries (110%), Dining (85%), Coffee (80%) have reached their budget alert thresholds.',
+				icon: '/favicon.png',
+				badge: '/favicon.png',
+				tag: 'spending-alert',
+				data: { url: '/budget' }
 			});
 		});
 	});

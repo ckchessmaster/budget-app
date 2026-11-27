@@ -36,6 +36,7 @@ type NotificationPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	URL   string `json:"url"`
+	Tag   string `json:"tag,omitempty"`
 }
 
 type PushService interface {
