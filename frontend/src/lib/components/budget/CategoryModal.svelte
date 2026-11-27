@@ -213,14 +213,26 @@
 			isSubmitting = false;
 		}
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (isOpen && e.key === 'Escape' && !isSubmitting) {
+			e.preventDefault();
+			onClose();
+		}
+	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
 		<button
 			type="button"
+			tabindex="-1"
 			aria-label="Close category modal"
-			onclick={onClose}
+			onclick={() => {
+				if (!isSubmitting) onClose();
+			}}
 			class="fixed inset-0 bg-black/50 backdrop-blur-xs"
 		></button>
 
@@ -333,26 +345,7 @@
 						/>
 					</div>
 
-					{#if itemKind === 'EXPENSE'}
-					<div>
-						<label for="cat-due-day" class="block text-xs font-medium text-ink-secondary mb-1">
-							Monthly Due Day (optional)
-						</label>
-						<input
-							id="cat-due-day"
-							type="number"
-							min="1"
-							max="31"
-							step="1"
-							bind:value={dueDay}
-							placeholder="e.g. 15 for the 15th of each month"
-							class="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink-primary placeholder:text-ink-muted focus:border-accent-pop focus:outline-none"
-						/>
-						<p class="mt-1 text-[11px] text-ink-muted">
-							Shows a "Due" reminder pill until paid each month.
-						</p>
-					</div>
-				{:else if itemKind === 'FUND'}
+					{#if itemKind === 'FUND'}
 						<div>
 							<label for="cat-starting-balance" class="block text-xs font-medium text-ink-secondary mb-1">
 								{editingCategory ? 'Prior Saved Balance ($)' : 'Starting Balance ($)'}

@@ -189,7 +189,16 @@
 			saving = false;
 		}
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (isOpen && e.key === 'Escape' && !saving) {
+			e.preventDefault();
+			onClose();
+		}
+	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
 	<div

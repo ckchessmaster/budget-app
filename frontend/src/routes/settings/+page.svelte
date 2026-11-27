@@ -1,15 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { fetchMonthBudget } from '$lib/api/budget';
 	import { disconnectSimpleFIN } from '$lib/api/simplefin';
 	import { fetchAccounts } from '$lib/api/transactions';
 	import SimpleFINSetupModal from '$lib/components/accounts/SimpleFINSetupModal.svelte';
 	import SimulatorWorkbench from '$lib/components/demo/SimulatorWorkbench.svelte';
 	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
-	import CategorizationRulesSection from '$lib/components/settings/CategorizationRulesSection.svelte';
-	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
-	import type { AccountItem } from '$lib/types/transaction';
 	import {
 		detectPushEnvironment,
 		fetchPushConfig,
@@ -35,9 +31,6 @@
 
 	let simplefinModalOpen = $state(false);
 	let linkedSimpleFINIds = $state<string[]>([]);
-	let ruleAccounts = $state<AccountItem[]>([]);
-	let ruleCategories = $state<CategoryBudget[]>([]);
-	let ruleIncomes = $state<PlannedIncome[]>([]);
 	let confirmDisconnect = $state(false);
 	let disconnecting = $state(false);
 	let bankError = $state<string | null>(null);
@@ -90,21 +83,11 @@
 		}
 	});
 
-	async function refreshRuleContext() {
-		const now = new Date();
-		const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-		const [accts, budgetRes] = await Promise.all([
-			fetchAccounts().catch(() => []),
-			fetchMonthBudget(ym).catch(() => null)
-		]);
-		ruleAccounts = accts;
+	async function refreshLinkedAccounts() {
+		const accts = await fetchAccounts().catch(() => []);
 		linkedSimpleFINIds = accts
 			.map((a) => a.externalAccountId)
 			.filter((id): id is string => Boolean(id));
-		if (budgetRes) {
-			ruleCategories = budgetRes.categories;
-			ruleIncomes = budgetRes.incomes;
-		}
 	}
 
 	onMount(async () => {
@@ -117,7 +100,7 @@
 			demo.load().catch((err) => {
 				demoError = err instanceof Error ? err.message : 'Failed to load settings';
 			}),
-			refreshRuleContext()
+			refreshLinkedAccounts()
 		]);
 		void refreshPushState();
 	});
@@ -227,12 +210,6 @@
 				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
 			>
 				Bank Connection
-			</a>
-			<a
-				href="#rules"
-				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
-			>
-				Categorization Rules
 			</a>
 			<a
 				href="#workspace"
@@ -595,7 +572,7 @@
 					<div>
 						<h3 class="text-base font-bold text-slate-900 dark:text-white">Push Notifications</h3>
 						<p class="text-xs text-slate-500 dark:text-slate-400">
-							Receive alerts when spending crosses 80% of a category budget or a credit card statement is due within 5 days
+							Receive alerts for category spending limits, credit card statement due dates, and bank sync warnings
 						</p>
 					</div>
 
@@ -672,18 +649,6 @@
 					{/if}
 				</div>
 			</section>
-
-			<!-- Categorization Rules -->
-			<section
-				id="rules"
-				class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs"
-			>
-				<CategorizationRulesSection
-					categories={ruleCategories}
-					incomes={ruleIncomes}
-					accounts={ruleAccounts}
-				/>
-			</section>
 		</div>
 	</div>
 </div>
@@ -694,7 +659,7 @@
 	onClose={() => (simplefinModalOpen = false)}
 	onLinked={() => {
 		void demo.load();
-		void refreshRuleContext();
+		void refreshLinkedAccounts();
 	}}
 />
 

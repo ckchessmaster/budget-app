@@ -109,4 +109,29 @@ describe('CoverDrawer', () => {
 		});
 		expect(onSuccess).toHaveBeenCalledTimes(1);
 	});
+
+	it('closes on Escape key press without submitting', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		const onClose = vi.fn();
+
+		render(CoverDrawer, {
+			props: {
+				isOpen: true,
+				yearMonth: '2026-11-01',
+				overspentCategory: {
+					id: 'cat-overspent',
+					name: 'Groceries',
+					remaining: -20
+				},
+				availableDonors: [{ id: 'cat-donor', name: 'Dining', available: 100 }],
+				onClose,
+				onSuccess: vi.fn()
+			}
+		});
+
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 });

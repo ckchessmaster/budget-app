@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -497,5 +498,112 @@ func TestEvaluator_StatementDueAndFailureReleaseIntegration(t *testing.T) {
 	}
 	if resCovered.TotalSent() != 0 || resCovered.SuppressedByCooldown != 0 {
 		t.Fatalf("expected no alert once checking >= statement, got %+v", resCovered)
+	}
+}
+
+func TestEvaluateSyncWarningCandidatesAndPayloads(t *testing.T) {
+	wsID := uuid.New()
+	cands := EvaluateSyncWarningCandidates(wsID, []string{
+		"Connection to Regions Bank may need attention. Auth required",
+		"  connection to regions bank may need attention. auth required ",
+		"",
+		"Rate limit exceeded (429)",
+		"Provider temporarily unavailable",
+	})
+	if len(cands) != 3 {
+		t.Fatalf("expected 3 deduplicated candidates, got %d: %+v", len(cands), cands)
+	}
+
+	authPayload := buildSyncWarningPayload(cands[0])
+	if authPayload.URL != "/settings#bank" {
+		t.Fatalf("authPayload.URL = %q, want /settings#bank", authPayload.URL)
+	}
+	if !strings.Contains(authPayload.Body, "Auth required") || !strings.Contains(authPayload.Body, "SimpleFIN Bridge") {
+		t.Fatalf("expected auth instructions in payload body, got %q", authPayload.Body)
+	}
+
+	ratePayload := buildSyncWarningPayload(cands[1])
+	if !strings.Contains(ratePayload.Body, "rate-limited") || !strings.Contains(ratePayload.Body, "Sync Now") {
+		t.Fatalf("expected rate-limit instructions in payload body, got %q", ratePayload.Body)
+	}
+
+	genericPayload := buildSyncWarningPayload(cands[2])
+	if !strings.Contains(genericPayload.Body, "Settings → Bank Connection") {
+		t.Fatalf("expected generic instructions in payload body, got %q", genericPayload.Body)
+	}
+}
+
+func TestEvaluator_SyncWarningsAndCooldownIntegration(t *testing.T) {
+	adminPool, appPool := openTestPools(t)
+	ctx := context.Background()
+
+	wsID := uuid.New()
+	userID := uuid.New()
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name) VALUES ($1, 'Sync Warning WS')", wsID); err != nil {
+		t.Fatalf("failed to seed workspace: %v", err)
+	}
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')", wsID, userID); err != nil {
+		t.Fatalf("failed to seed member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id = $1", wsID)
+	})
+
+	err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO simplefin_connections (workspace_id, encrypted_claim_token, encrypted_access_url, last_sync_warnings)
+			VALUES ($1, 'enc-token', 'enc-url', '["Connection to Regions Bank may need attention. Auth required"]'::jsonb)
+		`, wsID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("failed to seed simplefin_connections: %v", err)
+	}
+
+	push := &recordingPushService{enabled: true}
+	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	eval := NewEvaluator(appPool, push).WithClock(func() time.Time { return now })
+
+	res1, err := eval.EvaluateWorkspace(ctx, wsID, userID)
+	if err != nil {
+		t.Fatalf("EvaluateWorkspace #1 failed: %v", err)
+	}
+	if res1.SyncWarningsSent != 1 || res1.TotalSent() != 1 || len(push.sent) != 1 {
+		t.Fatalf("expected 1 sync warning sent, got res=%+v sent=%d", res1, len(push.sent))
+	}
+	if push.sent[0].Title != "Bank Sync Warning" || push.sent[0].URL != "/settings#bank" {
+		t.Fatalf("unexpected payload: %+v", push.sent[0])
+	}
+	if !strings.Contains(push.sent[0].Body, "SimpleFIN Bridge") {
+		t.Fatalf("expected actionable instructions in body: %q", push.sent[0].Body)
+	}
+
+	// Within 24h cooldown -> suppressed.
+	res2, err := NewEvaluator(appPool, push).WithClock(func() time.Time { return now.Add(2 * time.Hour) }).EvaluateWorkspace(ctx, wsID, userID)
+	if err != nil {
+		t.Fatalf("EvaluateWorkspace #2 failed: %v", err)
+	}
+	if res2.SyncWarningsSent != 0 || res2.SuppressedByCooldown != 1 {
+		t.Fatalf("expected sync warning cooldown suppression, got %+v", res2)
+	}
+
+	// Different warning still triggers immediately.
+	if err := db.WithWorkspaceTx(ctx, appPool, userID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE simplefin_connections
+			SET last_sync_warnings = '["Connection to Chase may need attention. Auth required"]'::jsonb
+			WHERE workspace_id = $1
+		`, wsID)
+		return err
+	}); err != nil {
+		t.Fatalf("failed to update warnings: %v", err)
+	}
+
+	res3, err := NewEvaluator(appPool, push).WithClock(func() time.Time { return now.Add(3 * time.Hour) }).EvaluateWorkspace(ctx, wsID, userID)
+	if err != nil {
+		t.Fatalf("EvaluateWorkspace #3 failed: %v", err)
+	}
+	if res3.SyncWarningsSent != 1 || len(push.sent) != 2 {
+		t.Fatalf("expected new distinct warning to send, got res=%+v sent=%d", res3, len(push.sent))
 	}
 }

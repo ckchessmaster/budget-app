@@ -352,8 +352,8 @@ export function clearPushPromptDismissed(): void {
 }
 
 /**
- * Determines whether the automatic iOS PWA onboarding modal should be displayed.
- * Desktop browsers opt in explicitly from Settings instead of an automatic modal.
+ * Determines whether the automatic push notification prompt modal should be displayed
+ * for unsubscribed users across desktop, Android, and iOS browsers.
  */
 export function shouldShowPushOnboardingModal(
 	env: PushEnvironment,
@@ -364,11 +364,11 @@ export function shouldShowPushOnboardingModal(
 	if (!serverEnabled || alreadySubscribed || dismissed) {
 		return false;
 	}
-	if (!env.isIOS) {
+	if (env.isIOS && !env.isStandalone) {
+		return true;
+	}
+	if (!env.isSupported) {
 		return false;
 	}
-	if (env.isIOSStandalone) {
-		return env.permission === 'default';
-	}
-	return !env.isStandalone;
+	return env.permission === 'default';
 }

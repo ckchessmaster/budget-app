@@ -35,6 +35,7 @@
 	import CatchUpModal, { type CatchUpMode } from '$lib/components/budget/CatchUpModal.svelte';
 	import CoverDrawer from '$lib/components/budget/CoverDrawer.svelte';
 	import IncomeCard from '$lib/components/budget/IncomeCard.svelte';
+	import MoveMonthConfirmModal from '$lib/components/budget/MoveMonthConfirmModal.svelte';
 	import RecommendationBanner from '$lib/components/budget/RecommendationBanner.svelte';
 	import TransactionDetailCard from '$lib/components/budget/TransactionDetailCard.svelte';
 	import TransactionsDrawer from '$lib/components/budget/TransactionsDrawer.svelte';
@@ -68,10 +69,14 @@
 	} from '$lib/types/transaction';
 	import { GROUP_COLOR_PALETTE, getGroupColor } from '$lib/utils/budgetColors';
 	import {
+		buildMoveToMonthPatch,
+		effectiveBudgetMonth,
 		isCatchUpTransaction,
 		isCategorizableTransaction,
+		isMoveMonthPromptSkippedToday,
 		isToReviewTransaction,
-		mapOfflineQueuedToTransactions
+		mapOfflineQueuedToTransactions,
+		skipMoveMonthPromptToday
 	} from '$lib/utils/transactionReview';
 
 	function defaultMonth(): string {
@@ -137,6 +142,14 @@
 	let isCatchUpModalOpen = $state(false);
 	let catchUpModalMode = $state<CatchUpMode>('intro');
 	let hasAutoPromptedCatchUp = $state(false);
+	let pendingMoveDrop = $state<{
+		tx: TransactionItemModel;
+		fromMonth: string;
+		targetType: 'category' | 'income';
+		targetId: string;
+		targetLabel: string;
+	} | null>(null);
+	let isSubmittingMoveDrop = $state(false);
 
 	$effect(() => {
 		const panelParam = page.url.searchParams.get('panel');
@@ -1023,6 +1036,76 @@
 		await loadWorkspace(currentMonth, true);
 	}
 
+	async function executeDropToTarget(
+		tx: TransactionItemModel,
+		targetType: 'category' | 'income',
+		targetId: string,
+		moveToCurrentMonth: boolean
+	) {
+		const monthPatch = moveToCurrentMonth ? buildMoveToMonthPatch(tx, currentMonth) : {};
+		const targetPatch =
+			targetType === 'category'
+				? { categoryId: targetId }
+				: { plannedIncomeId: targetId, clearCategory: true };
+		await updateTransaction(tx.id, { ...targetPatch, ...monthPatch });
+		await loadWorkspace(currentMonth, true);
+	}
+
+	async function handleDropTransactionToCategory(txId: string, categoryId: string) {
+		const tx = allToReviewPool.find((t) => t.id === txId) ?? null;
+		if (tx && effectiveBudgetMonth(tx) < currentMonth) {
+			if (isMoveMonthPromptSkippedToday()) {
+				await executeDropToTarget(tx, 'category', categoryId, true);
+				return;
+			}
+			const catName = budgetData?.categories.find((c) => c.id === categoryId)?.name ?? 'this category';
+			pendingMoveDrop = {
+				tx,
+				fromMonth: effectiveBudgetMonth(tx),
+				targetType: 'category',
+				targetId: categoryId,
+				targetLabel: catName
+			};
+			return;
+		}
+		await handleCategorizeTransaction(txId, categoryId);
+	}
+
+	async function handleDropTransactionToIncome(txId: string, incomeId: string) {
+		const tx = allToReviewPool.find((t) => t.id === txId) ?? null;
+		if (tx && effectiveBudgetMonth(tx) < currentMonth) {
+			if (isMoveMonthPromptSkippedToday()) {
+				await executeDropToTarget(tx, 'income', incomeId, true);
+				return;
+			}
+			const incName = budgetData?.incomes.find((i) => i.id === incomeId)?.name ?? 'Income';
+			pendingMoveDrop = {
+				tx,
+				fromMonth: effectiveBudgetMonth(tx),
+				targetType: 'income',
+				targetId: incomeId,
+				targetLabel: incName
+			};
+			return;
+		}
+		await handleAssignTransactionToIncome(txId, incomeId);
+	}
+
+	async function handleConfirmMoveDrop(dontRemindToday: boolean) {
+		if (!pendingMoveDrop || isSubmittingMoveDrop) return;
+		isSubmittingMoveDrop = true;
+		try {
+			if (dontRemindToday) {
+				skipMoveMonthPromptToday();
+			}
+			const drop = pendingMoveDrop;
+			pendingMoveDrop = null;
+			await executeDropToTarget(drop.tx, drop.targetType, drop.targetId, true);
+		} finally {
+			isSubmittingMoveDrop = false;
+		}
+	}
+
 	async function handleUpdateTransaction(txId: string, payload: UpdateTransactionPayload) {
 		await updateTransaction(txId, payload);
 		await loadWorkspace(currentMonth, true);
@@ -1299,7 +1382,7 @@
 						{draggingGroupName}
 						{draggingTxId}
 						onSelectTransaction={handleSelectTransaction}
-						onDropTransaction={handleAssignTransactionToIncome}
+						onDropTransaction={handleDropTransactionToIncome}
 						onChanged={() => void loadWorkspace(currentMonth, true)}
 					/>
 				{/if}
@@ -1338,7 +1421,7 @@
 									onEditGroup={openEditGroup}
 									onUpdatePlanned={handleUpdatePlanned}
 									onAddCategoryInGroup={openNewCategoryInGroup}
-									onDropTransaction={handleCategorizeTransaction}
+									onDropTransaction={handleDropTransactionToCategory}
 									onChangeGroupColor={handleChangeGroupColor}
 									onCategoryDragStart={(id) => (draggingCategoryId = id)}
 									onCategoryDragEnd={() => (draggingCategoryId = null)}
@@ -1585,6 +1668,17 @@
 	{accounts}
 	onClose={() => (isRuleModalOpen = false)}
 	onSaved={() => void loadWorkspace(currentMonth, true)}
+/>
+
+<MoveMonthConfirmModal
+	isOpen={pendingMoveDrop !== null}
+	merchantName={pendingMoveDrop ? (pendingMoveDrop.tx.merchantClean?.trim() || pendingMoveDrop.tx.merchantRaw) : ''}
+	fromMonth={pendingMoveDrop?.fromMonth ?? ''}
+	toMonth={currentMonth}
+	targetLabel={pendingMoveDrop?.targetLabel ?? ''}
+	isSubmitting={isSubmittingMoveDrop}
+	onCancel={() => (pendingMoveDrop = null)}
+	onConfirm={handleConfirmMoveDrop}
 />
 
 <style>
