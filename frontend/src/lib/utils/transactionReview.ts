@@ -10,7 +10,7 @@ export function mapOfflineQueuedToTransactions(
 	currentMonth: string
 ): TransactionItemModel[] {
 	return queuedTransactions
-		.filter((q) => q.transactionDate.startsWith(currentMonth))
+		.filter((q) => q.transactionDate.startsWith(currentMonth) || q.syncStatus === 'FAILED')
 		.map((q) => ({
 			id: q.localId,
 			accountId: q.accountId,
@@ -20,9 +20,11 @@ export function mapOfflineQueuedToTransactions(
 			merchantRaw: q.merchantRaw,
 			categoryId: q.categoryId,
 			transactionDate: q.transactionDate,
+			userNotes: q.userNotes ?? null,
 			isCleared: false,
 			isTransfer: false,
-			syncStatus: q.syncStatus
+			syncStatus: q.syncStatus,
+			lastError: q.lastError ?? null
 		}));
 }
 
@@ -56,7 +58,11 @@ export function isNewTransaction(
  * Returns true when a transaction is pending bank settlement or queued offline.
  */
 export function isPendingTransaction(tx: TransactionItemModel): boolean {
-	return tx.status === 'PENDING' || tx.syncStatus === 'QUEUED';
+	return tx.status === 'PENDING' || tx.origin === 'MANUAL_OFFLINE' && Boolean(tx.syncStatus);
+}
+
+export function isOfflineLocalTransaction(tx: TransactionItemModel): boolean {
+	return tx.origin === 'MANUAL_OFFLINE' && Boolean(tx.syncStatus);
 }
 
 export function effectiveBudgetMonth(tx: TransactionItemModel): string {

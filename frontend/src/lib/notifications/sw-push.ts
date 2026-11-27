@@ -6,6 +6,7 @@ export interface PushPayload {
 	title: string;
 	body: string;
 	url: string;
+	tag?: string;
 }
 
 export interface PushDataLike {
@@ -25,6 +26,7 @@ export interface NotificationRegistrationLike {
 			body?: string;
 			icon?: string;
 			badge?: string;
+			tag?: string;
 			data?: { url: string };
 		}
 	): Promise<void>;
@@ -135,7 +137,9 @@ export function parsePushPayload(raw: string | null | undefined): PushPayload {
 				typeof parsed.url === 'string' && parsed.url.trim()
 					? parsed.url.trim()
 					: DEFAULT_PUSH_URL;
-			return { title, body, url };
+			const tag =
+				typeof parsed.tag === 'string' && parsed.tag.trim() ? parsed.tag.trim() : undefined;
+			return tag ? { title, body, url, tag } : { title, body, url };
 		}
 	} catch {
 		// Fall through to plain-text payload handling.
@@ -184,6 +188,7 @@ export function handlePushEvent(
 			body: payload.body,
 			icon: '/favicon.png',
 			badge: '/favicon.png',
+			...(payload.tag ? { tag: payload.tag } : {}),
 			data: { url: payload.url }
 		})
 	);

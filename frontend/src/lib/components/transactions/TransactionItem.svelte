@@ -18,8 +18,12 @@
 			!(transaction.splits && transaction.splits.length > 0) &&
 			isOnBudget
 	);
+	let isOfflineFailed = $derived(
+		transaction.origin === 'MANUAL_OFFLINE' && transaction.syncStatus === 'FAILED'
+	);
 	let isOfflineQueued = $derived(
-		transaction.origin === 'MANUAL_OFFLINE' && transaction.syncStatus === 'QUEUED'
+		transaction.origin === 'MANUAL_OFFLINE' &&
+			(transaction.syncStatus === 'QUEUED' || transaction.syncStatus === 'SYNCING')
 	);
 	let hasSettledDelta = $derived(
 		transaction.settledDelta != null && transaction.settledDelta !== 0
@@ -75,7 +79,15 @@
 					</span>
 				{/if}
 
-				{#if isOfflineQueued}
+				{#if isOfflineFailed}
+					<span
+						class="inline-flex items-center gap-1 text-[11px] font-medium bg-status-danger-bg text-status-danger border border-status-danger/30 px-1.5 py-0.5 rounded"
+						data-testid="badge-offline-failed"
+						title={transaction.lastError || 'Offline sync failed — edit or delete'}
+					>
+						Sync Failed
+					</span>
+				{:else if isOfflineQueued}
 					<span
 						class="inline-flex items-center gap-1 text-[11px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
 						data-testid="badge-offline-queued"

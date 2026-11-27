@@ -38,6 +38,7 @@
 	let pushConfig = $state<PushServerConfig | null>(null);
 	let pushEnv = $state<PushEnvironment>(detectPushEnvironment());
 	let pushChecked = $state(false);
+	let isOffline = $state(typeof navigator !== 'undefined' ? !navigator.onLine : false);
 
 	async function maybePromptPushNotifications() {
 		const env = detectPushEnvironment();
@@ -67,19 +68,34 @@
 		theme.init();
 		const stopPwaInstall = pwaInstall.init();
 
-		const cleanups: Array<() => void> = [stopPwaInstall];
+		const onOnline = () => {
+			isOffline = false;
+		};
+		const onOffline = () => {
+			isOffline = true;
+		};
+		window.addEventListener('online', onOnline);
+		window.addEventListener('offline', onOffline);
+
+		const cleanups: Array<() => void> = [
+			stopPwaInstall,
+			() => {
+				window.removeEventListener('online', onOnline);
+				window.removeEventListener('offline', onOffline);
+			}
+		];
 		if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
 			const hadController = Boolean(navigator.serviceWorker.controller);
 			let reloading = false;
 
 			const onControllerChange = () => {
-				if (hadController && !reloading) {
+				if (hadController && !reloading && navigator.onLine !== false) {
 					reloading = true;
 					window.location.reload();
 				}
 			};
 			const onVisibilityChange = () => {
-				if (document.visibilityState === 'visible') {
+				if (document.visibilityState === 'visible' && navigator.onLine !== false) {
 					void navigator.serviceWorker.getRegistration().then((reg) => reg?.update().catch(() => {}));
 				}
 			};
@@ -99,16 +115,21 @@
 
 	$effect(() => {
 		const path = page.url.pathname;
+		const offlineNow = isOffline;
 		if (PUBLIC_PATHS.some((p) => path.startsWith(p))) {
 			return;
 		}
-		void auth.ready().then(() => {
-			if (!auth.isAuthenticated) {
+		void (async () => {
+			await auth.ready();
+			if (!auth.isAuthenticated && !offlineNow && auth.hasCachedSession) {
+				await auth.tryRestoreSession();
+			}
+			if (!auth.isAuthenticated && !auth.canAccessOffline) {
 				pushChecked = false;
 				pushModalOpen = false;
 				demo.resetOnLogout();
 				void goto('/login');
-			} else {
+			} else if (auth.isAuthenticated) {
 				if (!demo.loaded && !demo.loading) {
 					void demo.load().catch(() => {});
 				}
@@ -117,7 +138,7 @@
 					void maybePromptPushNotifications();
 				}
 			}
-		});
+		})();
 	});
 </script>
 
@@ -241,7 +262,16 @@
 		</header>
 	{/if}
 
-	{#if auth.sessionExpired && !auth.isAuthenticated}
+	{#if isOffline && auth.hasCachedSession}
+		<div
+			data-testid="offline-banner"
+			class="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-2 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-800/70 text-xs shrink-0"
+		>
+			<span class="font-medium text-amber-900 dark:text-amber-200">
+				Offline mode — viewing cached budget. New transactions queue locally and sync when you reconnect.
+			</span>
+		</div>
+	{:else if auth.sessionExpired && !auth.isAuthenticated}
 		<div
 			data-testid="session-expired-banner"
 			class="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-6 py-2 bg-rose-50 dark:bg-rose-950/50 border-b border-rose-200 dark:border-rose-800/70 text-xs shrink-0"

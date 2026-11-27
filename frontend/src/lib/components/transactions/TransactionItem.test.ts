@@ -79,6 +79,25 @@ describe('TransactionItem', () => {
 		expect(screen.getByTestId('badge-offline-queued')).toBeTruthy();
 	});
 
+	it('renders Sync Failed badge for rejected offline transactions', () => {
+		const tx: TransactionItemModel = {
+			id: 'local-2',
+			accountId: 'acct-1',
+			origin: 'MANUAL_OFFLINE',
+			status: 'PENDING',
+			syncStatus: 'FAILED',
+			lastError: 'unknown_account',
+			amount: -18.0,
+			merchantRaw: 'Farmers Market',
+			categoryId: 'cat-2',
+			transactionDate: '2026-11-18',
+			isCleared: false
+		};
+
+		render(TransactionItem, { props: { transaction: tx, categoryName: 'Groceries' } });
+		expect(screen.getByTestId('badge-offline-failed').textContent).toContain('Sync Failed');
+	});
+
 	it('renders settledDelta indicator with semantic warning token when settled amount differs', () => {
 		const tx: TransactionItemModel = {
 			id: 'tx-3',

@@ -9,18 +9,17 @@ export const oidcSettings: UserManagerSettings = {
 	client_id: appConfig.oidcClientId,
 	redirect_uri: browser ? `${window.location.origin}/auth/callback` : 'http://localhost:5173/auth/callback',
 	response_type: 'code',
-	scope: 'openid profile email',
-	userStore: browser ? new WebStorageStateStore({ store: window.sessionStorage }) : undefined,
+	scope: 'openid profile email offline_access',
+	userStore: browser ? new WebStorageStateStore({ store: window.localStorage }) : undefined,
 	loadUserInfo: true,
-	// Renewal, not reuse. This client is issued no refresh token (there is no
-	// offline_access in the scope above), so the only way to replace an expired access
-	// token is a silent authorization against the existing single-sign-on session.
-	// Without any renewal path the app held on to the token it had, and every call
-	// started answering invalid_token once it lapsed.
+	// Persist the session in localStorage (survives mobile PWA restarts) and request
+	// offline_access so providers issue a refresh token when allowed. When a refresh token
+	// is present, oidc-client-ts renews via the token endpoint directly; otherwise it falls
+	// back to a silent authorization iframe against the existing SSO session.
 	//
 	// The identity provider must allowlist the silent redirect target below as a redirect URI
-	// for this application; otherwise the silent attempt fails and the user is asked to
-	// sign in again, which is the correct outcome but not a quiet one.
+	// for this application as a fallback; otherwise silent iframe renewal fails and the user
+	// is asked to sign in again.
 	automaticSilentRenew: true,
 	// Bounds how long a request can stall behind a silent renewal whose iframe never reports back.
 	silentRequestTimeoutInSeconds: 15,

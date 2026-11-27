@@ -1,5 +1,6 @@
 import { getUserManager } from '$lib/auth/oidc';
 import { browser } from '$app/environment';
+import { BudgetLocalDB } from '$lib/offline/db';
 import type { User } from 'oidc-client-ts';
 
 export interface UserProfile {
@@ -10,6 +11,10 @@ export interface UserProfile {
 // Renew this far ahead of expiry so a click never races the token's own deadline.
 // Exported so tests assert against the real window rather than a copy of it.
 export const RENEW_SKEW_MS = 60_000;
+
+function isOfflineNow(): boolean {
+	return browser && typeof navigator !== 'undefined' && navigator.onLine === false;
+}
 
 function isJwt(token: string | undefined | null): token is string {
 	return Boolean(token && token.split('.').length === 3);
@@ -47,10 +52,21 @@ export class AuthStore {
 	 */
 	sessionExpired = $state(false);
 
+	/**
+	 * True when a persisted OIDC session profile is available locally (even if its token
+	 * expired while offline), allowing offline access to cached data and the local queue.
+	 */
+	hasCachedSession = $state(false);
+	cachedUser = $state<UserProfile | null>(null);
+
 	private expiresAtMs = $state(0);
 	private eventsWired = false;
 	private readyPromise: Promise<void> = Promise.resolve();
 	private renewPromise: Promise<void> | null = null;
+
+	get canAccessOffline(): boolean {
+		return this.isAuthenticated || (this.hasCachedSession && isOfflineNow());
+	}
 
 	constructor() {
 		if (browser && !isSilentCallbackPath()) {
@@ -134,7 +150,29 @@ export class AuthStore {
 	async logout(): Promise<void> {
 		if (!browser) return;
 		await getUserManager().removeUser();
+		await new BudgetLocalDB().clearCaches().catch(() => {});
 		this.clear(false);
+	}
+
+	/**
+	 * Attempts to silently restore an expired cached session once connectivity returns.
+	 */
+	async tryRestoreSession(): Promise<boolean> {
+		if (!browser) return this.isAuthenticated;
+		await this.readyPromise;
+		if (this.isAuthenticated && this.expiresAtMs - Date.now() > RENEW_SKEW_MS) {
+			return true;
+		}
+		if (!this.hasCachedSession || isOfflineNow()) {
+			return this.isAuthenticated;
+		}
+		if (!this.renewPromise) {
+			this.renewPromise = this.loadSession(true).finally(() => {
+				this.renewPromise = null;
+			});
+		}
+		await this.renewPromise;
+		return this.isAuthenticated;
 	}
 
 	private async loadSession(renew: boolean): Promise<void> {
@@ -148,17 +186,26 @@ export class AuthStore {
 			session = null;
 		}
 
-		// A page load adopts whatever is already stored. Only the renewal path demands
-		// room to spare, so a session that carries no usable expiry claim is never
-		// discarded on boot.
+		if (session) {
+			this.hasCachedSession = true;
+			this.cachedUser = {
+				id: session.profile.sub,
+				email: session.profile.email || ''
+			};
+		}
+
+		// A page load adopts whatever is already stored when still live. Only the renewal
+		// path demands room to spare, so a session that carries no usable expiry claim is
+		// never discarded on boot.
 		if (session && !session.expired && (!renew || isFresh(session))) {
 			this.adopt(session);
 			return;
 		}
 
-		// Only a session that already existed is worth renewing. A signed-out visitor must
-		// not be pulled through an authorization round-trip by an ordinary API call.
-		if (session && renew) {
+		// When a stored session has already expired (e.g. PWA reopened the next day) or is
+		// nearing expiry, attempt renewal via refresh token or silent SSO—unless offline,
+		// where hanging on an unreachable IdP would block offline cache access.
+		if (session && (renew || session.expired) && !isOfflineNow()) {
 			try {
 				const renewed = await manager.signinSilent({ prompt: 'none' });
 				if (renewed && !renewed.expired) {
@@ -171,10 +218,13 @@ export class AuthStore {
 
 			if (!session.expired) {
 				// Renewal bought nothing, but this token still verifies. Keep working with
-				// it rather than signing the user out over one failed iframe round-trip.
+				// it rather than signing the user out over one failed round-trip.
 				this.adopt(session);
 				return;
 			}
+		} else if (session && !session.expired) {
+			this.adopt(session);
+			return;
 		}
 
 		this.clear(Boolean(session));
@@ -183,12 +233,15 @@ export class AuthStore {
 	private adopt(session: User): void {
 		this.isAuthenticated = true;
 		this.sessionExpired = false;
+		this.hasCachedSession = true;
 		this.token = selectBestToken(session.access_token, session.id_token);
 		this.expiresAtMs = (session.expires_at ?? 0) * 1000;
-		this.user = {
+		const profile: UserProfile = {
 			id: session.profile.sub,
 			email: session.profile.email || ''
 		};
+		this.user = profile;
+		this.cachedUser = profile;
 	}
 
 	private clear(expired: boolean): void {
@@ -197,6 +250,10 @@ export class AuthStore {
 		this.token = null;
 		this.expiresAtMs = 0;
 		this.sessionExpired = expired;
+		if (!expired) {
+			this.hasCachedSession = false;
+			this.cachedUser = null;
+		}
 	}
 
 	private wireEvents(): void {
@@ -216,6 +273,14 @@ export class AuthStore {
 		manager.events.addSilentRenewError(() => {
 			this.sessionExpired = true;
 		});
+
+		if (typeof window !== 'undefined') {
+			window.addEventListener('online', () => {
+				if (this.sessionExpired && this.hasCachedSession) {
+					void this.tryRestoreSession();
+				}
+			});
+		}
 	}
 }
 

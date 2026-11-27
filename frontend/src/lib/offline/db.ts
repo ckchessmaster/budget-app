@@ -2,6 +2,7 @@ export type OfflineSyncStatus = 'QUEUED' | 'SYNCING' | 'FAILED';
 
 export interface OfflineTransaction {
 	localId: string;
+	workspaceId?: string;
 	accountId: string;
 	amount: number;
 	merchantRaw: string;
@@ -10,6 +11,7 @@ export interface OfflineTransaction {
 	syncStatus: OfflineSyncStatus;
 	createdAt: number;
 	userNotes?: string;
+	lastError?: string;
 }
 
 export interface CachedAccount {
@@ -26,13 +28,41 @@ export interface CachedCategory {
 	name: string;
 	groupName: string;
 	remaining: number;
+	originalPlanned?: number;
+	effectiveTarget?: number;
+	spentCleared?: number;
+	spentPending?: number;
+	sortOrder?: number;
+}
+
+export interface CachedBudgetSnapshot {
+	yearMonth: string;
+	summary: {
+		yearMonth: string;
+		totalIncomeExpected: number;
+		totalAllocated: number;
+		readyToAssign: number;
+		totalSpentCleared: number;
+		totalSpentPending: number;
+		isUnbalanced: boolean;
+	};
+	incomes: Array<{
+		id: string;
+		workspaceId: string;
+		yearMonth: string;
+		name: string;
+		amount: number;
+		createdAt: string;
+	}>;
+	updatedAt: number;
 }
 
 const DB_NAME = 'budget_app_offline_v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_TX_QUEUE = 'transactions_queue';
 const STORE_CACHED_CATEGORIES = 'cached_categories';
 const STORE_CACHED_ACCOUNTS = 'cached_accounts';
+const STORE_CACHED_SNAPSHOTS = 'cached_snapshots';
 
 function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -77,6 +107,9 @@ export class BudgetLocalDB {
 				if (!db.objectStoreNames.contains(STORE_CACHED_ACCOUNTS)) {
 					db.createObjectStore(STORE_CACHED_ACCOUNTS, { keyPath: 'id' });
 				}
+				if (!db.objectStoreNames.contains(STORE_CACHED_SNAPSHOTS)) {
+					db.createObjectStore(STORE_CACHED_SNAPSHOTS, { keyPath: 'yearMonth' });
+				}
 			};
 
 			request.onsuccess = () => resolve(request.result);
@@ -94,6 +127,7 @@ export class BudgetLocalDB {
 		await reqToPromise(
 			store.put({
 				localId: tx.localId,
+				workspaceId: tx.workspaceId,
 				accountId: tx.accountId,
 				amount: tx.amount,
 				merchantRaw: tx.merchantRaw,
@@ -101,7 +135,8 @@ export class BudgetLocalDB {
 				transactionDate: tx.transactionDate,
 				syncStatus: tx.syncStatus,
 				createdAt: tx.createdAt,
-				userNotes: tx.userNotes
+				userNotes: tx.userNotes,
+				lastError: tx.lastError
 			})
 		);
 		await done;
@@ -116,7 +151,7 @@ export class BudgetLocalDB {
 	 * dedupes on the client id, so an item that already landed is confirmed rather than
 	 * duplicated.
 	 */
-	async getPendingQueue(): Promise<OfflineTransaction[]> {
+	async getPendingQueue(workspaceId?: string): Promise<OfflineTransaction[]> {
 		const db = await this.open();
 		const idbTx = db.transaction(STORE_TX_QUEUE, 'readonly');
 		const done = txDone(idbTx);
@@ -126,14 +161,15 @@ export class BudgetLocalDB {
 		return all
 			.filter(
 				(item) =>
-					item.syncStatus === 'QUEUED' ||
-					item.syncStatus === 'FAILED' ||
-					item.syncStatus === 'SYNCING'
+					(item.syncStatus === 'QUEUED' ||
+						item.syncStatus === 'FAILED' ||
+						item.syncStatus === 'SYNCING') &&
+					(!workspaceId || !item.workspaceId || item.workspaceId === workspaceId)
 			)
 			.sort((a, b) => a.createdAt - b.createdAt);
 	}
 
-	async updateSyncStatus(localId: string, syncStatus: OfflineSyncStatus): Promise<void> {
+	async updateSyncStatus(localId: string, syncStatus: OfflineSyncStatus, lastError?: string): Promise<void> {
 		const db = await this.open();
 		const idbTx = db.transaction(STORE_TX_QUEUE, 'readwrite');
 		const done = txDone(idbTx);
@@ -141,7 +177,65 @@ export class BudgetLocalDB {
 		const existing = await reqToPromise(store.get(localId) as IDBRequest<OfflineTransaction | undefined>);
 		if (existing) {
 			existing.syncStatus = syncStatus;
+			if (lastError !== undefined) {
+				existing.lastError = lastError;
+			} else if (syncStatus === 'QUEUED') {
+				delete existing.lastError;
+			}
 			await reqToPromise(store.put(existing));
+		}
+		await done;
+	}
+
+	async updateQueuedTransaction(
+		localId: string,
+		patch: Partial<
+			Pick<
+				OfflineTransaction,
+				| 'accountId'
+				| 'amount'
+				| 'merchantRaw'
+				| 'categoryId'
+				| 'transactionDate'
+				| 'userNotes'
+				| 'syncStatus'
+				| 'lastError'
+			>
+		>
+	): Promise<void> {
+		const db = await this.open();
+		const idbTx = db.transaction(STORE_TX_QUEUE, 'readwrite');
+		const done = txDone(idbTx);
+		const store = idbTx.objectStore(STORE_TX_QUEUE);
+		const existing = await reqToPromise(store.get(localId) as IDBRequest<OfflineTransaction | undefined>);
+		if (existing) {
+			const updated: OfflineTransaction = {
+				...existing,
+				...patch
+			};
+			if (patch.syncStatus === 'QUEUED' && patch.lastError === undefined) {
+				delete updated.lastError;
+			}
+			await reqToPromise(store.put(updated));
+		}
+		await done;
+	}
+
+	async deleteQueuedTransaction(localId: string): Promise<void> {
+		await this.markSynced(localId);
+	}
+
+	async clearQueuedForWorkspace(workspaceId: string): Promise<void> {
+		if (!workspaceId || !this.idbFactory) return;
+		const db = await this.open();
+		const idbTx = db.transaction(STORE_TX_QUEUE, 'readwrite');
+		const done = txDone(idbTx);
+		const store = idbTx.objectStore(STORE_TX_QUEUE);
+		const all = await reqToPromise(store.getAll() as IDBRequest<OfflineTransaction[]>);
+		for (const item of all) {
+			if (item.workspaceId === workspaceId) {
+				store.delete(item.localId);
+			}
 		}
 		await done;
 	}
@@ -166,7 +260,12 @@ export class BudgetLocalDB {
 				id: cat.id,
 				name: cat.name,
 				groupName: cat.groupName,
-				remaining: cat.remaining
+				remaining: cat.remaining,
+				originalPlanned: cat.originalPlanned,
+				effectiveTarget: cat.effectiveTarget,
+				spentCleared: cat.spentCleared,
+				spentPending: cat.spentPending,
+				sortOrder: cat.sortOrder
 			});
 		}
 		await done;
@@ -211,10 +310,36 @@ export class BudgetLocalDB {
 		return all;
 	}
 
+	async cacheBudgetSnapshot(snapshot: CachedBudgetSnapshot): Promise<void> {
+		const db = await this.open();
+		const idbTx = db.transaction(STORE_CACHED_SNAPSHOTS, 'readwrite');
+		const done = txDone(idbTx);
+		const store = idbTx.objectStore(STORE_CACHED_SNAPSHOTS);
+		await reqToPromise(store.put(snapshot));
+		await done;
+	}
+
+	async getCachedBudgetSnapshot(yearMonth: string): Promise<CachedBudgetSnapshot | undefined> {
+		const db = await this.open();
+		const idbTx = db.transaction(STORE_CACHED_SNAPSHOTS, 'readonly');
+		const done = txDone(idbTx);
+		const store = idbTx.objectStore(STORE_CACHED_SNAPSHOTS);
+		const result = await reqToPromise(
+			store.get(yearMonth) as IDBRequest<CachedBudgetSnapshot | undefined>
+		);
+		await done;
+		return result;
+	}
+
 	async clearCaches(): Promise<void> {
 		if (!this.idbFactory) return;
 		const db = await this.open();
-		for (const storeName of [STORE_CACHED_CATEGORIES, STORE_CACHED_ACCOUNTS]) {
+		for (const storeName of [
+			STORE_CACHED_CATEGORIES,
+			STORE_CACHED_ACCOUNTS,
+			STORE_CACHED_SNAPSHOTS
+		]) {
+			if (!db.objectStoreNames.contains(storeName)) continue;
 			const idbTx = db.transaction(storeName, 'readwrite');
 			const done = txDone(idbTx);
 			idbTx.objectStore(storeName).clear();

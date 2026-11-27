@@ -964,7 +964,8 @@
 				{@const badge = parseDateBadge(tx.transactionDate)}
 				{@const acct = accountById.get(tx.accountId)}
 				{@const isPending = isPendingTransaction(tx)}
-				{@const isQueued = tx.origin === 'MANUAL_OFFLINE' && tx.syncStatus === 'QUEUED'}
+				{@const isQueued = tx.origin === 'MANUAL_OFFLINE' && Boolean(tx.syncStatus)}
+				{@const isOfflineFailed = tx.origin === 'MANUAL_OFFLINE' && tx.syncStatus === 'FAILED'}
 				{@const hasSplits = Boolean(tx.splits && tx.splits.length > 0)}
 				{@const splitNeedsReview = hasUncategorizedSplit(tx)}
 				{@const isOffBudget = acct ? !acct.isOnBudget : false}
@@ -1078,7 +1079,15 @@
 										</span>
 									{/if}
 
-									{#if isQueued}
+									{#if isOfflineFailed}
+										<span
+											data-testid="tx-badge-offline-failed"
+											title={tx.lastError || 'Offline sync failed — open details to edit or delete'}
+											class="inline-flex items-center text-[10px] font-medium bg-status-danger-bg text-status-danger border border-status-danger/30 px-1.5 py-0.5 rounded"
+										>
+											Sync Failed
+										</span>
+									{:else if isQueued}
 										<span
 											class="inline-flex items-center text-[10px] font-medium bg-accent-tint text-accent-pop border border-accent-pop/30 px-1.5 py-0.5 rounded"
 										>
@@ -1185,7 +1194,6 @@
 								{/if}
 							</div>
 
-							{#if !isQueued}
 								<div class="relative" data-tx-menu-container>
 									<button
 										type="button"
@@ -1321,7 +1329,6 @@
 										</div>
 									{/if}
 								</div>
-							{/if}
 						</div>
 					</div>
 

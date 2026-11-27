@@ -60,7 +60,7 @@ function createMockIDBFactory(): IDBFactory {
 						onabort: null,
 						objectStore: () => ({
 							put: (val: any) => {
-								const key = val.localId ?? val.id;
+								const key = val.localId ?? val.id ?? val.yearMonth;
 								return makeRequest(() => {
 									storeMap.set(key, structuredClone(val));
 									return key;
@@ -191,5 +191,66 @@ describe('BudgetLocalDB', () => {
 		expect(accounts[0].name).toBe('Checking');
 		expect(categories).toHaveLength(1);
 		expect(categories[0].name).toBe('Groceries');
+	});
+
+	it('updates, deletes, and scopes queued transactions by workspace and caches snapshots', async () => {
+		const db = new BudgetLocalDB(createMockIDBFactory());
+		await db.queueTransaction({
+			localId: 'loc-ws1',
+			workspaceId: 'ws-1',
+			accountId: 'acct-1',
+			amount: -10,
+			merchantRaw: 'Cafe',
+			categoryId: 'cat-1',
+			transactionDate: '2026-11-18',
+			syncStatus: 'FAILED',
+			lastError: 'unknown_account',
+			createdAt: 100
+		});
+		await db.queueTransaction({
+			localId: 'loc-ws2',
+			workspaceId: 'ws-2',
+			accountId: 'acct-2',
+			amount: -20,
+			merchantRaw: 'Demo Store',
+			categoryId: null,
+			transactionDate: '2026-11-18',
+			syncStatus: 'QUEUED',
+			createdAt: 200
+		});
+
+		expect((await db.getPendingQueue('ws-1')).map((t) => t.localId)).toEqual(['loc-ws1']);
+
+		await db.updateQueuedTransaction('loc-ws1', {
+			merchantRaw: 'Updated Cafe',
+			syncStatus: 'QUEUED'
+		});
+		const updated = (await db.getPendingQueue('ws-1'))[0];
+		expect(updated.merchantRaw).toBe('Updated Cafe');
+		expect(updated.syncStatus).toBe('QUEUED');
+		expect(updated.lastError).toBeUndefined();
+
+		await db.clearQueuedForWorkspace('ws-2');
+		expect(await db.getPendingQueue('ws-2')).toHaveLength(0);
+
+		await db.deleteQueuedTransaction('loc-ws1');
+		expect(await db.getPendingQueue('ws-1')).toHaveLength(0);
+
+		await db.cacheBudgetSnapshot({
+			yearMonth: '2026-11',
+			summary: {
+				yearMonth: '2026-11-01',
+				totalIncomeExpected: 5000,
+				totalAllocated: 4500,
+				readyToAssign: 500,
+				totalSpentCleared: 1200,
+				totalSpentPending: 50,
+				isUnbalanced: false
+			},
+			incomes: [],
+			updatedAt: 12345
+		});
+		const snap = await db.getCachedBudgetSnapshot('2026-11');
+		expect(snap?.summary.readyToAssign).toBe(500);
 	});
 });

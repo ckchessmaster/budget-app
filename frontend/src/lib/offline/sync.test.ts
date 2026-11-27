@@ -181,4 +181,21 @@ describe('flushOfflineQueue', () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 		expect(res).toMatchObject({ syncedCount: 0, failedCount: 0, queuedCount: 0 });
 	});
+
+	it('keeps items QUEUED on transient network failure and 401/503 responses', async () => {
+		const items = [queued('loc-1', 100)];
+		const db = mockDB(items);
+
+		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Failed to fetch'));
+		await expect(
+			flushOfflineQueue(db, 'http://localhost:8080', 'test-token', fast)
+		).rejects.toThrow('Failed to fetch');
+		expect(db.updateSyncStatus).toHaveBeenLastCalledWith('loc-1', 'QUEUED');
+
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse({ error: 'invalid_token' }, 401));
+		await expect(
+			flushOfflineQueue(db, 'http://localhost:8080', 'test-token', fast)
+		).rejects.toThrow('Offline sync failed (401)');
+		expect(db.updateSyncStatus).toHaveBeenLastCalledWith('loc-1', 'QUEUED');
+	});
 });

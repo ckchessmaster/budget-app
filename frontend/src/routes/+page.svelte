@@ -5,7 +5,7 @@
 
 	onMount(async () => {
 		await auth.ready();
-		if (auth.isAuthenticated) {
+		if (auth.isAuthenticated || auth.canAccessOffline) {
 			goto('/budget');
 		} else {
 			goto('/login');
