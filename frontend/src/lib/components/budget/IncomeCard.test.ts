@@ -19,7 +19,7 @@ describe('IncomeCard', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('renders planned total, received amount, Paid/Upcoming badge, and adds a new income inline', async () => {
+	it('renders planned total, received amount, Paid/Upcoming badge, and adds a new income via modal', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -50,11 +50,14 @@ describe('IncomeCard', () => {
 		expect(getByTestId('income-received-total').textContent?.trim()).toBe('$2,000.00');
 		expect(getByTestId('income-status-badge').textContent?.trim()).toBe('Upcoming');
 		expect(queryByTestId('income-progress-bar')).toBeNull();
+		expect(queryByTestId('income-modal')).toBeNull();
 
 		await fireEvent.click(getByRole('button', { name: '+ Add Income' }));
-		await fireEvent.input(getByLabelText('Income source name'), { target: { value: 'Freelance' } });
-		await fireEvent.input(getByLabelText('Income amount'), { target: { value: '500' } });
-		await fireEvent.click(getByRole('button', { name: 'Add' }));
+		expect(getByTestId('income-modal')).toBeTruthy();
+
+		await fireEvent.input(getByLabelText('Income Source Name'), { target: { value: 'Freelance' } });
+		await fireEvent.input(getByLabelText('Planned Monthly Amount ($)'), { target: { value: '500' } });
+		await fireEvent.click(getByRole('button', { name: 'Add Income' }));
 
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		const [url, init] = fetchMock.mock.calls[0];
@@ -101,29 +104,80 @@ describe('IncomeCard', () => {
 		expect(queryByTestId('inline-activity-drawer')).toBeNull();
 	});
 
-	it('removes an income source when clicking remove without expanding the inline drawer', async () => {
-		const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+	it('hides inline Remove button and opens Edit modal to update or delete without expanding drawer', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				id: 'inc-1',
+				workspace_id: 'ws-1',
+				year_month: '2026-11-01',
+				name: 'Beeline Updated',
+				amount: 4200,
+				created_at: '2026-11-01T00:00:00Z'
+			})
+		});
 		vi.stubGlobal('fetch', fetchMock);
 		const onChanged = vi.fn();
 
-		const { getByRole, queryByTestId } = render(IncomeCard, {
-			props: {
-				yearMonth: '2026-11-01',
-				incomes: sampleIncomes,
-				receivedAmount: 0,
-				onChanged
+		const { getByRole, getByLabelText, getByTestId, queryByRole, queryByTestId } = render(
+			IncomeCard,
+			{
+				props: {
+					yearMonth: '2026-11-01',
+					incomes: sampleIncomes,
+					receivedAmount: 0,
+					onChanged
+				}
 			}
+		);
+
+		expect(queryByRole('button', { name: 'Remove Beeline Paycheck' })).toBeNull();
+
+		await fireEvent.click(getByRole('button', { name: 'Edit Beeline Paycheck' }));
+		expect(queryByTestId('inline-activity-drawer')).toBeNull();
+		expect(getByTestId('income-modal')).toBeTruthy();
+
+		await fireEvent.input(getByLabelText('Income Source Name'), {
+			target: { value: 'Beeline Updated' }
+		});
+		await fireEvent.input(getByLabelText('Planned Monthly Amount ($)'), {
+			target: { value: '4200' }
 		});
 
-		await fireEvent.click(getByRole('button', { name: 'Remove Beeline Paycheck' }));
+		// Escape cancels without saving
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		expect(queryByTestId('income-modal')).toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		// Reopen, save
+		await fireEvent.click(getByRole('button', { name: 'Edit Beeline Paycheck' }));
+		await fireEvent.input(getByLabelText('Income Source Name'), {
+			target: { value: 'Beeline Updated' }
+		});
+		await fireEvent.input(getByLabelText('Planned Monthly Amount ($)'), {
+			target: { value: '4200' }
+		});
+		await fireEvent.click(getByRole('button', { name: 'Save Income' }));
+
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/budget/incomes/inc-1');
-		expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
+		expect(fetchMock.mock.calls[0][1].method).toBe('PATCH');
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+			name: 'Beeline Updated',
+			amount: 4200
+		});
 		expect(onChanged).toHaveBeenCalledTimes(1);
-		expect(queryByTestId('inline-activity-drawer')).toBeNull();
+
+		// Reopen and delete via modal Delete button
+		await fireEvent.click(getByRole('button', { name: 'Edit Beeline Paycheck' }));
+		await fireEvent.click(getByRole('button', { name: 'Delete' }));
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		expect(fetchMock.mock.calls[1][0]).toContain('/api/v1/budget/incomes/inc-1');
+		expect(fetchMock.mock.calls[1][1].method).toBe('DELETE');
+		expect(onChanged).toHaveBeenCalledTimes(2);
 	});
 
-	it('creates a $0.00 planned income source such as Unplanned Income', async () => {
+	it('creates a $0.00 planned income source such as Unplanned Income via modal', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -148,11 +202,11 @@ describe('IncomeCard', () => {
 		});
 
 		await fireEvent.click(getByRole('button', { name: '+ Add Income' }));
-		await fireEvent.input(getByLabelText('Income source name'), {
+		await fireEvent.input(getByLabelText('Income Source Name'), {
 			target: { value: 'Unplanned Income' }
 		});
-		await fireEvent.input(getByLabelText('Income amount'), { target: { value: '0' } });
-		await fireEvent.click(getByRole('button', { name: 'Add' }));
+		await fireEvent.input(getByLabelText('Planned Monthly Amount ($)'), { target: { value: '0' } });
+		await fireEvent.click(getByRole('button', { name: 'Add Income' }));
 
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({

@@ -145,7 +145,16 @@
 		});
 		return n < 0 ? `-$${abs}` : `$${abs}`;
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (colorPickerOpen && e.key === 'Escape') {
+			e.preventDefault();
+			colorPickerOpen = false;
+		}
+	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section

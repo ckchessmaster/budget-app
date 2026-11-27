@@ -67,6 +67,41 @@ export function hasBudgetMonthOverride(tx: TransactionItemModel): boolean {
 	return Boolean(tx.budgetMonth && tx.budgetMonth !== tx.transactionDate.slice(0, 7));
 }
 
+export const MOVE_MONTH_SKIP_DATE_KEY = 'budget_move_month_prompt_skip_date';
+
+export function localCalendarDateKey(now: Date = new Date()): string {
+	const y = now.getFullYear();
+	const m = String(now.getMonth() + 1).padStart(2, '0');
+	const d = String(now.getDate()).padStart(2, '0');
+	return `${y}-${m}-${d}`;
+}
+
+export function isMoveMonthPromptSkippedToday(now: Date = new Date()): boolean {
+	if (typeof window === 'undefined') return false;
+	try {
+		return window.localStorage.getItem(MOVE_MONTH_SKIP_DATE_KEY) === localCalendarDateKey(now);
+	} catch {
+		return false;
+	}
+}
+
+export function skipMoveMonthPromptToday(now: Date = new Date()): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(MOVE_MONTH_SKIP_DATE_KEY, localCalendarDateKey(now));
+	} catch {
+		// localStorage unavailable
+	}
+}
+
+export function buildMoveToMonthPatch(
+	tx: TransactionItemModel,
+	targetMonth: string
+): { budgetMonth?: string; clearBudgetMonth?: boolean } {
+	const txMonth = tx.transactionDate.slice(0, 7);
+	return targetMonth === txMonth ? { clearBudgetMonth: true } : { budgetMonth: targetMonth };
+}
+
 /**
  * Combined To Review predicate: uncategorized on-budget items, pending/queued items,
  * or auto-categorized items flagged for review (unless explicitly ignored from review).

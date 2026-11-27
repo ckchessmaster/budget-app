@@ -1045,7 +1045,7 @@
 									{#if badgeKind === 'pending'}
 										<span
 											data-testid="tx-badge-pending"
-											class="inline-flex items-center text-[10px] font-medium bg-status-warn-bg text-status-warn px-1.5 py-0.5 rounded"
+											class="inline-flex items-center text-[10px] font-semibold bg-status-warn-bg text-status-warn border border-status-warn/45 dark:bg-amber-400/20 dark:text-amber-200 dark:border-amber-300/60 px-1.5 py-0.5 rounded"
 											title="Pending transaction"
 										>
 											Pending

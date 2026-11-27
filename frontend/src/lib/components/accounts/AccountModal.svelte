@@ -183,6 +183,12 @@
 		onClose();
 	}
 
+	function handleCancel(e: Event) {
+		if (isSubmitting) {
+			e.preventDefault();
+		}
+	}
+
 	function handleTypeChange() {
 		if (type !== 'credit_card' && type !== 'loan') {
 			isCreditOverpaid = false;
@@ -335,6 +341,7 @@
 	aria-labelledby="account-modal-title"
 	closedby="any"
 	onclose={handleNativeClose}
+	oncancel={handleCancel}
 	class="m-auto w-full max-w-lg rounded-2xl border border-border bg-surface p-0 text-ink-primary shadow-2xl max-h-[90dvh] overflow-y-auto"
 >
 	<div class="p-6">

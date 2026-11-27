@@ -2,8 +2,10 @@ package notifications
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
@@ -18,6 +20,7 @@ import (
 const (
 	TriggerSpendingVelocity = "SPENDING_VELOCITY"
 	TriggerStatementDue     = "STATEMENT_DUE"
+	TriggerSyncWarning      = "SYNC_WARNING"
 	DefaultCooldownWindow   = 24 * time.Hour
 	StatementDueWindowDays  = 5
 )
@@ -27,11 +30,12 @@ var SpendingVelocityThreshold = decimal.RequireFromString("0.80")
 type EvaluationResult struct {
 	SpendingAlertsSent   int `json:"spending_alerts_sent"`
 	StatementAlertsSent  int `json:"statement_alerts_sent"`
+	SyncWarningsSent     int `json:"sync_warnings_sent,omitempty"`
 	SuppressedByCooldown int `json:"suppressed_by_cooldown"`
 }
 
 func (r EvaluationResult) TotalSent() int {
-	return r.SpendingAlertsSent + r.StatementAlertsSent
+	return r.SpendingAlertsSent + r.StatementAlertsSent + r.SyncWarningsSent
 }
 
 type Evaluator interface {
@@ -52,6 +56,11 @@ type StatementAlertCandidate struct {
 	StatementBalance decimal.Decimal
 	CheckingBalance  decimal.Decimal
 	DaysUntilDue     int
+}
+
+type SyncWarningCandidate struct {
+	EntityID uuid.UUID
+	Warning  string
 }
 
 type NotificationEvaluator struct {
@@ -218,6 +227,57 @@ func buildStatementAlertPayload(c StatementAlertCandidate) NotificationPayload {
 	}
 }
 
+// EvaluateSyncWarningCandidates deduplicates raw SimpleFIN sync warnings and assigns each
+// a deterministic cooldown entity ID scoped to the workspace.
+func EvaluateSyncWarningCandidates(workspaceID uuid.UUID, warnings []string) []SyncWarningCandidate {
+	if workspaceID == uuid.Nil || len(warnings) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(warnings))
+	var candidates []SyncWarningCandidate
+	for _, raw := range warnings {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, SyncWarningCandidate{
+			EntityID: uuid.NewSHA1(workspaceID, []byte("sync-warning:"+key)),
+			Warning:  trimmed,
+		})
+	}
+	return candidates
+}
+
+func buildSyncWarningPayload(c SyncWarningCandidate) NotificationPayload {
+	lower := strings.ToLower(c.Warning)
+	var instruction string
+	switch {
+	case strings.Contains(lower, "auth") ||
+		strings.Contains(lower, "credential") ||
+		strings.Contains(lower, "password") ||
+		strings.Contains(lower, "login") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "attention"):
+		instruction = "Open Settings → Bank Connection, then sign in to SimpleFIN Bridge to re-authenticate your bank (or reconnect with a new setup token)."
+	case strings.Contains(lower, "rate") || strings.Contains(lower, "limit") || strings.Contains(lower, "429"):
+		instruction = "SimpleFIN is temporarily rate-limited. Wait a few minutes, then open Settings → Bank Connection and tap Sync Now."
+	default:
+		instruction = "Open Settings → Bank Connection to review your SimpleFIN Bridge connection and tap Sync Now to retry."
+	}
+
+	warningText := strings.TrimRight(c.Warning, ". ")
+	return NotificationPayload{
+		Title: "Bank Sync Warning",
+		Body:  fmt.Sprintf("%s. %s", warningText, instruction),
+		URL:   "/settings#bank",
+	}
+}
+
 type pendingAlert struct {
 	triggerType string
 	entityID    uuid.UUID
@@ -234,10 +294,11 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 	nextYM := ym.AddDate(0, 1, 0)
 
 	var (
-		categories []budget.CategoryBudgetView
-		accounts   []account.Account
-		recipients []uuid.UUID
-		visible    bool
+		categories   []budget.CategoryBudgetView
+		accounts     []account.Account
+		syncWarnings []string
+		recipients   []uuid.UUID
+		visible      bool
 	)
 
 	err := db.WithWorkspaceTx(ctx, e.pool, userID, func(tx pgx.Tx) error {
@@ -372,6 +433,20 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			return fmt.Errorf("error iterating account rows: %w", err)
 		}
 
+		var rawWarningsJSON []byte
+		warnErr := tx.QueryRow(ctx, `
+			SELECT COALESCE(last_sync_warnings, '[]'::jsonb)
+			FROM simplefin_connections
+			WHERE workspace_id = $1
+			LIMIT 1
+		`, workspaceID).Scan(&rawWarningsJSON)
+		if warnErr != nil && !errors.Is(warnErr, pgx.ErrNoRows) {
+			return fmt.Errorf("failed to load sync warnings for notification evaluation: %w", warnErr)
+		}
+		if len(rawWarningsJSON) > 0 {
+			_ = json.Unmarshal(rawWarningsJSON, &syncWarnings)
+		}
+
 		memberRows, err := tx.Query(ctx, `
 			SELECT user_id
 			FROM workspace_members
@@ -421,6 +496,13 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 			payload:     buildStatementAlertPayload(cand),
 		})
 	}
+	for _, cand := range EvaluateSyncWarningCandidates(workspaceID, syncWarnings) {
+		queue = append(queue, pendingAlert{
+			triggerType: TriggerSyncWarning,
+			entityID:    cand.EntityID,
+			payload:     buildSyncWarningPayload(cand),
+		})
+	}
 
 	var result EvaluationResult
 	var allErrs []error
@@ -456,6 +538,8 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 				result.SpendingAlertsSent++
 			case TriggerStatementDue:
 				result.StatementAlertsSent++
+			case TriggerSyncWarning:
+				result.SyncWarningsSent++
 			}
 		}
 

@@ -97,7 +97,7 @@
 						Budget &amp; Statement Alerts
 					</h3>
 					<p class="text-xs text-ink-secondary">
-						Get notified when a category passes 80% spend or a credit card statement is due soon.
+						Get notified about category spending limits, upcoming credit card statements, and bank sync warnings.
 					</p>
 				</div>
 				<button
@@ -186,7 +186,7 @@
 				>
 					<p class="font-semibold">Alerts enabled on this device</p>
 					<p>
-						You will receive spending velocity alerts (&ge;80% budget) and credit card statement due reminders (&le;5 days).
+						You will receive budget limit alerts, credit card statement due reminders (&le;5 days), and bank sync warnings.
 					</p>
 				</div>
 				<div class="flex justify-end">
@@ -222,8 +222,9 @@
 				<div class="rounded-lg border border-border bg-subtle p-3 text-xs text-ink-secondary space-y-1.5">
 					<p class="font-medium text-ink-primary">What you will receive:</p>
 					<ul class="list-disc list-inside space-y-1">
-						<li>Spending velocity warnings when a category reaches 80% of its monthly budget.</li>
+						<li>Spending limit warnings when a category reaches its configured budget threshold.</li>
 						<li>Credit card statement reminders when a due date is within 5 days and checking funds are low.</li>
+						<li>Bank sync warnings with instructions when a bank connection needs attention.</li>
 					</ul>
 				</div>
 

@@ -455,7 +455,7 @@
 							{#if category.spentPending > 0}
 								<span
 									data-testid="pending-badge"
-									class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn px-1.5 py-0.5 text-[11px] font-mono font-medium"
+									class="inline-flex items-center shrink-0 rounded-full bg-status-warn-bg text-status-warn border border-status-warn/45 dark:bg-amber-400/20 dark:text-amber-200 dark:border-amber-300/60 px-1.5 py-0.5 text-[11px] font-mono font-semibold"
 								>
 									+{fmt(category.spentPending)} pend
 								</span>

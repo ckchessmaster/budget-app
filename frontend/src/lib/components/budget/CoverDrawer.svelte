@@ -100,7 +100,16 @@
 			isSubmitting = false;
 		}
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (isOpen && overspentCategory && e.key === 'Escape' && !isSubmitting) {
+			e.preventDefault();
+			onClose();
+		}
+	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen && overspentCategory}
 	<div class="fixed inset-0 z-50 flex items-end sm:items-stretch sm:justify-end">

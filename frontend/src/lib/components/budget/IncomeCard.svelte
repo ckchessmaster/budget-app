@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { createPlannedIncome, deletePlannedIncome, updatePlannedIncome } from '$lib/api/budget';
 	import type { InlineActivityItem, PlannedIncome } from '$lib/types/budget';
+	import IncomeModal from './IncomeModal.svelte';
 	import InlineActivityDrawer from './InlineActivityDrawer.svelte';
 
 	interface Props {
@@ -40,14 +40,9 @@
 		}
 		prevDraggingTxId = current;
 	});
-	let showAddForm = $state(false);
-	let name = $state('');
-	let amount = $state('');
-	let editingId = $state<string | null>(null);
-	let editName = $state('');
-	let editAmount = $state('');
-	let isSubmitting = $state(false);
-	let errorMsg = $state('');
+
+	let isIncomeModalOpen = $state(false);
+	let editingIncome = $state<PlannedIncome | null>(null);
 
 	let totalPlanned = $derived(incomes.reduce((sum, i) => sum + i.amount, 0));
 
@@ -128,74 +123,14 @@
 		}
 	}
 
-	async function handleAdd(e: SubmitEvent) {
-		e.preventDefault();
-		const parsed = Number(amount);
-		if (!name.trim() || !Number.isFinite(parsed) || parsed < 0) {
-			errorMsg = 'Enter a source name and an amount of $0.00 or greater.';
-			return;
-		}
-		isSubmitting = true;
-		errorMsg = '';
-		try {
-			await createPlannedIncome({
-				year_month: yearMonth,
-				name: name.trim(),
-				amount: parsed
-			});
-			name = '';
-			amount = '';
-			showAddForm = false;
-			onChanged();
-		} catch (err: any) {
-			errorMsg = err?.message || 'Failed to add planned income.';
-		} finally {
-			isSubmitting = false;
-		}
+	function openAddModal() {
+		editingIncome = null;
+		isIncomeModalOpen = true;
 	}
 
-	function startEdit(inc: PlannedIncome) {
-		editingId = inc.id;
-		editName = inc.name;
-		editAmount = String(inc.amount);
-		errorMsg = '';
-	}
-
-	async function handleSaveEdit(e: SubmitEvent) {
-		e.preventDefault();
-		if (!editingId) return;
-		const parsed = Number(editAmount);
-		if (!editName.trim() || !Number.isFinite(parsed) || parsed < 0) {
-			errorMsg = 'Enter a source name and an amount of $0.00 or greater.';
-			return;
-		}
-		isSubmitting = true;
-		errorMsg = '';
-		try {
-			await updatePlannedIncome(editingId, {
-				name: editName.trim(),
-				amount: parsed
-			});
-			editingId = null;
-			onChanged();
-		} catch (err: any) {
-			errorMsg = err?.message || 'Failed to update planned income.';
-		} finally {
-			isSubmitting = false;
-		}
-	}
-
-	async function handleDelete(id: string) {
-		isSubmitting = true;
-		errorMsg = '';
-		try {
-			await deletePlannedIncome(id);
-			onChanged();
-		} catch (err: any) {
-			errorMsg = err?.message || 'Failed to remove planned income.';
-		} finally {
-			isSubmitting = false;
-		}
+	function openEditModal(inc: PlannedIncome) {
+		editingIncome = inc;
+		isIncomeModalOpen = true;
 	}
 </script>
 
@@ -316,27 +251,15 @@
 									</span>
 									<button
 										type="button"
-										disabled={isSubmitting}
+										data-testid="edit-income-btn"
 										onclick={(e) => {
 											e.stopPropagation();
-											startEdit(row.income);
+											openEditModal(row.income);
 										}}
 										aria-label={`Edit ${row.income.name}`}
-										class="px-2 py-1 rounded-md text-xs text-ink-secondary sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:bg-surface-hover transition-all shrink-0"
+										class="px-2 py-1 rounded-md text-xs text-ink-muted hover:text-ink-primary hover:bg-surface-hover sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 transition-all shrink-0"
 									>
 										Edit
-									</button>
-									<button
-										type="button"
-										disabled={isSubmitting}
-										onclick={(e) => {
-											e.stopPropagation();
-											void handleDelete(row.income.id);
-										}}
-										aria-label={`Remove ${row.income.name}`}
-										class="px-2 py-1 rounded-md text-xs text-status-danger sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 sm:focus:opacity-100 hover:bg-status-danger-bg transition-all shrink-0"
-									>
-										Remove
 									</button>
 								</div>
 							</div>
@@ -355,51 +278,6 @@
 						</div>
 					</div>
 
-					{#if editingId === row.income.id}
-						<form
-							onsubmit={handleSaveEdit}
-							class="px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border/60 flex flex-col sm:flex-row gap-2"
-						>
-							<input
-								type="text"
-								placeholder="Paycheck / Income source"
-								aria-label="Edit income source name"
-								bind:value={editName}
-								required
-								class="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
-							/>
-							<input
-								type="number"
-								step="0.01"
-								min="0"
-								placeholder="2500.00"
-								aria-label="Edit income amount"
-								bind:value={editAmount}
-								required
-								class="w-full sm:w-32 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-mono text-ink-primary focus:border-accent-pop focus:outline-none"
-							/>
-							<div class="flex items-center gap-1.5">
-								<button
-									type="submit"
-									disabled={isSubmitting}
-									class="rounded-lg bg-accent-primary text-accent-primary-text hover:opacity-90 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold transition-opacity"
-								>
-									{isSubmitting ? 'Saving...' : 'Save'}
-								</button>
-								<button
-									type="button"
-									onclick={() => {
-										editingId = null;
-										errorMsg = '';
-									}}
-									class="rounded-lg border border-border px-2.5 py-1.5 text-xs text-ink-secondary hover:bg-surface-hover transition-colors"
-								>
-									Cancel
-								</button>
-							</div>
-						</form>
-					{/if}
-
 					{#if expandedRows[row.income.id]}
 						<InlineActivityDrawer
 							transactions={row.drawerTransactions}
@@ -413,61 +291,25 @@
 		{/if}
 	</div>
 
-	<!-- Footer / Inline Add Income -->
-	<div class="px-3.5 sm:px-5 py-2.5 bg-subtle border-t border-border">
-		{#if showAddForm}
-			<form onsubmit={handleAdd} class="space-y-2">
-				<div class="flex flex-col sm:flex-row gap-2">
-					<input
-						type="text"
-						placeholder="Paycheck / Income source"
-						aria-label="Income source name"
-						bind:value={name}
-						required
-						class="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-ink-primary focus:border-accent-pop focus:outline-none"
-					/>
-					<input
-						type="number"
-						step="0.01"
-						min="0"
-						placeholder="2500.00"
-						aria-label="Income amount"
-						bind:value={amount}
-						required
-						class="w-full sm:w-32 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-mono text-ink-primary focus:border-accent-pop focus:outline-none"
-					/>
-					<div class="flex items-center gap-1.5">
-						<button
-							type="submit"
-							disabled={isSubmitting}
-							class="rounded-lg bg-accent-primary text-accent-primary-text hover:opacity-90 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold transition-opacity"
-						>
-							{isSubmitting ? 'Adding...' : 'Add'}
-						</button>
-						<button
-							type="button"
-							onclick={() => {
-								showAddForm = false;
-								errorMsg = '';
-							}}
-							class="rounded-lg border border-border px-2.5 py-1.5 text-xs text-ink-secondary hover:bg-surface-hover transition-colors"
-						>
-							Cancel
-						</button>
-					</div>
-				</div>
-				{#if errorMsg}
-					<p class="text-xs text-status-danger">{errorMsg}</p>
-				{/if}
-			</form>
-		{:else}
-			<button
-				type="button"
-				onclick={() => (showAddForm = true)}
-				class="text-xs font-semibold text-accent-pop hover:underline transition-colors"
-			>
-				+ Add Income
-			</button>
-		{/if}
+	<!-- Footer -->
+	<div class="px-3.5 sm:px-5 py-2 bg-subtle border-t border-border">
+		<button
+			type="button"
+			onclick={openAddModal}
+			class="px-2 py-1.5 -ml-2 rounded-lg text-xs font-semibold text-accent-pop hover:bg-surface-hover transition-colors"
+		>
+			+ Add Income
+		</button>
 	</div>
 </section>
+
+<IncomeModal
+	isOpen={isIncomeModalOpen}
+	{yearMonth}
+	{editingIncome}
+	onClose={() => (isIncomeModalOpen = false)}
+	onSuccess={() => {
+		isIncomeModalOpen = false;
+		onChanged();
+	}}
+/>

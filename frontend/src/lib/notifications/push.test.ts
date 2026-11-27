@@ -193,7 +193,7 @@ describe('push notification client', () => {
 		});
 	});
 
-	it('gates automatic onboarding modal strictly to iOS non-dismissed unsubscribed sessions', () => {
+	it('shows onboarding modal by default for supported browsers and iOS Safari until enabled, denied, or dismissed', () => {
 		const iosStandaloneDefault: PushEnvironment = {
 			isIOS: true,
 			isStandalone: true,
@@ -218,15 +218,28 @@ describe('push notification client', () => {
 			supportReason: 'supported',
 			permission: 'default'
 		};
+		const unsupported: PushEnvironment = {
+			isIOS: false,
+			isStandalone: false,
+			isIOSStandalone: false,
+			isSupported: false,
+			supportReason: 'unsupported_browser',
+			permission: 'unsupported'
+		};
 
 		expect(shouldShowPushOnboardingModal(iosStandaloneDefault, true, false, false)).toBe(true);
 		expect(shouldShowPushOnboardingModal(iosSafari, true, false, false)).toBe(true);
-		expect(shouldShowPushOnboardingModal(desktop, true, false, false)).toBe(false);
+		expect(shouldShowPushOnboardingModal(desktop, true, false, false)).toBe(true);
+		expect(shouldShowPushOnboardingModal(unsupported, true, false, false)).toBe(false);
+		expect(shouldShowPushOnboardingModal(desktop, true, false, false)).toBe(true);
 		expect(shouldShowPushOnboardingModal(iosStandaloneDefault, false, false, false)).toBe(false);
 		expect(shouldShowPushOnboardingModal(iosStandaloneDefault, true, true, false)).toBe(false);
 		expect(shouldShowPushOnboardingModal(iosStandaloneDefault, true, false, true)).toBe(false);
 		expect(
 			shouldShowPushOnboardingModal({ ...iosStandaloneDefault, permission: 'denied' }, true, false, false)
+		).toBe(false);
+		expect(
+			shouldShowPushOnboardingModal({ ...desktop, permission: 'denied' }, true, false, false)
 		).toBe(false);
 
 		expect(isPushPromptDismissed()).toBe(false);

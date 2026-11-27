@@ -39,10 +39,10 @@
 	let pushEnv = $state<PushEnvironment>(detectPushEnvironment());
 	let pushChecked = $state(false);
 
-	async function maybePromptIOSPush() {
+	async function maybePromptPushNotifications() {
 		const env = detectPushEnvironment();
 		pushEnv = env;
-		if (!env.isIOS || isPushPromptDismissed()) {
+		if (isPushPromptDismissed()) {
 			return;
 		}
 		try {
@@ -114,7 +114,7 @@
 				}
 				if (!pushChecked) {
 					pushChecked = true;
-					void maybePromptIOSPush();
+					void maybePromptPushNotifications();
 				}
 			}
 		});
