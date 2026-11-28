@@ -105,4 +105,29 @@ func TestBankSyncWorkflow_Unit(t *testing.T) {
 		}
 		env.AssertExpectations(t)
 	})
+
+	t.Run("records sanitized sync failure when FetchSimpleFINDataActivity fails", func(t *testing.T) {
+		var suite testsuite.WorkflowTestSuite
+		env := suite.NewTestWorkflowEnvironment()
+
+		scope := temporalinternal.SyncScope{
+			WorkspaceID: uuid.New(),
+			UserID:      uuid.New(),
+		}
+
+		var acts *activities.BankActivities
+		env.OnActivity(acts.FetchSimpleFINDataActivity, mock.Anything, scope).Return((*simplefin.DataResponse)(nil), errors.New("HTTP 403: Access token revoked")).Times(3)
+		env.OnActivity(acts.RecordSyncFailureActivity, mock.Anything, mock.MatchedBy(func(in activities.RecordSyncFailureInput) bool {
+			return in.SyncScope == scope && in.ErrorMessage != ""
+		})).Return(nil).Once()
+
+		env.ExecuteWorkflow(BankSyncWorkflow, BankSyncInput{SyncScope: scope})
+		if !env.IsWorkflowCompleted() {
+			t.Fatal("expected BankSyncWorkflow to complete")
+		}
+		if err := env.GetWorkflowError(); err == nil {
+			t.Fatal("expected workflow error on fetch failure")
+		}
+		env.AssertExpectations(t)
+	})
 }

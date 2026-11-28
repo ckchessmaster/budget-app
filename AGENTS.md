@@ -89,6 +89,12 @@ Five workflows are registered on task queue `budget-sync-queue` in namespace `bu
   work, and duplicates are prevented per item by `transactions.client_id`, not by the ID.
   The workflow never fails because one item did — it returns `applied` client ids and `rejected`
   ones carrying a reason and a `retryable` flag the client acts on.
+- `SendWorkspaceInviteWorkflow` and `SendPlatformInviteWorkflow` in
+  [`backend/internal/temporal/workflows/invite_email.go`](backend/internal/temporal/workflows/invite_email.go) and
+  [`backend/internal/temporal/workflows/platform_invite_email.go`](backend/internal/temporal/workflows/platform_invite_email.go):
+  send household workspace invitations and optional platform signup invitations via Resend. Raw
+  invite tokens are sealed into `encrypted_pending_token` with `crypto.Vault`, never passed in
+  workflow arguments, and cleared once delivered.
 
 Claim and fetch are separate activities because a claim token is single-use at the bank: one
 activity doing both would re-claim on every fetch retry.
@@ -131,6 +137,16 @@ leaving all three unset disables push cleanly, while a partial configuration or 
 (must start with `mailto:` or `https://`) logs an error and disables push. When `vapid.enabled=true`
 in Helm, both `backend` and `sync-worker` receive identical credentials via `budget-app.syncEnv`,
 and `VAPID_PRIVATE_KEY` is never placed in ConfigMaps or workflow payloads.
+
+### Platform Admin Privacy & RLS Invariant
+
+Platform admin endpoints (`/api/v1/admin/*`, guarded by `RequirePlatformAdmin` checking
+`PLATFORM_ADMIN_GROUP`, default `"budget-admins"`, or optional `PLATFORM_ADMIN_EMAILS` for local
+Dex dev) must **never** weaken tenant RLS on `workspaces` or ledger tables (`accounts`,
+`transactions`, `categories`, `receipts`). Cross-tenant oversight and user deletion run only inside
+`db.WithPlatformAdminTx` (which sets transaction-local `app.platform_admin_mode = 'true'`) against
+the metadata-only `admin_workspace_overview` view and `SECURITY DEFINER` SQL functions
+(`admin_list_users`, `admin_delete_user`).
 
 ### Rules for adding or changing a workflow
 

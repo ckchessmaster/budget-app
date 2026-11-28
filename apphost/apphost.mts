@@ -56,6 +56,8 @@ export const backend = await builder
   .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
   .withEnvironment('APP_PUBLIC_URL', 'http://localhost:5173')
   .withEnvironment('EMAIL_FROM_ADDRESS', 'Budget App <invites@dev.local>')
+  .withEnvironment('PLATFORM_ADMIN_GROUP', 'budget-admins')
+  .withEnvironment('PLATFORM_ADMIN_EMAILS', 'admin@dev.local')
   .waitFor(budgetDb)
   .waitFor(dex)
   .waitFor(temporal);
@@ -68,6 +70,8 @@ export const worker = await builder
   .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
   .withEnvironment('APP_PUBLIC_URL', 'http://localhost:5173')
   .withEnvironment('EMAIL_FROM_ADDRESS', 'Budget App <invites@dev.local>')
+  .withEnvironment('PLATFORM_ADMIN_GROUP', 'budget-admins')
+  .withEnvironment('PLATFORM_ADMIN_EMAILS', 'admin@dev.local')
   .waitFor(budgetDb)
   .waitFor(temporal)
   .waitFor(backend);

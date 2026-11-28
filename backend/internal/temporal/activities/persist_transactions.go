@@ -239,7 +239,9 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 	if _, err := tx.Exec(ctx, `
 		UPDATE simplefin_connections
 		SET last_synced_at = NOW(),
-		    last_sync_warnings = $2::jsonb
+		    last_sync_warnings = $2::jsonb,
+		    last_sync_status = 'OK',
+		    last_sync_error = NULL
 		WHERE workspace_id = $1
 	`, input.SyncScope.WorkspaceID, string(warningsJSON)); err != nil {
 		return result, err

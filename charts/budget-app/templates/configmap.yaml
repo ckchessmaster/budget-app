@@ -77,6 +77,10 @@ data:
   # Audience ("aud") verification. Disable only to work around an identity provider
   # that issues this client a token with a different audience.
   OIDC_ENFORCE_AUDIENCE: {{ .Values.oidc.enforceAudience | quote }}
+  PLATFORM_ADMIN_GROUP: {{ trim (.Values.oidc.adminGroup | default "budget-admins") | quote }}
+  {{- if .Values.oidc.adminEmails }}
+  PLATFORM_ADMIN_EMAILS: {{ join "," .Values.oidc.adminEmails | quote }}
+  {{- end }}
   # Comma-separated browser origins permitted for cross-site API calls. Derived from
   # the ingress hosts unless backend.corsAllowedOrigins sets it explicitly.
   CORS_ALLOWED_ORIGINS: {{ include "budget-app.corsAllowedOrigins" . | quote }}

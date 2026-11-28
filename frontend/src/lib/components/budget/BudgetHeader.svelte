@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { theme } from '$lib/stores/theme.svelte';
+	import { auth } from '$lib/stores/auth.svelte';
 	import WorkspaceSwitcher from '$lib/components/WorkspaceSwitcher.svelte';
 	import type { MonthSummary } from '$lib/types/budget';
 	import type { SolvencyReport } from '$lib/types/transaction';
@@ -203,6 +204,20 @@
 			>
 				Rules
 			</a>
+
+			{#if auth.isPlatformAdmin}
+				<a
+					href="/admin"
+					aria-label="Platform Admin"
+					title="Platform Admin"
+					data-testid="admin-nav-link"
+					class="p-2 rounded-lg border border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary transition-colors"
+				>
+					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+					</svg>
+				</a>
+			{/if}
 
 			<a
 				href="/settings"

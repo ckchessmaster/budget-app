@@ -25,7 +25,7 @@
 
 	let { children } = $props();
 
-	const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/silent-callback', '/invite'];
+	const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/silent-callback', '/invite', '/signup'];
 
 	let currentPath = $derived(page.url.pathname);
 	let isSilentCallbackRoute = $derived(currentPath.startsWith('/auth/silent-callback'));
@@ -34,6 +34,7 @@
 	let isAccountsActive = $derived(currentPath.startsWith('/accounts'));
 	let isRulesActive = $derived(currentPath.startsWith('/rules'));
 	let isSettingsActive = $derived(currentPath.startsWith('/settings'));
+	let isAdminActive = $derived(currentPath.startsWith('/admin'));
 	let isSyncing = $derived(demo.syncStatus === 'running' || demo.syncStatus === 'retrying');
 
 	let pushModalOpen = $state(false);
@@ -204,6 +205,23 @@
 			</div>
 
 			<div class="flex items-center gap-2 sm:gap-3">
+				{#if auth.isAuthenticated && auth.isPlatformAdmin}
+					<a
+						href="/admin"
+						aria-label="Platform Admin"
+						title="Platform Admin"
+						aria-current={isAdminActive ? 'page' : undefined}
+						data-testid="admin-nav-link"
+						class="p-2 rounded-lg border transition-colors {isAdminActive
+							? 'border-accent-pop/60 bg-accent-tint text-accent-pop'
+							: 'border-border bg-subtle hover:bg-surface-hover text-ink-secondary hover:text-ink-primary'}"
+					>
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+						</svg>
+					</a>
+				{/if}
+
 				{#if auth.isAuthenticated}
 					<a
 						href="/settings"
@@ -363,7 +381,32 @@
 	{/if}
 
 	<main class="flex-1 overflow-y-auto overscroll-contain-scroll">
-		{@render children()}
+		{#if auth.isAuthenticated && auth.accountDisabled}
+			<div class="min-h-full flex items-center justify-center p-4">
+				<div
+					data-testid="account-disabled-card"
+					class="w-full max-w-md rounded-2xl border border-status-danger/30 bg-surface p-6 shadow-xl text-center space-y-4"
+				>
+					<h2 class="text-lg font-bold text-ink-primary">Account Disabled</h2>
+					<p class="text-xs text-ink-secondary leading-relaxed">
+						Your account has been disabled by a platform administrator. Contact your administrator if you believe this is a mistake.
+					</p>
+					<button
+						type="button"
+						onclick={() => {
+							demo.resetOnLogout();
+							workspace.resetOnLogout();
+							void auth.logout();
+						}}
+						class="px-4 py-2 rounded-lg bg-accent-primary text-accent-primary-text text-xs font-semibold hover:opacity-90"
+					>
+						Sign Out
+					</button>
+				</div>
+			</div>
+		{:else}
+			{@render children()}
+		{/if}
 	</main>
 
 	{#if auth.isAuthenticated && demo.isDemo}

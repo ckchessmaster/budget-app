@@ -316,4 +316,36 @@ describe('AuthStore session lifecycle', () => {
 		expect(store.cachedUser).toBeNull();
 		expect(store.canAccessOffline).toBe(false);
 	});
+
+	it('derives isPlatformAdmin from groups and updates from /api/v1/auth/me', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ is_platform_admin: true, is_active: true })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		try {
+			const adminSession = {
+				...session(LIVE_TOKEN, 3600),
+				profile: { sub: 'admin-1', email: 'admin@dev.local', groups: ['budget-admins'] }
+			};
+			mockGetUser.mockResolvedValue(adminSession);
+
+			const store = await readyStore();
+			await store.ensureServerIdentity();
+			expect(store.isPlatformAdmin).toBe(true);
+			expect(store.accountDisabled).toBe(false);
+
+			fetchMock.mockResolvedValueOnce({
+				ok: false,
+				status: 403,
+				json: async () => ({ error: 'account_disabled' })
+			});
+			await store.refreshServerIdentity();
+			expect(store.accountDisabled).toBe(true);
+			expect(store.isPlatformAdmin).toBe(false);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });

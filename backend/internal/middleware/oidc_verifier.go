@@ -111,6 +111,7 @@ type TokenClaims struct {
 	Subject string
 	Email   string
 	Name    string
+	Groups  []string
 }
 
 // ClaimsVerifier is an optional extension of OIDCVerifier for verifiers that also
@@ -147,9 +148,10 @@ func (v *JWTVerifier) VerifyClaims(ctx context.Context, rawToken string) (TokenC
 	}
 
 	var parsed struct {
-		Email             string `json:"email"`
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
+		Email             string   `json:"email"`
+		Name              string   `json:"name"`
+		PreferredUsername string   `json:"preferred_username"`
+		Groups            []string `json:"groups"`
 	}
 	_ = token.Claims(&parsed)
 
@@ -158,10 +160,18 @@ func (v *JWTVerifier) VerifyClaims(ctx context.Context, rawToken string) (TokenC
 		displayName = strings.TrimSpace(parsed.PreferredUsername)
 	}
 
+	var groups []string
+	for _, g := range parsed.Groups {
+		if trimmed := strings.TrimSpace(g); trimmed != "" {
+			groups = append(groups, trimmed)
+		}
+	}
+
 	return TokenClaims{
 		Subject: token.Subject,
 		Email:   strings.TrimSpace(parsed.Email),
 		Name:    displayName,
+		Groups:  groups,
 	}, nil
 }
 

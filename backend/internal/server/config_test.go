@@ -16,6 +16,7 @@ func setOIDCEnv(t *testing.T, env map[string]string) {
 		"OIDC_ISSUER_URL", "DEX_ISSUER_URL", "OIDC_CLIENT_ID",
 		"OIDC_ENFORCE_AUDIENCE", "CORS_ALLOWED_ORIGINS",
 		"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT",
+		"PLATFORM_ADMIN_GROUP", "PLATFORM_ADMIN_EMAILS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -43,6 +44,12 @@ func TestLoadConfigOIDCAndCORSDefaults(t *testing.T) {
 	}
 	if len(cfg.CORSAllowedOrigins) != 0 {
 		t.Fatalf("CORSAllowedOrigins = %#v, want no origins unless configured", cfg.CORSAllowedOrigins)
+	}
+	if cfg.PlatformAdminGroup != "budget-admins" {
+		t.Fatalf("PlatformAdminGroup = %q, want budget-admins", cfg.PlatformAdminGroup)
+	}
+	if len(cfg.PlatformAdminEmails) != 0 {
+		t.Fatalf("PlatformAdminEmails = %#v, want empty by default", cfg.PlatformAdminEmails)
 	}
 }
 

@@ -32,6 +32,9 @@ func TestSharedWorkflowStatusRouteIsReachable(t *testing.T) {
 		"/api/v1/transactions/workflow-status/offline-replay-11111111-2222-3333-4444-555555555555-1",
 		"/api/v1/bank/workflow-status/simplefin-claim-1-1",
 		"/api/v1/bank/sync-status/bank-sync-1-1",
+		"/api/v1/auth/me",
+		"/api/v1/admin/users",
+		"/api/v1/admin/health",
 	} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)

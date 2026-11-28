@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -26,6 +28,7 @@ type OutboundEmail struct {
 	HTMLBody       string
 	TextBody       string
 	IdempotencyKey string
+	Template       string
 }
 
 type Sender interface {
@@ -176,6 +179,90 @@ func NewSenderFromEnv() Sender {
 		return &NoopConsoleSender{FromAddress: from}
 	}
 	return NewResendSender(apiKey, from, nil)
+}
+
+// LoggingSender wraps an email.Sender and writes an audit row to outbound_email_logs
+// on every send attempt (both SENT and FAILED) for platform health telemetry.
+type LoggingSender struct {
+	Inner Sender
+	Pool  *pgxpool.Pool
+}
+
+func NewLoggingSender(inner Sender, pool *pgxpool.Pool) Sender {
+	if pool == nil || inner == nil {
+		return inner
+	}
+	return &LoggingSender{Inner: inner, Pool: pool}
+}
+
+func (l *LoggingSender) Send(ctx context.Context, msg OutboundEmail) (string, error) {
+	msgID, sendErr := l.Inner.Send(ctx, msg)
+	template := strings.TrimSpace(msg.Template)
+	if template == "" {
+		template = "generic"
+	}
+	if len(template) > 64 {
+		template = template[:64]
+	}
+
+	status := "SENT"
+	var errMsg *string
+	if sendErr != nil {
+		status = "FAILED"
+		trimmed := strings.TrimSpace(sendErr.Error())
+		if len(trimmed) > 500 {
+			trimmed = trimmed[:500]
+		}
+		errMsg = &trimmed
+	}
+
+	if l.Pool != nil {
+		if _, logErr := l.Pool.Exec(ctx, `
+			INSERT INTO outbound_email_logs (template, status, error_message)
+			VALUES ($1, $2, $3)
+		`, template, status, errMsg); logErr != nil {
+			slog.Warn("failed to record outbound email audit log", "template", template, "status", status, "error", logErr)
+		}
+	}
+	return msgID, sendErr
+}
+
+func RenderPlatformInviteEmail(label, inviterEmail, inviteURL string, expiresAt time.Time) (subject, htmlBody, textBody string) {
+	inviter := strings.TrimSpace(inviterEmail)
+	if inviter == "" {
+		inviter = "A Budget App administrator"
+	}
+	note := strings.TrimSpace(label)
+	expiryLabel := expiresAt.UTC().Format("Jan 2, 2006 at 15:04 UTC")
+
+	subject = "You're invited to join Budget App"
+	textBody = fmt.Sprintf(
+		"%s invited you to create your personal Budget App account.\n\nAccept your single-use invitation (expires %s):\n%s\n",
+		inviter, expiryLabel, inviteURL,
+	)
+	noteHTML := ""
+	if note != "" {
+		noteHTML = fmt.Sprintf(`<p style="margin:0 0 12px;font-size:13px;color:#475569;">Note: %s</p>`, html.EscapeString(note))
+	}
+	htmlBody = fmt.Sprintf(
+		`<div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0f172a;">`+
+			`<h2 style="margin:0 0 12px;font-size:20px;">Welcome to Budget App</h2>`+
+			`<p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#334155;">`+
+			`<strong>%s</strong> invited you to create your personal Budget App account.`+
+			`</p>`+
+			`%s`+
+			`<p style="margin:24px 0;">`+
+			`<a href="%s" style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 20px;border-radius:8px;">Create Your Account</a>`+
+			`</p>`+
+			`<p style="margin:0;font-size:12px;color:#64748b;">This single-use invitation expires %s. If the button does not work, copy and paste this link:<br/><code>%s</code></p>`+
+			`</div>`,
+		html.EscapeString(inviter),
+		noteHTML,
+		html.EscapeString(inviteURL),
+		html.EscapeString(expiryLabel),
+		html.EscapeString(inviteURL),
+	)
+	return subject, htmlBody, textBody
 }
 
 func RenderInviteEmail(workspaceName, inviterEmail, role, inviteURL string) (subject, htmlBody, textBody string) {

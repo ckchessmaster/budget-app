@@ -44,8 +44,26 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 
 	var bankActivities *activities.BankActivities
 
+	recordFailure := func(syncErr error) {
+		failCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: 15 * time.Second,
+			RetryPolicy: &temporal.RetryPolicy{
+				InitialInterval:    1 * time.Second,
+				BackoffCoefficient: 2.0,
+				MaximumAttempts:    2,
+			},
+		})
+		if err := workflow.ExecuteActivity(failCtx, bankActivities.RecordSyncFailureActivity, activities.RecordSyncFailureInput{
+			SyncScope:    input.SyncScope,
+			ErrorMessage: syncErr.Error(),
+		}).Get(failCtx, nil); err != nil {
+			workflow.GetLogger(ctx).Warn("failed to record SimpleFIN sync failure status", "error", err)
+		}
+	}
+
 	var data *simplefin.DataResponse
 	if err := workflow.ExecuteActivity(ctx, bankActivities.FetchSimpleFINDataActivity, input.SyncScope).Get(ctx, &data); err != nil {
+		recordFailure(err)
 		return nil, err
 	}
 
@@ -54,21 +72,25 @@ func BankSyncWorkflow(ctx workflow.Context, input BankSyncInput) (*BankSyncResul
 		SyncScope: input.SyncScope,
 		Data:      data,
 	}).Get(ctx, &persistRes); err != nil {
+		recordFailure(err)
 		return nil, err
 	}
 
 	var linked int
 	if err := workflow.ExecuteActivity(ctx, bankActivities.DetectAndLinkTransfersActivity, input.SyncScope).Get(ctx, &linked); err != nil {
+		recordFailure(err)
 		return nil, err
 	}
 
 	var normalized int
 	if err := workflow.ExecuteActivity(ctx, bankActivities.NormalizeMerchantsActivity, input.SyncScope).Get(ctx, &normalized); err != nil {
+		recordFailure(err)
 		return nil, err
 	}
 
 	var autoCategorized int
 	if err := workflow.ExecuteActivity(ctx, bankActivities.ApplyCategorizationRulesActivity, input.SyncScope).Get(ctx, &autoCategorized); err != nil {
+		recordFailure(err)
 		return nil, err
 	}
 

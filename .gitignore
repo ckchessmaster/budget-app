@@ -39,6 +39,10 @@ node_modules/
 build/
 dist/
 .output/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 package-lock.json.bak
 pnpm-debug.log*
 npm-debug.log*

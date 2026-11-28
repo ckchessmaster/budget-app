@@ -83,6 +83,7 @@ jobs:
           GRANT USAGE ON SCHEMA public TO budget_app_user;
           GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO budget_app_user;
           GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO budget_app_user;
+          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO budget_app_user;
           SQL
 
       - name: Run Go tests (unit + Postgres RLS)
@@ -123,6 +124,11 @@ jobs:
 
       - name: Build production bundle
         run: npm run build
+
+      - name: Install Playwright Chromium & run E2E tests
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
 
   helm:
     name: Helm Chart
@@ -529,6 +535,9 @@ jobs:
               print("::error::backup CronJob rendered when backup.enabled=false")
               sys.exit(1)
           default_cm = next(d for d in default_docs if d.get("kind") == "ConfigMap")
+          if (default_cm.get("data") or {}).get("PLATFORM_ADMIN_GROUP") != "budget-admins":
+              print("::error::ConfigMap missing default PLATFORM_ADMIN_GROUP=budget-admins")
+              sys.exit(1)
           if any(k.startswith("VAPID_") for k in (default_cm.get("data") or {})):
               print("::error::ConfigMap contains VAPID_* when vapid.enabled=false")
               sys.exit(1)
