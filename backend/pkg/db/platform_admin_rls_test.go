@@ -164,3 +164,97 @@ func TestPlatformAdminMetadataAndPrivacyRLS(t *testing.T) {
 		t.Fatal("expected shared workspace w2 owned by u2 to remain intact")
 	}
 }
+
+func TestPlatformAdminNonSuperuserOwnerVisibility(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	adminPool, err := pgxpool.New(ctx, getAdminDatabaseURL())
+	if err != nil {
+		t.Fatalf("failed to connect to admin database: %v", err)
+	}
+	defer adminPool.Close()
+
+	// Create a non-superuser role (no SUPERUSER, no BYPASSRLS) to simulate production DB ownership
+	roleName := "budget_nonsuper_test"
+	if _, err := adminPool.Exec(ctx, `
+		DO $$
+		BEGIN
+			IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '`+roleName+`') THEN
+				CREATE ROLE `+roleName+` WITH LOGIN PASSWORD 'nonsuperpass';
+			END IF;
+		END
+		$$;
+		GRANT USAGE, CREATE ON SCHEMA public TO `+roleName+`;
+		GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO `+roleName+`;
+		GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO `+roleName+`;
+		GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO `+roleName+`;
+	`); err != nil {
+		t.Fatalf("create non-superuser role: %v", err)
+	}
+
+	cfg, err := pgxpool.ParseConfig(getAdminDatabaseURL())
+	if err != nil {
+		t.Fatalf("parse admin url: %v", err)
+	}
+	cfg.ConnConfig.User = roleName
+	cfg.ConnConfig.Password = "nonsuperpass"
+	nonSuperPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect as non-superuser: %v", err)
+	}
+	defer nonSuperPool.Close()
+
+	u1 := uuid.New()
+	w1 := uuid.New()
+	email1 := "nonsuper-" + u1.String()[:8] + "@example.com"
+
+	_, err = adminPool.Exec(ctx, `INSERT INTO platform_users (user_id, email, display_name, is_active) VALUES ($1, $2, 'NonSuper User', TRUE)`, u1, email1)
+	if err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	_, err = adminPool.Exec(ctx, `INSERT INTO workspaces (id, name, is_demo, owner_user_id) VALUES ($1, 'NonSuper WS', FALSE, $2)`, w1, u1)
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	_, err = adminPool.Exec(ctx, `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')`, w1, u1)
+	if err != nil {
+		t.Fatalf("seed member: %v", err)
+	}
+	_, err = adminPool.Exec(ctx, `INSERT INTO simplefin_connections (workspace_id, encrypted_claim_token, last_synced_at, last_sync_status) VALUES ($1, 'enc', NOW(), 'OK')`, w1)
+	if err != nil {
+		t.Fatalf("seed sf: %v", err)
+	}
+
+	defer func() {
+		bg := context.Background()
+		_, _ = adminPool.Exec(bg, "DELETE FROM workspaces WHERE id = $1", w1)
+		_, _ = adminPool.Exec(bg, "DELETE FROM platform_users WHERE user_id = $1", u1)
+	}()
+
+	err = db.WithPlatformAdminTx(ctx, nonSuperPool, func(tx pgx.Tx) error {
+		var wsName, ownerEmail, sfStatus string
+		var memberCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT workspace_name, COALESCE(owner_email, ''), member_count, simplefin_status
+			FROM admin_workspace_overview WHERE workspace_id = $1
+		`, w1).Scan(&wsName, &ownerEmail, &memberCount, &sfStatus); err != nil {
+			return err
+		}
+		if wsName != "NonSuper WS" || ownerEmail != email1 || memberCount != 1 || sfStatus != "OK" {
+			t.Fatalf("unexpected overview row: name=%q owner=%q members=%d sf=%q", wsName, ownerEmail, memberCount, sfStatus)
+		}
+
+		var owned int
+		if err := tx.QueryRow(ctx, "SELECT owned_workspace_count FROM admin_list_users() WHERE user_id = $1", u1).Scan(&owned); err != nil {
+			return err
+		}
+		if owned != 1 {
+			t.Fatalf("expected owned_workspace_count=1 for non-superuser caller, got %d", owned)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("non-superuser WithPlatformAdminTx failed: %v", err)
+	}
+}
