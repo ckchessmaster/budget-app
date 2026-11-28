@@ -67,6 +67,11 @@ func authedRouter(pool *pgxpool.Pool, replay ReplayWorkflow, userID uuid.UUID) c
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			reqCtx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+			reqCtx = middleware.WithWorkspaceContext(reqCtx, middleware.WorkspaceContext{
+				WorkspaceID: uuid.New(),
+				UserID:      userID,
+				Role:        middleware.RoleOwner,
+			})
 			next.ServeHTTP(w, req.WithContext(reqCtx))
 		})
 	})

@@ -1,6 +1,6 @@
 import { getAppConfig } from '$lib/config';
 import { fetchWorkflowStatus, WorkflowStatusError, type WorkflowStatus } from '$lib/api/simplefin';
-import { auth } from '$lib/stores/auth.svelte';
+import { buildAuthHeaders } from '$lib/api/headers';
 
 export interface SimpleFINConnectionStatus {
 	connected: boolean;
@@ -12,6 +12,7 @@ export interface SimpleFINConnectionStatus {
 export interface SettingsResponse {
 	workspace_id: string;
 	workspace_name: string;
+	role?: 'owner' | 'member' | 'read_only';
 	is_demo: boolean;
 	demo_mode_enabled: boolean;
 	inbound_receipt_alias: string;
@@ -74,14 +75,7 @@ export interface SimActionResponse {
 }
 
 async function authHeaders(): Promise<HeadersInit> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json'
-	};
-	const token = await auth.getValidToken();
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-	return headers;
+	return buildAuthHeaders();
 }
 
 async function parseError(res: Response, fallback: string): Promise<string> {

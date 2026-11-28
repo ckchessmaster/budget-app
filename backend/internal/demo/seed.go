@@ -79,9 +79,9 @@ func SeedDemoWorkspaceTxWithID(
 		demoWSID = uuid.New()
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspaces (id, name, is_demo)
-		VALUES ($1, 'Demo Sandbox Workspace', TRUE)
-	`, demoWSID); err != nil {
+		INSERT INTO workspaces (id, name, is_demo, owner_user_id)
+		VALUES ($1, 'Demo Sandbox Workspace', TRUE, $2)
+	`, demoWSID, userID); err != nil {
 		return uuid.Nil, fmt.Errorf("create demo workspace: %w", err)
 	}
 
@@ -90,6 +90,22 @@ func SeedDemoWorkspaceTxWithID(
 		VALUES ($1, $2, 'owner')
 	`, demoWSID, userID); err != nil {
 		return uuid.Nil, fmt.Errorf("add demo workspace member: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO workspace_owners (workspace_id, owner_user_id)
+		VALUES ($1, $2)
+		ON CONFLICT (workspace_id) DO UPDATE SET owner_user_id = EXCLUDED.owner_user_id
+	`, demoWSID, userID); err != nil {
+		return uuid.Nil, fmt.Errorf("add demo workspace owner record: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO workspace_roster (workspace_id, user_id, role)
+		VALUES ($1, $2, 'owner')
+		ON CONFLICT (workspace_id, user_id) DO NOTHING
+	`, demoWSID, userID); err != nil {
+		return uuid.Nil, fmt.Errorf("add demo workspace roster entry: %w", err)
 	}
 
 	domain := os.Getenv("RECEIPT_DOMAIN")

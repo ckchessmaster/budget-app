@@ -12,6 +12,7 @@ import (
 // ApplyCategorizationRulesActivity runs priority-ordered workspace categorization rules
 // against uncategorized, non-transfer, non-split parent transactions on budget accounts.
 func (a *BankActivities) ApplyCategorizationRulesActivity(ctx context.Context, scope temporalinternal.SyncScope) (int, error) {
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	applied := 0
 	err := db.WithWorkspaceTx(ctx, a.Pool, scope.UserID, func(tx pgx.Tx) error {
 		var rErr error

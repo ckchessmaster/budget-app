@@ -361,6 +361,9 @@ func (e *NotificationEvaluator) EvaluateWorkspace(ctx context.Context, workspace
 	if e == nil || e.pool == nil || e.push == nil || !e.push.Enabled() || userID == uuid.Nil {
 		return EvaluationResult{}, nil
 	}
+	if workspaceID != uuid.Nil {
+		ctx = db.WithWorkspaceID(ctx, workspaceID)
+	}
 
 	now := e.nowFn().UTC()
 	ym := budget.NormalizeYearMonth(now)

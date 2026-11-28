@@ -48,6 +48,7 @@
 	} from '$lib/offline/sync';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
+	import { workspace } from '$lib/stores/workspace.svelte';
 	import type {
 		CategoryBudget,
 		CreateCategoryPayload,
@@ -331,8 +332,10 @@
 
 	$effect(() => {
 		const version = demo.dataVersion;
+		const activeWS = workspace.activeWorkspaceId;
 		const authed = auth.isAuthenticated;
 		if (authed || auth.canAccessOffline) {
+			void activeWS;
 			void loadWorkspace(currentMonth, version > 0);
 		}
 	});
@@ -1412,29 +1415,38 @@
 					{/if}
 				</div>
 
-				<div class="flex items-center gap-2">
-					{#if groupedCategories.length > 0}
+				{#if workspace.isReadOnly}
+					<span
+						data-testid="budget-readonly-badge"
+						class="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 px-2.5 py-1 text-xs font-semibold"
+					>
+						View-Only Workspace
+					</span>
+				{:else}
+					<div class="flex items-center gap-2">
+						{#if groupedCategories.length > 0}
+							<button
+								type="button"
+								data-testid="toggle-organize-btn"
+								aria-pressed={organizeMode}
+								onclick={toggleOrganizeMode}
+								class="rounded-lg border px-3 py-2 text-xs font-semibold transition-colors {organizeMode
+									? 'border-accent-pop bg-accent-tint text-accent-pop'
+									: 'border-border bg-surface text-ink-secondary hover:bg-surface-hover hover:text-ink-primary'}"
+							>
+								{organizeMode ? 'Done' : 'Organize'}
+							</button>
+						{/if}
 						<button
 							type="button"
-							data-testid="toggle-organize-btn"
-							aria-pressed={organizeMode}
-							onclick={toggleOrganizeMode}
-							class="rounded-lg border px-3 py-2 text-xs font-semibold transition-colors {organizeMode
-								? 'border-accent-pop bg-accent-tint text-accent-pop'
-								: 'border-border bg-surface text-ink-secondary hover:bg-surface-hover hover:text-ink-primary'}"
+							data-testid="add-category-btn"
+							onclick={openNewGroup}
+							class="rounded-lg bg-accent-primary text-accent-primary-text px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity"
 						>
-							{organizeMode ? 'Done' : 'Organize'}
+							+ Add Category
 						</button>
-					{/if}
-					<button
-						type="button"
-						data-testid="add-category-btn"
-						onclick={openNewGroup}
-						class="rounded-lg bg-accent-primary text-accent-primary-text px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity"
-					>
-						+ Add Category
-					</button>
-				</div>
+					</div>
+				{/if}
 			</div>
 
 			<div class="sr-only" aria-live="polite" role="status">{reorderAnnouncement}</div>

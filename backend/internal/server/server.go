@@ -29,6 +29,8 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/categorization"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
+	"github.com/ckchessmaster/budget-app/backend/internal/household"
+	"github.com/ckchessmaster/budget-app/backend/internal/idp"
 	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
@@ -53,6 +55,7 @@ type Config struct {
 	// bind here when the sync worker runs as its own Deployment.
 	MockSimpleFINListenAddr string
 	MockSimpleFINBaseURL    string
+	AppPublicURL            string
 	VAPID                   notifications.VAPIDConfig
 }
 
@@ -109,6 +112,11 @@ func LoadConfig() Config {
 		mockBaseURL = mockBridgeBaseURLFor(bridgeListenAddr)
 	}
 
+	appPublicURL := strings.TrimSpace(os.Getenv("APP_PUBLIC_URL"))
+	if appPublicURL == "" {
+		appPublicURL = "http://localhost:5173"
+	}
+
 	vapidCfg, err := notifications.LoadVAPIDConfigFromEnv()
 	if err != nil {
 		slog.Error("invalid or partial VAPID configuration; web push notifications disabled", "error", err)
@@ -124,6 +132,7 @@ func LoadConfig() Config {
 		CORSAllowedOrigins:      parseCORSAllowedOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
 		MockSimpleFINListenAddr: bridgeListenAddr,
 		MockSimpleFINBaseURL:    mockBaseURL,
+		AppPublicURL:            appPublicURL,
 		VAPID:                   vapidCfg,
 	}
 }
@@ -133,12 +142,21 @@ type Server struct {
 	pool         *pgxpool.Pool
 	router       chi.Router
 	bridgeRouter chi.Router
-	provisioner  workspace.Provisioner
+	provisioner  *workspace.DefaultProvisioner
 	verifier     middleware.OIDCVerifier
 	temporal     client.Client
 	vault        crypto.Vault
 	push         notifications.PushService
 	evaluator    notifications.Evaluator
+	household    *household.Handler
+}
+
+type rolloverSchedulerAdapter struct {
+	client client.Client
+}
+
+func (a rolloverSchedulerAdapter) EnsureWorkspaceRolloverSchedule(ctx context.Context, scope temporalinternal.SyncScope) error {
+	return schedules.EnsureWorkspaceRolloverSchedule(ctx, a.client, scope)
 }
 
 // NewServer builds the API. temporal and vault are dependencies the process cannot do
@@ -153,16 +171,27 @@ func NewServer(
 	vault crypto.Vault,
 ) *Server {
 	pushSvc := notifications.NewWebPushService(pool, cfg.VAPID, nil)
+	prov := workspace.NewProvisioner()
+	var inviteWF household.InviteEmailWorkflow
+	var rolloverSched household.RolloverScheduler
+	if temporalClient != nil {
+		inviteWF = schedules.InviteEmailStarter{Client: temporalClient}
+		rolloverSched = rolloverSchedulerAdapter{client: temporalClient}
+	}
 	s := &Server{
 		cfg:         cfg,
 		pool:        pool,
 		router:      chi.NewRouter(),
-		provisioner: workspace.NewProvisioner(),
+		provisioner: prov,
 		verifier:    verifier,
 		temporal:    temporalClient,
 		vault:       vault,
 		push:        pushSvc,
 		evaluator:   notifications.NewEvaluator(pool, pushSvc),
+		household: household.NewHandler(
+			pool, vault, prov, idp.NewProvisionerFromEnv(),
+			verifier, inviteWF, rolloverSched, cfg.AppPublicURL,
+		),
 	}
 	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
@@ -198,54 +227,57 @@ func (s *Server) setupRoutes() {
 	r.Get("/livez", LivenessHandler())
 	r.Get("/healthz", HealthHandler(s.pool, s.temporal))
 
+	// Public invitation preview & acceptance endpoints
+	household.RegisterPublicRoutes(r, s.household)
+
 	// Protected routes
 	if s.verifier != nil {
 		r.Group(func(protected chi.Router) {
 			protected.Use(middleware.AuthMiddleware(s.verifier))
 
-			// Workspace auto-provisioning / check endpoint
+			// User-scoped workspace discovery, creation, provisioning, Demo toggle & Web Push
 			protected.Post("/api/v1/workspaces/provision", s.handleWorkspaceProvision)
 			protected.Get("/api/v1/workspaces/me", s.handleWorkspaceProvision)
+			household.RegisterUserRoutes(protected, s.household)
 
-			// Milestone 2: Zero-based budget engine & ledger routes
-			budget.RegisterRoutes(protected, s.pool)
-
-			// Categorization recommendations & rules
-			categorization.RegisterRoutes(protected, s.pool)
-
-			// Milestone 3: Accounts, solvency, debt paydown, and transactions
-			account.RegisterRoutes(protected, s.pool)
-			var replay transaction.ReplayWorkflow
-			if s.temporal != nil {
-				replay = schedules.OfflineReplayStarter{Client: s.temporal}
-			}
-			transaction.RegisterRoutes(protected, s.pool, replay, s.evaluator)
-			// The offline queue polls the same shared status endpoint as bank sync and
-			// the demo reset. It lives under /transactions so the queue does not have to
-			// know that its work happens to run on the banking task queue.
-			protected.Get("/api/v1/transactions/workflow-status/{workflow_id}", s.handleWorkflowStatus)
-
-			// Milestone 4: SimpleFIN banking integration & Temporal sync trigger
-			var claimWorkflow simplefin.ClaimWorkflow
-			if s.temporal != nil {
-				claimWorkflow = schedules.SimpleFINClaimStarter{Client: s.temporal}
-			}
-			simplefin.RegisterRoutes(protected, s.pool, s.vault, claimWorkflow)
-			protected.Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
-			// One status endpoint serves every workflow the API can start. The
-			// sync-specific path is an alias kept for cached frontend bundles.
-			protected.Get("/api/v1/bank/workflow-status/{workflow_id}", s.handleWorkflowStatus)
-			protected.Get("/api/v1/bank/sync-status/{workflow_id}", s.handleWorkflowStatus)
-
-			// Settings & Demo Mode simulator routes
 			var demoReset demo.ResetWorkflow
 			if s.temporal != nil {
 				demoReset = schedules.DemoResetStarter{Client: s.temporal}
 			}
-			demo.RegisterRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal, demoReset)
-
-			// Milestone 7: W3C Web Push notifications (opt-in via VAPID)
+			demo.RegisterUserRoutes(protected, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal, demoReset)
 			notifications.RegisterRoutes(protected, s.push)
+
+			// Workspace-scoped routes enforced by X-Workspace-ID + role RBAC
+			protected.Group(func(ws chi.Router) {
+				ws.Use(middleware.RequireWorkspace(s.pool, s.provisioner))
+
+				budget.RegisterRoutes(ws, s.pool)
+				categorization.RegisterRoutes(ws, s.pool)
+				account.RegisterRoutes(ws, s.pool)
+
+				var replay transaction.ReplayWorkflow
+				if s.temporal != nil {
+					replay = schedules.OfflineReplayStarter{Client: s.temporal}
+				}
+				transaction.RegisterRoutes(ws, s.pool, replay, s.evaluator)
+				ws.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).
+					Get("/api/v1/transactions/workflow-status/{workflow_id}", s.handleWorkflowStatus)
+
+				var claimWorkflow simplefin.ClaimWorkflow
+				if s.temporal != nil {
+					claimWorkflow = schedules.SimpleFINClaimStarter{Client: s.temporal}
+				}
+				simplefin.RegisterRoutes(ws, s.pool, s.vault, claimWorkflow)
+				ws.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).
+					Post("/api/v1/bank/sync-now", s.handleBankSyncNow)
+				ws.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).
+					Get("/api/v1/bank/workflow-status/{workflow_id}", s.handleWorkflowStatus)
+				ws.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).
+					Get("/api/v1/bank/sync-status/{workflow_id}", s.handleWorkflowStatus)
+
+				demo.RegisterWorkspaceRoutes(ws, s.pool, s.cfg.MockSimpleFINBaseURL, s.provisioner, s.vault, s.temporal, demoReset)
+				household.RegisterWorkspaceRoutes(ws, s.household)
+			})
 		})
 	}
 }

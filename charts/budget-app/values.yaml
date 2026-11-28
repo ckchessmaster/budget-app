@@ -89,6 +89,27 @@ oidc:
   # Require the token's aud claim to contain clientId. Set to false only as an
   # emergency escape hatch; signature, issuer and expiry are always verified.
   enforceAudience: true
+  # Opt-in IdP user provisioning for household invitations. Disabled by default so
+  # installs without a service account token boot with a local no-op adapter.
+  provisioning:
+    enabled: false
+    provider: "authentik"
+    baseUrl: ""
+    existingSecret: ""
+    apiToken: ""
+    apiTokenSecretKey: "AUTHENTIK_API_TOKEN"
+
+# Opt-in transactional email dispatch for household invitations (via Temporal worker).
+# Disabled by default; logs invite links cleanly when unset.
+email:
+  enabled: false
+  provider: "resend"
+  fromAddress: ""
+  # Defaults to https://<ingress.hosts[0].host> when omitted and ingress is enabled.
+  publicUrl: ""
+  existingSecret: ""
+  apiKey: ""
+  apiKeySecretKey: "RESEND_API_KEY"
 
 database:
   # Name of an existing Secret containing DATABASE_URL (recommended)

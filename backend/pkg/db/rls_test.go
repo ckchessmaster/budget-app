@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -335,5 +337,128 @@ func TestRLSDemoWorkspaceIsolation(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("demo mode check failed: %v", err)
+	}
+}
+
+func TestRLSMultiWorkspaceIsolationAndOwnerCap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	adminPool, err := pgxpool.New(ctx, getAdminDatabaseURL())
+	if err != nil {
+		t.Fatalf("failed to connect to admin database: %v", err)
+	}
+	defer adminPool.Close()
+
+	appPool, err := pgxpool.New(ctx, getTestDatabaseURL())
+	if err != nil {
+		t.Fatalf("failed to connect to app database: %v", err)
+	}
+	defer appPool.Close()
+
+	u1 := uuid.New()
+	u2 := uuid.New()
+	wsA := uuid.New()
+	wsB := uuid.New()
+	wsDemo := uuid.New()
+
+	if _, err := adminPool.Exec(ctx, `
+		INSERT INTO workspaces (id, name, is_demo, owner_user_id)
+		VALUES ($1, 'Personal WS A', FALSE, $4),
+		       ($2, 'Household WS B', FALSE, $5),
+		       ($3, 'Demo WS', TRUE, $4)
+	`, wsA, wsB, wsDemo, u1, u2); err != nil {
+		t.Fatalf("failed to insert workspaces: %v", err)
+	}
+	if _, err := adminPool.Exec(ctx, `
+		INSERT INTO workspace_members (workspace_id, user_id, role)
+		VALUES ($1, $4, 'owner'),
+		       ($2, $5, 'owner'),
+		       ($2, $4, 'member'),
+		       ($3, $4, 'owner')
+	`, wsA, wsB, wsDemo, u1, u2); err != nil {
+		t.Fatalf("failed to insert members: %v", err)
+	}
+	defer func() {
+		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id IN ($1, $2, $3)", wsA, wsB, wsDemo)
+	}()
+
+	// Attempting a second non-demo owned workspace for u1 must violate idx_unique_owner_per_user (23505)
+	secondOwnedWS := uuid.New()
+	_, err = adminPool.Exec(ctx, `
+		INSERT INTO workspaces (id, name, is_demo, owner_user_id)
+		VALUES ($1, 'Second Owned WS', FALSE, $2)
+	`, secondOwnedWS, u1)
+	if err == nil {
+		_, _ = adminPool.Exec(ctx, "DELETE FROM workspaces WHERE id = $1", secondOwnedWS)
+		t.Fatal("expected unique constraint violation (23505) when inserting second non-demo owned workspace for same user")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("expected pg error 23505, got: %v", err)
+	}
+
+	// Seed one category in wsA and one in wsB
+	catA := uuid.New()
+	catB := uuid.New()
+	if _, err := adminPool.Exec(ctx, `
+		INSERT INTO categories (id, workspace_id, name, group_name, monthly_budget, rollover_mode)
+		VALUES ($1, $2, 'Cat A', 'Essentials', 100.00, 'SWEEP'),
+		       ($3, $4, 'Cat B', 'Essentials', 200.00, 'SWEEP')
+	`, catA, wsA, catB, wsB); err != nil {
+		t.Fatalf("failed to insert categories: %v", err)
+	}
+
+	// With app.current_workspace_id = wsA, u1 only sees Cat A (not Cat B even though u1 is a member of wsB)
+	txA, err := appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin txA: %v", err)
+	}
+	defer txA.Rollback(ctx)
+	if _, err := txA.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true), set_config('app.current_workspace_id', $2, true)", u1.String(), wsA.String()); err != nil {
+		t.Fatalf("set GUCs for wsA: %v", err)
+	}
+	var seenA []uuid.UUID
+	rowsA, err := txA.Query(ctx, "SELECT id FROM categories")
+	if err != nil {
+		t.Fatalf("query categories in wsA: %v", err)
+	}
+	for rowsA.Next() {
+		var id uuid.UUID
+		if err := rowsA.Scan(&id); err != nil {
+			t.Fatalf("scan catA: %v", err)
+		}
+		seenA = append(seenA, id)
+	}
+	rowsA.Close()
+	if len(seenA) != 1 || seenA[0] != catA {
+		t.Fatalf("expected only catA (%s) when scoped to wsA, got %v", catA, seenA)
+	}
+	_ = txA.Rollback(ctx)
+
+	// With app.current_workspace_id = wsB, u1 only sees Cat B
+	txB, err := appPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin txB: %v", err)
+	}
+	defer txB.Rollback(ctx)
+	if _, err := txB.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true), set_config('app.current_workspace_id', $2, true)", u1.String(), wsB.String()); err != nil {
+		t.Fatalf("set GUCs for wsB: %v", err)
+	}
+	var seenB []uuid.UUID
+	rowsB, err := txB.Query(ctx, "SELECT id FROM categories")
+	if err != nil {
+		t.Fatalf("query categories in wsB: %v", err)
+	}
+	for rowsB.Next() {
+		var id uuid.UUID
+		if err := rowsB.Scan(&id); err != nil {
+			t.Fatalf("scan catB: %v", err)
+		}
+		seenB = append(seenB, id)
+	}
+	rowsB.Close()
+	if len(seenB) != 1 || seenB[0] != catB {
+		t.Fatalf("expected only catB (%s) when scoped to wsB, got %v", catB, seenB)
 	}
 }

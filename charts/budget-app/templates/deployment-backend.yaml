@@ -62,6 +62,7 @@ spec:
                 name: {{ include "budget-app.fullname" . }}-config
           env:
             {{- include "budget-app.syncEnv" . | nindent 12 }}
+            {{- include "budget-app.idpEnv" . | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /livez

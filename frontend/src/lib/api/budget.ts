@@ -1,5 +1,5 @@
 import { getAppConfig } from '$lib/config';
-import { auth } from '$lib/stores/auth.svelte';
+import { buildAuthHeaders } from './headers';
 import type {
 	CategoryBudget,
 	CreateCategoryPayload,
@@ -21,14 +21,7 @@ function num(val: unknown): number {
 }
 
 async function authHeaders(): Promise<HeadersInit> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json'
-	};
-	const token = await auth.getValidToken();
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-	return headers;
+	return buildAuthHeaders();
 }
 
 function mapCategory(raw: any): CategoryBudget {

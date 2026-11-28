@@ -10,6 +10,7 @@ import (
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
+	"github.com/ckchessmaster/budget-app/backend/internal/email"
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	"github.com/ckchessmaster/budget-app/backend/internal/simplefin"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
@@ -92,6 +93,7 @@ func main() {
 	w.RegisterWorkflow(workflows.SimpleFINDiscoverWorkflow)
 	w.RegisterWorkflow(workflows.DemoResetWorkflow)
 	w.RegisterWorkflow(workflows.OfflineReplayWorkflow)
+	w.RegisterWorkflow(workflows.SendWorkspaceInviteWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:                  pool,
 		Client:                simplefin.NewClient(nil),
@@ -123,6 +125,16 @@ func main() {
 	w.RegisterActivity(&activities.ReplayActivities{
 		Pool:         pool,
 		Transactions: transaction.NewService(transaction.NewRepo(), account.NewRepo()),
+	})
+	appPublicURL := os.Getenv("APP_PUBLIC_URL")
+	if appPublicURL == "" {
+		appPublicURL = "http://localhost:5173"
+	}
+	w.RegisterActivity(&activities.InviteActivities{
+		Pool:         pool,
+		Vault:        vault,
+		Sender:       email.NewSenderFromEnv(),
+		AppPublicURL: appPublicURL,
 	})
 
 	logger.Info("starting Temporal worker", "task_queue", temporalinternal.TaskQueue)

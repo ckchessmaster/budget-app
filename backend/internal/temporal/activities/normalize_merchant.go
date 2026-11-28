@@ -12,6 +12,7 @@ import (
 
 // NormalizeMerchantsActivity cleans raw merchant strings into merchant_clean for a workspace.
 func (a *BankActivities) NormalizeMerchantsActivity(ctx context.Context, scope temporalinternal.SyncScope) (int, error) {
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	normalizer := merchant.NewStandardNormalizer()
 
 	updated := 0

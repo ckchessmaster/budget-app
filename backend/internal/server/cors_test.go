@@ -99,13 +99,13 @@ func TestCORSMiddlewarePreflight(t *testing.T) {
 		"simple cross origin write": {
 			origin:          allowedOrigin,
 			requestMethod:   http.MethodPost,
-			requestHeaders:  "authorization, content-type",
+			requestHeaders:  "authorization, content-type, x-workspace-id",
 			wantStatus:      http.StatusNoContent,
 			wantAllowOrigin: allowedOrigin,
 			wantMethods:     http.MethodPost,
 			wantHeaders: func(t *testing.T, got string) {
 				t.Helper()
-				for _, want := range []string{"authorization", "content-type"} {
+				for _, want := range []string{"authorization", "content-type", "x-workspace-id"} {
 					if !strings.Contains(got, want) {
 						t.Fatalf("Access-Control-Allow-Headers = %q, want it to include %q", got, want)
 					}

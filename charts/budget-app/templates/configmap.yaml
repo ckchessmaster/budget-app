@@ -42,6 +42,35 @@ data:
 {{- fail "vapid.subject must start with mailto: or https:// (RFC 8292)." }}
 {{- end }}
 {{- end }}
+{{- $emailPublicUrl := include "budget-app.emailPublicUrl" . }}
+{{- if .Values.email.enabled }}
+{{- $emailProvider := trim (.Values.email.provider | default "resend") }}
+{{- if ne $emailProvider "resend" }}
+{{- fail (printf "email.provider=%q is unsupported; supported providers: resend" $emailProvider) }}
+{{- end }}
+{{- if not (trim (.Values.email.fromAddress | default "")) }}
+{{- fail "email.fromAddress is required when email.enabled is true." }}
+{{- end }}
+{{- if and (not (trim (.Values.email.existingSecret | default ""))) (not (trim (.Values.email.apiKey | default ""))) }}
+{{- fail "email.existingSecret (recommended) or email.apiKey is required for RESEND_API_KEY when email.enabled is true." }}
+{{- end }}
+{{- if not $emailPublicUrl }}
+{{- fail "email.publicUrl (or ingress.hosts[0].host) is required when email.enabled is true." }}
+{{- end }}
+{{- end }}
+{{- if .Values.oidc.provisioning.enabled }}
+{{- $idpProvider := trim (.Values.oidc.provisioning.provider | default "authentik") }}
+{{- if ne $idpProvider "authentik" }}
+{{- fail (printf "oidc.provisioning.provider=%q is unsupported; supported providers: authentik" $idpProvider) }}
+{{- end }}
+{{- $idpBaseUrl := trim (.Values.oidc.provisioning.baseUrl | default "") }}
+{{- if not (or (hasPrefix "https://" $idpBaseUrl) (hasPrefix "http://" $idpBaseUrl)) }}
+{{- fail "oidc.provisioning.baseUrl must start with https:// or http:// when oidc.provisioning.enabled is true." }}
+{{- end }}
+{{- if and (not (trim (.Values.oidc.provisioning.existingSecret | default ""))) (not (trim (.Values.oidc.provisioning.apiToken | default ""))) }}
+{{- fail "oidc.provisioning.existingSecret (recommended) or oidc.provisioning.apiToken is required for AUTHENTIK_API_TOKEN when oidc.provisioning.enabled is true." }}
+{{- end }}
+{{- end }}
   OIDC_ISSUER_URL: {{ .Values.oidc.issuerUrl | quote }}
   OIDC_AUTHORITY: {{ .Values.oidc.authority | quote }}
   OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
@@ -71,4 +100,15 @@ data:
   {{- if trim (.Values.vapid.subject | default "") }}
   VAPID_SUBJECT: {{ trim .Values.vapid.subject | quote }}
   {{- end }}
+  {{- end }}
+  {{- if .Values.email.enabled }}
+  EMAIL_PROVIDER: {{ trim (.Values.email.provider | default "resend") | quote }}
+  EMAIL_FROM_ADDRESS: {{ trim .Values.email.fromAddress | quote }}
+  APP_PUBLIC_URL: {{ $emailPublicUrl | quote }}
+  {{- else if $emailPublicUrl }}
+  APP_PUBLIC_URL: {{ $emailPublicUrl | quote }}
+  {{- end }}
+  {{- if .Values.oidc.provisioning.enabled }}
+  IDP_PROVISIONING_PROVIDER: {{ trim (.Values.oidc.provisioning.provider | default "authentik") | quote }}
+  AUTHENTIK_BASE_URL: {{ trim .Values.oidc.provisioning.baseUrl | trimSuffix "/" | quote }}
   {{- end }}

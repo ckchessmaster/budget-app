@@ -85,6 +85,12 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			reqCtx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+			reqCtx = middleware.WithWorkspaceContext(reqCtx, middleware.WorkspaceContext{
+				WorkspaceID: wsID,
+				UserID:      userID,
+				Role:        middleware.RoleOwner,
+			})
+			reqCtx = db.WithWorkspaceID(reqCtx, wsID)
 			next.ServeHTTP(w, req.WithContext(reqCtx))
 		})
 	})
@@ -152,6 +158,12 @@ func TestTransactionHandler_NotificationHooks(t *testing.T) {
 	rFail.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			reqCtx := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+			reqCtx = middleware.WithWorkspaceContext(reqCtx, middleware.WorkspaceContext{
+				WorkspaceID: wsID,
+				UserID:      userID,
+				Role:        middleware.RoleOwner,
+			})
+			reqCtx = db.WithWorkspaceID(reqCtx, wsID)
 			next.ServeHTTP(w, req.WithContext(reqCtx))
 		})
 	})

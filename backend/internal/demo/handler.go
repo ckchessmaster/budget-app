@@ -33,6 +33,7 @@ type SimpleFINStatus struct {
 type SettingsResponse struct {
 	WorkspaceID         uuid.UUID       `json:"workspace_id"`
 	WorkspaceName       string          `json:"workspace_name"`
+	Role                string          `json:"role"`
 	IsDemo              bool            `json:"is_demo"`
 	DemoModeEnabled     bool            `json:"demo_mode_enabled"`
 	InboundReceiptAlias string          `json:"inbound_receipt_alias"`
@@ -203,9 +204,15 @@ func (h *Handler) loadSettingsResponse(ctx context.Context, userID uuid.UUID) (*
 		return nil, err
 	}
 
+	role := prov.Role
+	if wc, wcErr := middleware.GetWorkspaceContext(ctx); wcErr == nil && wc.Role != "" {
+		role = string(wc.Role)
+	}
+
 	return &SettingsResponse{
 		WorkspaceID:         prov.WorkspaceID,
 		WorkspaceName:       prov.WorkspaceName,
+		Role:                role,
 		IsDemo:              prov.IsDemo,
 		DemoModeEnabled:     prov.DemoModeEnabled,
 		InboundReceiptAlias: prov.InboundReceiptMail,

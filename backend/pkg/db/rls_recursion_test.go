@@ -35,6 +35,11 @@ var rlsProtectedTables = []string{
 	"credit_card_debt_interlocks",
 	"monthly_rollover_adjustments",
 	"categorization_rules",
+	"notification_cooldowns",
+	"push_subscriptions",
+	"workspace_invitations",
+	"workspace_owners",
+	"workspace_roster",
 }
 
 // TestRLSPoliciesTerminateWithoutRecursion guards the row-security policy chain: scanning
@@ -125,11 +130,14 @@ func TestRLSPoliciesTerminateWithoutRecursion(t *testing.T) {
 
 	userID := uuid.New()
 	workspaceID := uuid.New()
-	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name) VALUES ($1, 'Recursion Test WS')", workspaceID); err != nil {
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspaces (id, name, owner_user_id) VALUES ($1, 'Recursion Test WS', $2)", workspaceID, userID); err != nil {
 		t.Fatalf("failed to create test workspace: %v", err)
 	}
 	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')", workspaceID, userID); err != nil {
 		t.Fatalf("failed to create test workspace member: %v", err)
+	}
+	if _, err := adminPool.Exec(ctx, "INSERT INTO workspace_owners (workspace_id, owner_user_id) VALUES ($1, $2)", workspaceID, userID); err != nil {
+		t.Fatalf("failed to create test workspace owner: %v", err)
 	}
 	defer func() {
 		_, _ = adminPool.Exec(context.Background(), "DELETE FROM workspaces WHERE id = $1", workspaceID)

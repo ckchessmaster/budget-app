@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/ckchessmaster/budget-app/backend/internal/workspace"
 	"github.com/ckchessmaster/budget-app/backend/pkg/crypto"
 	"github.com/go-chi/chi/v5"
@@ -33,7 +34,24 @@ func MockBridgeRouter(pool *pgxpool.Pool) chi.Router {
 	return r
 }
 
-func RegisterRoutes(
+// RegisterUserRoutes mounts user-scoped demo endpoints (Demo Mode toggle) that are
+// available to any authenticated user regardless of active shared-workspace role.
+func RegisterUserRoutes(
+	r chi.Router,
+	pool *pgxpool.Pool,
+	mockBaseURL string,
+	provisioner workspace.Provisioner,
+	vault crypto.Vault,
+	temporalClient client.Client,
+	reset ResetWorkflow,
+) {
+	h := NewHandler(pool, vault, mockBaseURL, provisioner, temporalClient, reset)
+	r.Post("/api/v1/demo/toggle", h.ToggleDemo)
+}
+
+// RegisterWorkspaceRoutes mounts workspace-scoped settings and demo simulator routes
+// with RBAC enforcement.
+func RegisterWorkspaceRoutes(
 	r chi.Router,
 	pool *pgxpool.Pool,
 	mockBaseURL string,
@@ -45,12 +63,12 @@ func RegisterRoutes(
 	h := NewHandler(pool, vault, mockBaseURL, provisioner, temporalClient, reset)
 
 	r.Route("/api/v1/settings", func(r chi.Router) {
-		r.Get("/", h.GetSettings)
-		r.Patch("/workspace", h.UpdateWorkspace)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/", h.GetSettings)
+		r.With(middleware.RequireRole(middleware.RoleOwner)).Patch("/workspace", h.UpdateWorkspace)
 	})
 
 	r.Route("/api/v1/demo", func(r chi.Router) {
-		r.Post("/toggle", h.ToggleDemo)
+		r.Use(middleware.RequireRole(middleware.RoleOwner))
 		r.Post("/reset", h.ResetDemo)
 		r.Get("/simulator", h.GetSimulatorState)
 		r.Post("/simulator/transaction", h.StageTransaction)
@@ -59,4 +77,17 @@ func RegisterRoutes(
 		r.Post("/simulator/match-manual", h.StageManualMatch)
 		r.Put("/simulator/fault", h.UpdateFault)
 	})
+}
+
+func RegisterRoutes(
+	r chi.Router,
+	pool *pgxpool.Pool,
+	mockBaseURL string,
+	provisioner workspace.Provisioner,
+	vault crypto.Vault,
+	temporalClient client.Client,
+	reset ResetWorkflow,
+) {
+	RegisterUserRoutes(r, pool, mockBaseURL, provisioner, vault, temporalClient, reset)
+	RegisterWorkspaceRoutes(r, pool, mockBaseURL, provisioner, vault, temporalClient, reset)
 }

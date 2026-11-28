@@ -44,6 +44,7 @@ spec:
                 name: {{ include "budget-app.fullname" . }}-config
           env:
             {{- include "budget-app.syncEnv" . | nindent 12 }}
+            {{- include "budget-app.emailEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.temporal.worker.resources | nindent 12 }}
           securityContext:

@@ -67,6 +67,7 @@ func (a *RolloverActivities) ExecuteWorkspaceRolloverActivity(ctx context.Contex
 
 	sourceMonth := budget.NormalizeYearMonth(input.SourceMonth)
 	targetMonth := sourceMonth.AddDate(0, 1, 0)
+	ctx = db.WithWorkspaceID(ctx, input.WorkspaceID)
 
 	tx, err := db.BeginWorkspaceTx(ctx, a.Pool, input.UserID)
 	if err != nil {
