@@ -279,8 +279,8 @@ test('admin generates single-use invite, revokes another, and unauthenticated fr
 	// Generate invite 1 (for friend redemption)
 	await page.getByLabel('Label (optional)').fill('For Mike');
 	await page.getByTestId('generate-invite-btn').click();
-	const inviteURL = (await page.getByTestId('generated-invite-url').textContent())?.trim() || '';
-	expect(inviteURL).toContain('/signup?invite=tok-1-secret');
+	await expect(page.getByTestId('generated-invite-url')).toBeVisible();
+	await expect(page.getByTestId('generated-invite-url')).toContainText('/signup?invite=tok-1-secret');
 
 	await page.getByTestId('copy-invite-url-btn').click();
 	await page.getByRole('button', { name: 'Close' }).click();
@@ -288,6 +288,7 @@ test('admin generates single-use invite, revokes another, and unauthenticated fr
 	// Generate invite 2 and revoke it
 	await page.getByLabel('Label (optional)').fill('Revoke Test');
 	await page.getByTestId('generate-invite-btn').click();
+	await expect(page.getByTestId('generated-invite-url')).toBeVisible();
 	await page.getByRole('button', { name: 'Close' }).click();
 	await page.getByTestId('revoke-invite-inv-2').click();
 	await expect(page.getByTestId('invite-row-inv-2')).toContainText('REVOKED');
