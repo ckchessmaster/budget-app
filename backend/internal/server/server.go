@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/ckchessmaster/budget-app/backend/internal/account"
+	"github.com/ckchessmaster/budget-app/backend/internal/admin"
 	"github.com/ckchessmaster/budget-app/backend/internal/budget"
 	"github.com/ckchessmaster/budget-app/backend/internal/categorization"
 	"github.com/ckchessmaster/budget-app/backend/internal/demo"
@@ -57,6 +58,8 @@ type Config struct {
 	MockSimpleFINBaseURL    string
 	AppPublicURL            string
 	VAPID                   notifications.VAPIDConfig
+	PlatformAdminGroup      string
+	PlatformAdminEmails     []string
 }
 
 func LoadConfig() Config {
@@ -121,6 +124,7 @@ func LoadConfig() Config {
 	if err != nil {
 		slog.Error("invalid or partial VAPID configuration; web push notifications disabled", "error", err)
 	}
+	adminCfg := middleware.LoadPlatformAdminConfigFromEnv()
 
 	return Config{
 		Port:                    port,
@@ -134,6 +138,8 @@ func LoadConfig() Config {
 		MockSimpleFINBaseURL:    mockBaseURL,
 		AppPublicURL:            appPublicURL,
 		VAPID:                   vapidCfg,
+		PlatformAdminGroup:      adminCfg.AdminGroup,
+		PlatformAdminEmails:     adminCfg.AdminEmails,
 	}
 }
 
@@ -149,6 +155,8 @@ type Server struct {
 	push         notifications.PushService
 	evaluator    notifications.Evaluator
 	household    *household.Handler
+	admin        *admin.Handler
+	adminCfg     middleware.PlatformAdminConfig
 }
 
 type rolloverSchedulerAdapter struct {
@@ -173,10 +181,20 @@ func NewServer(
 	pushSvc := notifications.NewWebPushService(pool, cfg.VAPID, nil)
 	prov := workspace.NewProvisioner()
 	var inviteWF household.InviteEmailWorkflow
+	var platformInviteWF admin.PlatformInviteEmailWorkflow
 	var rolloverSched household.RolloverScheduler
+	var visClient admin.WorkflowVisibilityClient
+	var temporalHealth admin.TemporalHealthChecker
 	if temporalClient != nil {
 		inviteWF = schedules.InviteEmailStarter{Client: temporalClient}
+		platformInviteWF = schedules.PlatformInviteEmailStarter{Client: temporalClient}
 		rolloverSched = rolloverSchedulerAdapter{client: temporalClient}
+		visClient = admin.NewTemporalVisibilityClient(temporalClient, temporalinternal.NamespaceFromEnv())
+		temporalHealth = admin.TemporalSDKHealthChecker{Client: temporalClient}
+	}
+	adminCfg := middleware.PlatformAdminConfig{
+		AdminGroup:  cfg.PlatformAdminGroup,
+		AdminEmails: cfg.PlatformAdminEmails,
 	}
 	s := &Server{
 		cfg:         cfg,
@@ -192,6 +210,11 @@ func NewServer(
 			pool, vault, prov, idp.NewProvisionerFromEnv(),
 			verifier, inviteWF, rolloverSched, cfg.AppPublicURL,
 		),
+		admin: admin.NewHandler(
+			pool, vault, idp.NewPlatformAdminFromEnv(cfg.AppPublicURL),
+			platformInviteWF, visClient, temporalHealth, cfg.AppPublicURL,
+		),
+		adminCfg: adminCfg,
 	}
 	s.bridgeRouter = demo.MockBridgeRouter(pool)
 
@@ -227,13 +250,23 @@ func (s *Server) setupRoutes() {
 	r.Get("/livez", LivenessHandler())
 	r.Get("/healthz", HealthHandler(s.pool, s.temporal))
 
-	// Public invitation preview & acceptance endpoints
+	// Public invitation preview & acceptance endpoints + platform invite signup endpoints
 	household.RegisterPublicRoutes(r, s.household)
+	admin.RegisterPublicRoutes(r, s.admin)
 
 	// Protected routes
 	if s.verifier != nil {
 		r.Group(func(protected chi.Router) {
 			protected.Use(middleware.AuthMiddleware(s.verifier))
+			protected.Use(middleware.EnsureActivePlatformUser(s.pool))
+
+			protected.Get("/api/v1/auth/me", s.handleAuthMe)
+
+			// Platform Admin routes (group-gated + metadata-only)
+			protected.Group(func(adm chi.Router) {
+				adm.Use(middleware.RequirePlatformAdmin(s.pool, s.adminCfg))
+				admin.RegisterAdminRoutes(adm, s.admin)
+			})
 
 			// User-scoped workspace discovery, creation, provisioning, Demo toggle & Web Push
 			protected.Post("/api/v1/workspaces/provision", s.handleWorkspaceProvision)
@@ -280,6 +313,22 @@ func (s *Server) setupRoutes() {
 			})
 		})
 	}
+}
+
+func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserID(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"user_id":           userID,
+		"email":             middleware.GetUserEmail(r.Context()),
+		"display_name":      middleware.GetUserName(r.Context()),
+		"is_platform_admin": middleware.IsPlatformAdmin(r.Context(), s.adminCfg),
+		"is_active":         true,
+	})
 }
 
 func (s *Server) handleWorkspaceProvision(w http.ResponseWriter, r *http.Request) {

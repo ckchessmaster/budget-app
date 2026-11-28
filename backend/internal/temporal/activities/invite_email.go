@@ -115,6 +115,7 @@ func (a *InviteActivities) SendInviteEmailActivity(ctx context.Context, input In
 		HTMLBody:       htmlBody,
 		TextBody:       textBody,
 		IdempotencyKey: idemKey,
+		Template:       "workspace_invite",
 	})
 	if sendErr != nil {
 		var apiErr *email.APIError

@@ -94,6 +94,7 @@ func main() {
 	w.RegisterWorkflow(workflows.DemoResetWorkflow)
 	w.RegisterWorkflow(workflows.OfflineReplayWorkflow)
 	w.RegisterWorkflow(workflows.SendWorkspaceInviteWorkflow)
+	w.RegisterWorkflow(workflows.SendPlatformInviteWorkflow)
 	w.RegisterActivity(&activities.BankActivities{
 		Pool:                  pool,
 		Client:                simplefin.NewClient(nil),
@@ -130,10 +131,17 @@ func main() {
 	if appPublicURL == "" {
 		appPublicURL = "http://localhost:5173"
 	}
+	loggedSender := email.NewLoggingSender(email.NewSenderFromEnv(), pool)
 	w.RegisterActivity(&activities.InviteActivities{
 		Pool:         pool,
 		Vault:        vault,
-		Sender:       email.NewSenderFromEnv(),
+		Sender:       loggedSender,
+		AppPublicURL: appPublicURL,
+	})
+	w.RegisterActivity(&activities.PlatformInviteActivities{
+		Pool:         pool,
+		Vault:        vault,
+		Sender:       loggedSender,
 		AppPublicURL: appPublicURL,
 	})
 

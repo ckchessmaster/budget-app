@@ -779,3 +779,20 @@ func liveClaimsJSON(issuer, clientID string) string {
 	}
 	return string(encoded)
 }
+
+func TestJWTVerifierExtractsGroupsClaim(t *testing.T) {
+	provider := newFakeOIDCProvider(t)
+	verifier := newTestVerifier(t, provider, nil)
+	userID := uuid.NewString()
+
+	claims := withClaim(provider.claims(userID), "groups", []string{"users", " budget-admins ", ""})
+	token := provider.signToken("key-1", claims)
+
+	got, err := verifier.VerifyClaims(context.Background(), token)
+	if err != nil {
+		t.Fatalf("VerifyClaims failed: %v", err)
+	}
+	if len(got.Groups) != 2 || got.Groups[0] != "users" || got.Groups[1] != "budget-admins" {
+		t.Fatalf("Groups = %#v, want [users budget-admins]", got.Groups)
+	}
+}

@@ -9,7 +9,7 @@ export const oidcSettings: UserManagerSettings = {
 	client_id: appConfig.oidcClientId,
 	redirect_uri: browser ? `${window.location.origin}/auth/callback` : 'http://localhost:5173/auth/callback',
 	response_type: 'code',
-	scope: 'openid profile email offline_access',
+	scope: 'openid profile email groups offline_access',
 	userStore: browser ? new WebStorageStateStore({ store: window.localStorage }) : undefined,
 	loadUserInfo: true,
 	// Persist the session in localStorage (survives mobile PWA restarts) and request

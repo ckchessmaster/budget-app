@@ -1,16 +1,21 @@
 import { getUserManager } from '$lib/auth/oidc';
 import { browser } from '$app/environment';
+import { getAppConfig } from '$lib/config';
 import { BudgetLocalDB } from '$lib/offline/db';
 import type { User } from 'oidc-client-ts';
 
 export interface UserProfile {
 	id: string;
 	email: string;
+	name?: string;
+	groups?: string[];
 }
 
 // Renew this far ahead of expiry so a click never races the token's own deadline.
 // Exported so tests assert against the real window rather than a copy of it.
 export const RENEW_SKEW_MS = 60_000;
+
+const DEFAULT_ADMIN_GROUP = 'budget-admins';
 
 function isOfflineNow(): boolean {
 	return browser && typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -18,6 +23,34 @@ function isOfflineNow(): boolean {
 
 function isJwt(token: string | undefined | null): token is string {
 	return Boolean(token && token.split('.').length === 3);
+}
+
+function decodeJwtGroups(token: string | undefined | null): string[] {
+	if (!isJwt(token) || typeof atob !== 'function') return [];
+	try {
+		const payloadB64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+		const padded = payloadB64.padEnd(payloadB64.length + ((4 - (payloadB64.length % 4)) % 4), '=');
+		const parsed = JSON.parse(atob(padded)) as { groups?: unknown };
+		if (!Array.isArray(parsed.groups)) return [];
+		return parsed.groups
+			.filter((g): g is string => typeof g === 'string' && g.trim().length > 0)
+			.map((g) => g.trim());
+	} catch {
+		return [];
+	}
+}
+
+function extractGroups(session: User): string[] {
+	const profileGroups = (session.profile as Record<string, unknown> | undefined)?.groups;
+	if (Array.isArray(profileGroups)) {
+		const normalized = profileGroups
+			.filter((g): g is string => typeof g === 'string' && g.trim().length > 0)
+			.map((g) => g.trim());
+		if (normalized.length > 0) return normalized;
+	}
+	const fromAccess = decodeJwtGroups(session.access_token);
+	if (fromAccess.length > 0) return fromAccess;
+	return decodeJwtGroups(session.id_token);
 }
 
 /** Whether a session has enough lifetime left to survive the request about to be made. */
@@ -43,6 +76,9 @@ export class AuthStore {
 	isAuthenticated = $state(false);
 	user = $state<UserProfile | null>(null);
 	token = $state<string | null>(null);
+	isPlatformAdmin = $state(false);
+	adminStatusLoaded = $state(false);
+	accountDisabled = $state(false);
 
 	/**
 	 * A session existed and could not be renewed, so the user has to sign in again.
@@ -63,6 +99,7 @@ export class AuthStore {
 	private eventsWired = false;
 	private readyPromise: Promise<void> = Promise.resolve();
 	private renewPromise: Promise<void> | null = null;
+	private mePromise: Promise<void> | null = null;
 
 	get canAccessOffline(): boolean {
 		return this.isAuthenticated || (this.hasCachedSession && isOfflineNow());
@@ -77,6 +114,59 @@ export class AuthStore {
 
 	async ready(): Promise<void> {
 		await this.readyPromise;
+	}
+
+	/**
+	 * Resolves server-authoritative admin & active status from GET /api/v1/auth/me.
+	 * Keeps the JWT groups hint when offline.
+	 */
+	async refreshServerIdentity(): Promise<void> {
+		if (!browser || !this.token || typeof fetch !== 'function') {
+			this.adminStatusLoaded = true;
+			return;
+		}
+		if (this.mePromise) {
+			return this.mePromise;
+		}
+
+		const bearer = this.token;
+		this.mePromise = (async () => {
+			try {
+				const { apiBaseUrl } = getAppConfig();
+				const res = await fetch(`${apiBaseUrl}/api/v1/auth/me`, {
+					headers: { Authorization: `Bearer ${bearer}` }
+				});
+				if (res.ok) {
+					const data = (await res.json()) as {
+						is_platform_admin?: boolean;
+						is_active?: boolean;
+					};
+					this.isPlatformAdmin = Boolean(data.is_platform_admin);
+					this.accountDisabled = data.is_active === false;
+				} else if (res.status === 403) {
+					const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+					if (errBody.error === 'account_disabled') {
+						this.accountDisabled = true;
+						this.isPlatformAdmin = false;
+					}
+				}
+			} catch {
+				// Offline or transient network error; preserve JWT-derived admin hint.
+			} finally {
+				this.adminStatusLoaded = true;
+				this.mePromise = null;
+			}
+		})();
+
+		return this.mePromise;
+	}
+
+	async ensureServerIdentity(): Promise<void> {
+		await this.readyPromise;
+		if (!this.isAuthenticated) return;
+		if (!this.adminStatusLoaded) {
+			await this.refreshServerIdentity();
+		}
 	}
 
 	/**
@@ -190,7 +280,9 @@ export class AuthStore {
 			this.hasCachedSession = true;
 			this.cachedUser = {
 				id: session.profile.sub,
-				email: session.profile.email || ''
+				email: session.profile.email || '',
+				name: session.profile.name || '',
+				groups: extractGroups(session)
 			};
 		}
 
@@ -231,6 +323,7 @@ export class AuthStore {
 	}
 
 	private adopt(session: User): void {
+		const groups = extractGroups(session);
 		this.isAuthenticated = true;
 		this.sessionExpired = false;
 		this.hasCachedSession = true;
@@ -238,10 +331,18 @@ export class AuthStore {
 		this.expiresAtMs = (session.expires_at ?? 0) * 1000;
 		const profile: UserProfile = {
 			id: session.profile.sub,
-			email: session.profile.email || ''
+			email: session.profile.email || '',
+			name: session.profile.name || '',
+			groups
 		};
 		this.user = profile;
 		this.cachedUser = profile;
+		this.isPlatformAdmin = groups.includes(DEFAULT_ADMIN_GROUP);
+		this.adminStatusLoaded = false;
+		this.accountDisabled = false;
+		if (browser && !isSilentCallbackPath()) {
+			void this.refreshServerIdentity();
+		}
 	}
 
 	private clear(expired: boolean): void {
@@ -250,6 +351,9 @@ export class AuthStore {
 		this.token = null;
 		this.expiresAtMs = 0;
 		this.sessionExpired = expired;
+		this.isPlatformAdmin = false;
+		this.adminStatusLoaded = false;
+		this.accountDisabled = false;
 		if (!expired) {
 			this.hasCachedSession = false;
 			this.cachedUser = null;

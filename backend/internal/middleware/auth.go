@@ -13,9 +13,10 @@ import (
 type ContextKey string
 
 const (
-	UserIDKey    ContextKey = "current_user_id"
-	UserEmailKey ContextKey = "current_user_email"
-	UserNameKey  ContextKey = "current_user_name"
+	UserIDKey     ContextKey = "current_user_id"
+	UserEmailKey  ContextKey = "current_user_email"
+	UserNameKey   ContextKey = "current_user_name"
+	UserGroupsKey ContextKey = "current_user_groups"
 )
 
 var (
@@ -44,6 +45,7 @@ func AuthMiddleware(verifier OIDCVerifier) func(http.Handler) http.Handler {
 			}
 
 			var subject, email, name string
+			var groups []string
 			if cv, ok := verifier.(ClaimsVerifier); ok {
 				claims, err := cv.VerifyClaims(r.Context(), rawToken)
 				if err != nil {
@@ -53,6 +55,7 @@ func AuthMiddleware(verifier OIDCVerifier) func(http.Handler) http.Handler {
 				subject = claims.Subject
 				email = claims.Email
 				name = claims.Name
+				groups = claims.Groups
 			} else {
 				sub, err := verifier.Verify(r.Context(), rawToken)
 				if err != nil {
@@ -74,6 +77,9 @@ func AuthMiddleware(verifier OIDCVerifier) func(http.Handler) http.Handler {
 			}
 			if name != "" {
 				ctx = context.WithValue(ctx, UserNameKey, name)
+			}
+			if len(groups) > 0 {
+				ctx = context.WithValue(ctx, UserGroupsKey, groups)
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -100,6 +106,25 @@ func GetUserEmail(ctx context.Context) string {
 func GetUserName(ctx context.Context) string {
 	val, _ := ctx.Value(UserNameKey).(string)
 	return strings.TrimSpace(val)
+}
+
+func GetUserGroups(ctx context.Context) []string {
+	val, _ := ctx.Value(UserGroupsKey).([]string)
+	return val
+}
+
+func WithUserContext(ctx context.Context, userID uuid.UUID, email, name string, groups []string) context.Context {
+	ctx = context.WithValue(ctx, UserIDKey, userID)
+	if strings.TrimSpace(email) != "" {
+		ctx = context.WithValue(ctx, UserEmailKey, strings.TrimSpace(email))
+	}
+	if strings.TrimSpace(name) != "" {
+		ctx = context.WithValue(ctx, UserNameKey, strings.TrimSpace(name))
+	}
+	if len(groups) > 0 {
+		ctx = context.WithValue(ctx, UserGroupsKey, groups)
+	}
+	return ctx
 }
 
 func writeErrorJSON(w http.ResponseWriter, statusCode int, errMsg string) {

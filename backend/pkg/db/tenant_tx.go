@@ -81,6 +81,78 @@ func BeginInviteTokenTx(ctx context.Context, pool *pgxpool.Pool, tokenHash strin
 	return tx, nil
 }
 
+// BeginPlatformInviteTokenTx starts a transaction scoped to a single SHA-256 platform
+// invitation token hash via app.platform_invite_token_hash so public signup validation
+// routes can inspect the matching invitation under FORCE ROW LEVEL SECURITY.
+func BeginPlatformInviteTokenTx(ctx context.Context, pool *pgxpool.Pool, tokenHash string) (pgx.Tx, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin platform invite transaction: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.platform_invite_token_hash', $1, true)", tokenHash); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to set platform invite token RLS context: %w", err)
+	}
+	return tx, nil
+}
+
+// BeginPlatformAdminTx starts a transaction with transaction-local
+// app.platform_admin_mode = 'true' so platform admin metadata views and SECURITY DEFINER
+// helpers execute without loosening tenant ledger RLS.
+func BeginPlatformAdminTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin platform admin transaction: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.platform_admin_mode', 'true', true)"); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to set platform admin mode context: %w", err)
+	}
+	return tx, nil
+}
+
+// BeginPlatformAdminSerializableTx starts a SERIALIZABLE transaction with
+// app.platform_admin_mode = 'true' for atomic single-use invite redemption.
+func BeginPlatformAdminSerializableTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, error) {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin serializable platform admin transaction: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.platform_admin_mode', 'true', true)"); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, fmt.Errorf("failed to set platform admin mode context: %w", err)
+	}
+	return tx, nil
+}
+
+// WithPlatformAdminTx executes fn inside a transaction with app.platform_admin_mode = 'true',
+// automatically rolling back on error or panic.
+func WithPlatformAdminTx(ctx context.Context, pool *pgxpool.Pool, fn TxFunc) (err error) {
+	tx, err := BeginPlatformAdminTx(ctx, pool)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback(ctx)
+			panic(p)
+		} else if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err = fn(tx); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit platform admin transaction: %w", err)
+	}
+
+	return nil
+}
+
 // WithWorkspaceTx executes fn inside a database transaction scoped with Row-Level Security
 // by injecting the authenticated user's ID into app.current_user_id (and optional
 // app.current_workspace_id from ctx). It rolls back automatically if fn returns an error or panics.

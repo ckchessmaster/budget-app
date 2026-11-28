@@ -89,6 +89,10 @@ oidc:
   # Require the token's aud claim to contain clientId. Set to false only as an
   # emergency escape hatch; signature, issuer and expiry are always verified.
   enforceAudience: true
+  # OIDC group required to access /admin and /api/v1/admin/*
+  adminGroup: "budget-admins"
+  # Optional fallback admin email allowlist (intended for local dev / providers without groups claim)
+  adminEmails: []
   # Opt-in IdP user provisioning for household invitations. Disabled by default so
   # installs without a service account token boot with a local no-op adapter.
   provisioning:

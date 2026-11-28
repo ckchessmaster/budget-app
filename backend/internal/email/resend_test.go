@@ -113,3 +113,39 @@ func TestNoopConsoleSender(t *testing.T) {
 		t.Fatalf("id = %q, want noop-k1", id)
 	}
 }
+
+func TestRenderPlatformInviteEmail(t *testing.T) {
+	exp := time.Date(2026, 12, 5, 12, 0, 0, 0, time.UTC)
+	subj, htmlBody, textBody := RenderPlatformInviteEmail("For Mike", "chris@example.com", "https://budget.example.com/signup?invite=tok123", exp)
+	if subj == "" || !stringsContainsAll(htmlBody, "chris@example.com", "For Mike", "https://budget.example.com/signup?invite=tok123") {
+		t.Fatalf("unexpected htmlBody: %s", htmlBody)
+	}
+	if !stringsContainsAll(textBody, "chris@example.com", "https://budget.example.com/signup?invite=tok123") {
+		t.Fatalf("unexpected textBody: %s", textBody)
+	}
+}
+
+func TestLoggingSender_NilPoolDelegates(t *testing.T) {
+	inner := &NoopConsoleSender{FromAddress: "Budget <i@dev.local>"}
+	wrapped := NewLoggingSender(inner, nil)
+	id, err := wrapped.Send(context.Background(), OutboundEmail{To: "a@b.com", Subject: "s", IdempotencyKey: "k2", Template: "platform_invite"})
+	if err != nil || id != "noop-k2" {
+		t.Fatalf("got (%q, %v)", id, err)
+	}
+}
+
+func stringsContainsAll(s string, subs ...string) bool {
+	for _, sub := range subs {
+		found := false
+		for i := 0; i+len(sub) <= len(s); i++ {
+			if s[i:i+len(sub)] == sub {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
