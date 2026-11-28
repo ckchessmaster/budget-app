@@ -71,6 +71,7 @@ func rebaseMockBridgeURL(accessURL, configuredBase string) string {
 }
 
 func (a *BankActivities) FetchSimpleFINDataActivity(ctx context.Context, scope temporalinternal.SyncScope) (*simplefin.DataResponse, error) {
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	var encryptedAccessURL string
 	var lastSyncedAt *time.Time
 

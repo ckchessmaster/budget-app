@@ -6,6 +6,7 @@
 	import DemoSimulatorDrawer from '$lib/components/demo/DemoSimulatorDrawer.svelte';
 	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
 	import InstallPromptBanner from '$lib/components/pwa/InstallPromptBanner.svelte';
+	import WorkspaceSwitcher from '$lib/components/WorkspaceSwitcher.svelte';
 	import {
 		detectPushEnvironment,
 		dismissPushPrompt,
@@ -20,10 +21,11 @@
 	import { demo } from '$lib/stores/demo.svelte';
 	import { pwaInstall } from '$lib/stores/pwaInstall.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
+	import { workspace } from '$lib/stores/workspace.svelte';
 
 	let { children } = $props();
 
-	const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/silent-callback'];
+	const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/silent-callback', '/invite'];
 
 	let currentPath = $derived(page.url.pathname);
 	let isSilentCallbackRoute = $derived(currentPath.startsWith('/auth/silent-callback'));
@@ -128,8 +130,12 @@
 				pushChecked = false;
 				pushModalOpen = false;
 				demo.resetOnLogout();
+				workspace.resetOnLogout();
 				void goto('/login');
 			} else if (auth.isAuthenticated) {
+				if (!workspace.loaded && !workspace.loading) {
+					void workspace.load().catch(() => {});
+				}
 				if (!demo.loaded && !demo.loading) {
 					void demo.load().catch(() => {});
 				}
@@ -163,6 +169,8 @@
 						<p class="text-[11px] text-ink-secondary mt-0.5">Zero-Based Ledger</p>
 					</div>
 				</a>
+
+				<WorkspaceSwitcher />
 
 				<nav aria-label="Primary" class="flex items-center gap-1">
 					<a
@@ -244,6 +252,7 @@
 						type="button"
 						onclick={() => {
 							demo.resetOnLogout();
+							workspace.resetOnLogout();
 							void auth.logout();
 						}}
 						class="text-xs text-ink-secondary hover:text-ink-primary px-2.5 py-1.5 rounded-md hover:bg-surface-hover transition-colors"

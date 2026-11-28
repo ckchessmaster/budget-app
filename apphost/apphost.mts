@@ -54,6 +54,8 @@ export const backend = await builder
   .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
   .withEnvironment('TEMPORAL_NAMESPACE', temporalNamespace)
   .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
+  .withEnvironment('APP_PUBLIC_URL', 'http://localhost:5173')
+  .withEnvironment('EMAIL_FROM_ADDRESS', 'Budget App <invites@dev.local>')
   .waitFor(budgetDb)
   .waitFor(dex)
   .waitFor(temporal);
@@ -64,6 +66,8 @@ export const worker = await builder
   .withEnvironment('TEMPORAL_ADDRESS', 'localhost:7233')
   .withEnvironment('TEMPORAL_NAMESPACE', temporalNamespace)
   .withEnvironment('VAULT_MASTER_KEY', devVaultMasterKey)
+  .withEnvironment('APP_PUBLIC_URL', 'http://localhost:5173')
+  .withEnvironment('EMAIL_FROM_ADDRESS', 'Budget App <invites@dev.local>')
   .waitFor(budgetDb)
   .waitFor(temporal)
   .waitFor(backend);

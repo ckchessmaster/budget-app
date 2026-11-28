@@ -158,3 +158,60 @@ http://{{ include "budget-app.fullname" . }}-backend-bridge:{{ include "budget-a
 http://127.0.0.1:{{ include "budget-app.bridgePort" . }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Opt-in transactional email configuration for household invites (sync worker).
+*/}}
+{{- define "budget-app.emailSecretName" -}}
+{{- if trim (.Values.email.existingSecret | default "") -}}
+{{- trim .Values.email.existingSecret -}}
+{{- else -}}
+{{- printf "%s-email" (include "budget-app.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "budget-app.emailPublicUrl" -}}
+{{- if trim (.Values.email.publicUrl | default "") -}}
+{{- trim .Values.email.publicUrl | trimSuffix "/" -}}
+{{- else if and .Values.ingress.enabled .Values.ingress.hosts -}}
+{{- $first := index .Values.ingress.hosts 0 -}}
+{{- if $first.host -}}
+{{- printf "https://%s" $first.host -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "budget-app.emailEnv" -}}
+{{- if .Values.email.enabled }}
+{{- if eq (trim (.Values.email.provider | default "resend")) "resend" }}
+- name: RESEND_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.emailSecretName" . }}
+      key: {{ .Values.email.apiKeySecretKey | default "RESEND_API_KEY" }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Opt-in identity provider user provisioning configuration (API backend).
+*/}}
+{{- define "budget-app.idpSecretName" -}}
+{{- if trim (.Values.oidc.provisioning.existingSecret | default "") -}}
+{{- trim .Values.oidc.provisioning.existingSecret -}}
+{{- else -}}
+{{- printf "%s-idp" (include "budget-app.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "budget-app.idpEnv" -}}
+{{- if .Values.oidc.provisioning.enabled }}
+{{- if eq (trim (.Values.oidc.provisioning.provider | default "authentik")) "authentik" }}
+- name: AUTHENTIK_API_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "budget-app.idpSecretName" . }}
+      key: {{ .Values.oidc.provisioning.apiTokenSecretKey | default "AUTHENTIK_API_TOKEN" }}
+{{- end }}
+{{- end }}
+{{- end -}}

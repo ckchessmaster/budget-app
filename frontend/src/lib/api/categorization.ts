@@ -1,5 +1,5 @@
 import { getAppConfig } from '$lib/config';
-import { auth } from '$lib/stores/auth.svelte';
+import { buildAuthHeaders } from './headers';
 import type {
 	ApplySimilarPayload,
 	CategorizationRule,
@@ -15,14 +15,7 @@ function optNum(val: unknown): number | null {
 }
 
 async function authHeaders(): Promise<HeadersInit> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json'
-	};
-	const token = await auth.getValidToken();
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-	return headers;
+	return buildAuthHeaders();
 }
 
 function mapRule(raw: any): CategorizationRule {

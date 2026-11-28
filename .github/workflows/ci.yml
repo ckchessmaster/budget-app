@@ -198,6 +198,19 @@ jobs:
             --set vapid.privateKey=TestPrivKey \
             > /tmp/rendered-vapid-inline.yaml
 
+          helm template budget-app ./charts/budget-app \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set ingress.hosts[0].host=budget.example.com \
+            --set email.enabled=true \
+            --set email.fromAddress="Budget App <invites@example.com>" \
+            --set email.existingSecret=budget-email-secrets \
+            --set oidc.provisioning.enabled=true \
+            --set oidc.provisioning.baseUrl=https://authentik.example.com \
+            --set oidc.provisioning.existingSecret=budget-idp-secrets \
+            > /tmp/rendered-household-secret.yaml
+
           # The chart must refuse unsafe or incomplete configurations at render time.
           assert_refused() {
             local label="$1"
@@ -298,6 +311,65 @@ jobs:
             --set vapid.publicKey=pub \
             --set vapid.subject=ops@example.com
 
+          assert_refused "email unsupported provider" "is unsupported" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set email.enabled=true \
+            --set email.provider=smtp \
+            --set email.fromAddress="Budget <i@example.com>" \
+            --set email.existingSecret=email-sec \
+            --set email.publicUrl=https://budget.example.com
+
+          assert_refused "email missing fromAddress" "email.fromAddress is required" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set email.enabled=true \
+            --set email.existingSecret=email-sec \
+            --set email.publicUrl=https://budget.example.com
+
+          assert_refused "email missing secret and apiKey" "RESEND_API_KEY" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set email.enabled=true \
+            --set email.fromAddress="Budget <i@example.com>" \
+            --set email.publicUrl=https://budget.example.com
+
+          assert_refused "email missing publicUrl and ingress host" "email.publicUrl" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set ingress.enabled=false \
+            --set email.enabled=true \
+            --set email.fromAddress="Budget <i@example.com>" \
+            --set email.existingSecret=email-sec
+
+          assert_refused "idp provisioning unsupported provider" "is unsupported" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set oidc.provisioning.enabled=true \
+            --set oidc.provisioning.provider=keycloak \
+            --set oidc.provisioning.baseUrl=https://auth.example.com \
+            --set oidc.provisioning.existingSecret=idp-sec
+
+          assert_refused "idp provisioning invalid baseUrl" "oidc.provisioning.baseUrl" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set oidc.provisioning.enabled=true \
+            --set oidc.provisioning.baseUrl=auth.example.com \
+            --set oidc.provisioning.existingSecret=idp-sec
+
+          assert_refused "idp provisioning missing token and secret" "AUTHENTIK_API_TOKEN" \
+            --set oidc.clientId=budget-app-client \
+            --set temporal.address=temporal-frontend.temporal.svc.cluster.local:7233 \
+            --set vault.existingSecret=budget-app-secrets \
+            --set oidc.provisioning.enabled=true \
+            --set oidc.provisioning.baseUrl=https://auth.example.com
+
           if ! python3 -c "import yaml" >/dev/null 2>&1; then
             python3 -m pip install --quiet pyyaml
           fi
@@ -347,6 +419,7 @@ jobs:
           vapid_secret_docs = load_docs("/tmp/rendered-vapid-secret.yaml")
           vapid_hybrid_docs = load_docs("/tmp/rendered-vapid-hybrid.yaml")
           vapid_inline_docs = load_docs("/tmp/rendered-vapid-inline.yaml")
+          household_docs = load_docs("/tmp/rendered-household-secret.yaml")
 
           if problems:
               print("::error::chart rendered invalid value types")
@@ -547,6 +620,21 @@ jobs:
           for cname, cont in containers_by_name(vapid_inline_docs).items():
               env_map = {e["name"]: e for e in cont["env"]}
               assert env_map["VAPID_PRIVATE_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "budget-app-budget-app-vapid"
+
+          # Verify opt-in household email + IdP provisioning render cleanly and keep secrets out of ConfigMaps.
+          cm_hh = next(d for d in household_docs if d.get("kind") == "ConfigMap")["data"]
+          assert cm_hh["EMAIL_PROVIDER"] == "resend"
+          assert cm_hh["EMAIL_FROM_ADDRESS"] == "Budget App <invites@example.com>"
+          assert cm_hh["APP_PUBLIC_URL"] == "https://budget.example.com"
+          assert cm_hh["IDP_PROVISIONING_PROVIDER"] == "authentik"
+          assert cm_hh["AUTHENTIK_BASE_URL"] == "https://authentik.example.com"
+          assert "RESEND_API_KEY" not in cm_hh
+          assert "AUTHENTIK_API_TOKEN" not in cm_hh
+          hh_containers = containers_by_name(household_docs)
+          worker_env = {e["name"]: e for e in hh_containers["worker"]["env"]}
+          backend_env = {e["name"]: e for e in hh_containers["backend"]["env"]}
+          assert worker_env["RESEND_API_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "budget-email-secrets"
+          assert backend_env["AUTHENTIK_API_TOKEN"]["valueFrom"]["secretKeyRef"]["name"] == "budget-idp-secrets"
 
           print("bank sync topology ok (worker Deployment separate, bridge in-cluster only)")
           print("backup CronJob and opt-in VAPID templates ok")

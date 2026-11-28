@@ -149,6 +149,7 @@ func (a *ReplayActivities) ReplayTransactionItemActivity(
 	}
 
 	var result ReplayItemResult
+	ctx = db.WithWorkspaceID(ctx, input.WorkspaceID)
 	err = db.WithWorkspaceTx(ctx, a.Pool, input.UserID, func(tx pgx.Tx) error {
 		var exists bool
 		if err := tx.QueryRow(ctx, `

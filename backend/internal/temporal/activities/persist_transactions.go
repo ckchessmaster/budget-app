@@ -43,6 +43,7 @@ func (a *BankActivities) PersistTransactionsActivity(ctx context.Context, input 
 	if input.Data == nil {
 		return PersistTransactionsResult{}, nil
 	}
+	ctx = db.WithWorkspaceID(ctx, input.SyncScope.WorkspaceID)
 
 	result := PersistTransactionsResult{
 		FetchedCount: len(input.Data.Transactions),

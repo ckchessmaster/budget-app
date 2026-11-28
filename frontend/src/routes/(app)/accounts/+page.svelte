@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { demo } from '$lib/stores/demo.svelte';
+	import { workspace } from '$lib/stores/workspace.svelte';
 	import { fetchCategories } from '$lib/api/budget';
 	import { fetchAccounts, fetchSolvencyReport } from '$lib/api/transactions';
 	import AccountModal from '$lib/components/accounts/AccountModal.svelte';
@@ -46,16 +47,19 @@
 	}
 
 	function openAddAccount() {
+		if (!workspace.isOwner) return;
 		editingAccount = null;
 		accountModalOpen = true;
 	}
 
 	function openEditAccount(acct: AccountItem) {
+		if (!workspace.isOwner) return;
 		editingAccount = acct;
 		accountModalOpen = true;
 	}
 
 	function handleCardKeydown(e: KeyboardEvent, acct: AccountItem) {
+		if (!workspace.isOwner) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			openEditAccount(acct);
@@ -105,12 +109,13 @@
 		}
 	}
 
-	let lastDataVersion = $state(-1);
+	let lastLoadKey = $state('');
 	$effect(() => {
-		const v = demo.dataVersion;
-		if (v !== lastDataVersion) {
-			lastDataVersion = v;
-			if (v > 0) {
+		const key = `${demo.dataVersion}:${workspace.activeWorkspaceId}`;
+		if (key !== lastLoadKey && auth.isAuthenticated) {
+			const hadPrior = lastLoadKey !== '';
+			lastLoadKey = key;
+			if (hadPrior) {
 				void loadAccounts();
 			}
 		}
@@ -125,11 +130,13 @@
 	{@const reservation = reservationByAccountId.get(acct.id)}
 	{@const unreservedBalance = reservation ? acct.currentBalance - reservation.reservedTotal : null}
 	<div
-		role="button"
-		tabindex="0"
+		role={workspace.isOwner ? 'button' : undefined}
+		tabindex={workspace.isOwner ? 0 : undefined}
 		onclick={() => openEditAccount(acct)}
 		onkeydown={(e) => handleCardKeydown(e, acct)}
-		class="group cursor-pointer bg-surface border border-border hover:border-accent-pop/50 rounded-xl p-4 space-y-2.5 shadow-xs transition-colors"
+		class="group bg-surface border border-border rounded-xl p-4 space-y-2.5 shadow-xs transition-colors {workspace.isOwner
+			? 'cursor-pointer hover:border-accent-pop/50'
+			: ''}"
 	>
 		<div class="flex items-center justify-between gap-3">
 			<div class="min-w-0">
@@ -147,9 +154,11 @@
 					>
 						{acct.externalAccountId ? 'SimpleFIN' : 'Manual'}
 					</span>
-					<span class="text-[11px] text-ink-muted opacity-0 group-hover:opacity-100 transition-opacity">
-						Edit
-					</span>
+					{#if workspace.isOwner}
+						<span class="text-[11px] text-ink-muted opacity-0 group-hover:opacity-100 transition-opacity">
+							Edit
+						</span>
+					{/if}
 				</div>
 				<p class="text-xs text-ink-secondary mt-1">
 					{#if acct.type === 'investment' || acct.type === 'loan'}
@@ -217,31 +226,42 @@
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
-			<button
-				type="button"
-				onclick={handleSyncNow}
-				disabled={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
-				class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border disabled:opacity-50 transition-colors"
-			>
-				{syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying' ? 'Syncing...' : 'Sync Now'}
-			</button>
-			<button
-				type="button"
-				onclick={() => {
-					simplefinAutoDiscover = false;
-					simplefinModalOpen = true;
-				}}
-				class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border transition-colors"
-			>
-				{demo.simplefin.connected && !demo.isDemo ? 'Link SimpleFIN Accounts' : 'Connect SimpleFIN'}
-			</button>
-			<button
-				type="button"
-				onclick={openAddAccount}
-				class="text-xs px-3 py-1.5 rounded-lg bg-accent-primary hover:opacity-90 text-accent-primary-text font-semibold transition-opacity"
-			>
-				+ Add Account
-			</button>
+			{#if workspace.canEdit}
+				<button
+					type="button"
+					onclick={handleSyncNow}
+					disabled={syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying'}
+					class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border disabled:opacity-50 transition-colors"
+				>
+					{syncing || demo.syncStatus === 'running' || demo.syncStatus === 'retrying' ? 'Syncing...' : 'Sync Now'}
+				</button>
+			{/if}
+			{#if workspace.isOwner}
+				<button
+					type="button"
+					onclick={() => {
+						simplefinAutoDiscover = false;
+						simplefinModalOpen = true;
+					}}
+					class="text-xs px-3 py-1.5 rounded-lg bg-surface hover:bg-surface-hover text-ink-primary border border-border transition-colors"
+				>
+					{demo.simplefin.connected && !demo.isDemo ? 'Link SimpleFIN Accounts' : 'Connect SimpleFIN'}
+				</button>
+				<button
+					type="button"
+					onclick={openAddAccount}
+					class="text-xs px-3 py-1.5 rounded-lg bg-accent-primary hover:opacity-90 text-accent-primary-text font-semibold transition-opacity"
+				>
+					+ Add Account
+				</button>
+			{:else}
+				<span
+					data-testid="accounts-readonly-badge"
+					class="text-[11px] font-medium px-2.5 py-1 rounded-full bg-subtle border border-border text-ink-secondary"
+				>
+					Accounts Read-Only ({workspace.currentRole === 'read_only' ? 'View-Only' : 'Member'})
+				</span>
+			{/if}
 		</div>
 	</div>
 

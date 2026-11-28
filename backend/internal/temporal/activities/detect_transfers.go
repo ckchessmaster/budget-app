@@ -55,6 +55,7 @@ func FindTransferPairs(txs []TxRecord) []TransferPair {
 // DetectAndLinkTransfersActivity scans recent unlinked transactions for a workspace
 // and links offsetting cross-account transfers with category_id = NULL.
 func (a *BankActivities) DetectAndLinkTransfersActivity(ctx context.Context, scope temporalinternal.SyncScope) (int, error) {
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	// RLS-scoped: see FetchSimpleFINDataActivity.
 	tx, err := db.BeginWorkspaceTx(ctx, a.Pool, scope.UserID)
 	if err != nil {

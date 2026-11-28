@@ -589,7 +589,13 @@ func TestCCDebtInterlockHandlersHTTP(t *testing.T) {
 		}
 		req := httptest.NewRequest(method, path, &buf)
 		if withAuth {
-			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, userID))
+			ctxWithUser := context.WithValue(req.Context(), middleware.UserIDKey, userID)
+			ctxWithWS := middleware.WithWorkspaceContext(ctxWithUser, middleware.WorkspaceContext{
+				WorkspaceID: wsID,
+				UserID:      userID,
+				Role:        middleware.RoleOwner,
+			})
+			req = req.WithContext(db.WithWorkspaceID(ctxWithWS, wsID))
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)

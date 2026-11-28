@@ -12,7 +12,11 @@ import (
 
 type ContextKey string
 
-const UserIDKey ContextKey = "current_user_id"
+const (
+	UserIDKey    ContextKey = "current_user_id"
+	UserEmailKey ContextKey = "current_user_email"
+	UserNameKey  ContextKey = "current_user_name"
+)
 
 var (
 	ErrMissingToken = errors.New("missing_token")
@@ -39,10 +43,23 @@ func AuthMiddleware(verifier OIDCVerifier) func(http.Handler) http.Handler {
 				return
 			}
 
-			subject, err := verifier.Verify(r.Context(), rawToken)
-			if err != nil {
-				writeErrorJSON(w, http.StatusUnauthorized, "invalid_token")
-				return
+			var subject, email, name string
+			if cv, ok := verifier.(ClaimsVerifier); ok {
+				claims, err := cv.VerifyClaims(r.Context(), rawToken)
+				if err != nil {
+					writeErrorJSON(w, http.StatusUnauthorized, "invalid_token")
+					return
+				}
+				subject = claims.Subject
+				email = claims.Email
+				name = claims.Name
+			} else {
+				sub, err := verifier.Verify(r.Context(), rawToken)
+				if err != nil {
+					writeErrorJSON(w, http.StatusUnauthorized, "invalid_token")
+					return
+				}
+				subject = sub
 			}
 
 			userID, err := uuid.Parse(subject)
@@ -52,6 +69,12 @@ func AuthMiddleware(verifier OIDCVerifier) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			if email != "" {
+				ctx = context.WithValue(ctx, UserEmailKey, email)
+			}
+			if name != "" {
+				ctx = context.WithValue(ctx, UserNameKey, name)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -67,6 +90,16 @@ func GetUserID(ctx context.Context) (uuid.UUID, error) {
 		return uuid.Nil, ErrUserNotFound
 	}
 	return userID, nil
+}
+
+func GetUserEmail(ctx context.Context) string {
+	val, _ := ctx.Value(UserEmailKey).(string)
+	return strings.TrimSpace(val)
+}
+
+func GetUserName(ctx context.Context) string {
+	val, _ := ctx.Value(UserNameKey).(string)
+	return strings.TrimSpace(val)
 }
 
 func writeErrorJSON(w http.ResponseWriter, statusCode int, errMsg string) {

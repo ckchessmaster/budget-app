@@ -5,6 +5,8 @@
 	import { fetchAccounts } from '$lib/api/transactions';
 	import CategorizationRulesSection from '$lib/components/settings/CategorizationRulesSection.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { demo } from '$lib/stores/demo.svelte';
+	import { workspace } from '$lib/stores/workspace.svelte';
 	import type { CategoryBudget, PlannedIncome } from '$lib/types/budget';
 	import type { AccountItem } from '$lib/types/transaction';
 
@@ -13,12 +15,8 @@
 	let incomes = $state<PlannedIncome[]>([]);
 	let loading = $state(true);
 
-	onMount(async () => {
-		await auth.ready();
-		if (!auth.isAuthenticated && !auth.canAccessOffline) {
-			void goto('/login');
-			return;
-		}
+	async function loadRulesContext() {
+		loading = true;
 		const now = new Date();
 		const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
 		try {
@@ -34,6 +32,27 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	let lastKey = $state('');
+	$effect(() => {
+		const key = `${demo.dataVersion}:${workspace.activeWorkspaceId}`;
+		if (key !== lastKey && auth.isAuthenticated) {
+			const hadPrior = lastKey !== '';
+			lastKey = key;
+			if (hadPrior) {
+				void loadRulesContext();
+			}
+		}
+	});
+
+	onMount(async () => {
+		await auth.ready();
+		if (!auth.isAuthenticated && !auth.canAccessOffline) {
+			void goto('/login');
+			return;
+		}
+		await loadRulesContext();
 	});
 </script>
 
@@ -42,7 +61,14 @@
 		{#if loading}
 			<p class="text-xs text-ink-secondary">Loading rules...</p>
 		{:else}
-			<CategorizationRulesSection {categories} {incomes} {accounts} />
+			{#key workspace.activeWorkspaceId}
+				<CategorizationRulesSection
+					{categories}
+					{incomes}
+					{accounts}
+					readOnly={workspace.isReadOnly}
+				/>
+			{/key}
 		{/if}
 	</div>
 </div>

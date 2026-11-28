@@ -1,5 +1,5 @@
 import { getAppConfig } from '$lib/config';
-import { auth } from '$lib/stores/auth.svelte';
+import { buildAuthHeaders } from '$lib/api/headers';
 
 export interface PushServerConfig {
 	enabled: boolean;
@@ -36,14 +36,7 @@ interface NavigatorWithStandalone extends Navigator {
 }
 
 async function authHeaders(): Promise<HeadersInit> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json'
-	};
-	const token = await auth.getValidToken();
-	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
-	}
-	return headers;
+	return buildAuthHeaders({ includeWorkspace: false });
 }
 
 async function parseError(res: Response, fallback: string): Promise<string> {

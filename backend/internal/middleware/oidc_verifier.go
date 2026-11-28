@@ -106,23 +106,63 @@ func (v *JWTVerifier) Warm(ctx context.Context) error {
 	return err
 }
 
+// TokenClaims carries the verified identity attributes extracted from an OIDC JWT.
+type TokenClaims struct {
+	Subject string
+	Email   string
+	Name    string
+}
+
+// ClaimsVerifier is an optional extension of OIDCVerifier for verifiers that also
+// extract email and display name claims alongside the subject.
+type ClaimsVerifier interface {
+	OIDCVerifier
+	VerifyClaims(ctx context.Context, rawToken string) (TokenClaims, error)
+}
+
 // Verify checks the token's signature, issuer, expiry, and (when configured)
 // audience, then returns the subject claim.
 func (v *JWTVerifier) Verify(ctx context.Context, rawToken string) (string, error) {
-	verifier, err := v.currentVerifier(ctx)
+	claims, err := v.VerifyClaims(ctx, rawToken)
 	if err != nil {
 		return "", err
+	}
+	return claims.Subject, nil
+}
+
+// VerifyClaims checks the token's signature, issuer, expiry, and (when configured)
+// audience, then returns the verified subject, email, and display name claims.
+func (v *JWTVerifier) VerifyClaims(ctx context.Context, rawToken string) (TokenClaims, error) {
+	verifier, err := v.currentVerifier(ctx)
+	if err != nil {
+		return TokenClaims{}, err
 	}
 
 	token, err := verifier.Verify(ctx, rawToken)
 	if err != nil {
-		return "", fmt.Errorf("token rejected: %w", err)
+		return TokenClaims{}, fmt.Errorf("token rejected: %w", err)
 	}
 	if token.Subject == "" {
-		return "", errors.New("sub claim missing or empty")
+		return TokenClaims{}, errors.New("sub claim missing or empty")
 	}
 
-	return token.Subject, nil
+	var parsed struct {
+		Email             string `json:"email"`
+		Name              string `json:"name"`
+		PreferredUsername string `json:"preferred_username"`
+	}
+	_ = token.Claims(&parsed)
+
+	displayName := strings.TrimSpace(parsed.Name)
+	if displayName == "" {
+		displayName = strings.TrimSpace(parsed.PreferredUsername)
+	}
+
+	return TokenClaims{
+		Subject: token.Subject,
+		Email:   strings.TrimSpace(parsed.Email),
+		Name:    displayName,
+	}, nil
 }
 
 // currentVerifier returns the cached verifier, discovering the provider on first

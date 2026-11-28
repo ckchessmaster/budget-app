@@ -5,6 +5,7 @@ import (
 
 	"github.com/ckchessmaster/budget-app/backend/internal/notifications"
 	temporalinternal "github.com/ckchessmaster/budget-app/backend/internal/temporal"
+	"github.com/ckchessmaster/budget-app/backend/pkg/db"
 	"github.com/google/uuid"
 )
 
@@ -14,5 +15,6 @@ func (a *BankActivities) EvaluateNotificationsActivity(ctx context.Context, scop
 	if a.NotificationEvaluator == nil || scope.WorkspaceID == uuid.Nil || scope.UserID == uuid.Nil {
 		return notifications.EvaluationResult{}, nil
 	}
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	return a.NotificationEvaluator.EvaluateWorkspace(ctx, scope.WorkspaceID, scope.UserID)
 }

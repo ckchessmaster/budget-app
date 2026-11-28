@@ -16,3 +16,7 @@ staticPasswords:
     hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
     username: "admin"
     userID: "00000000-0000-0000-0000-000000000001"
+  - email: "member@dev.local"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
+    username: "member"
+    userID: "00000000-0000-0000-0000-000000000002"

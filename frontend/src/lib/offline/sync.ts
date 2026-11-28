@@ -1,4 +1,5 @@
 import { getAppConfig } from '$lib/config';
+import { getActiveWorkspaceId } from '$lib/api/headers';
 import { auth } from '$lib/stores/auth.svelte';
 import { BudgetLocalDB } from './db';
 
@@ -100,6 +101,10 @@ export async function flushOfflineQueue(
 	};
 	if (authToken) {
 		headers['Authorization'] = `Bearer ${authToken}`;
+	}
+	const wsId = options.workspaceId || getActiveWorkspaceId();
+	if (wsId) {
+		headers['X-Workspace-ID'] = wsId;
 	}
 
 	for (const item of pending) {

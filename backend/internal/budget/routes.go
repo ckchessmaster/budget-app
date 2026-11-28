@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"github.com/ckchessmaster/budget-app/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,23 +19,23 @@ func RegisterRoutes(r chi.Router, pool *pgxpool.Pool) {
 	h := NewHandler(pool, catRepo, baselineSvc, reallocSvc, incomeRepo, interlockSvc)
 
 	r.Route("/api/v1/categories", func(r chi.Router) {
-		r.Get("/", h.ListCategories)
-		r.Post("/", h.CreateCategory)
-		r.Get("/{id}", h.GetCategory)
-		r.Put("/{id}", h.UpdateCategory)
-		r.Delete("/{id}", h.DeleteCategory)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/", h.ListCategories)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Post("/", h.CreateCategory)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/{id}", h.GetCategory)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Put("/{id}", h.UpdateCategory)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Delete("/{id}", h.DeleteCategory)
 	})
 
 	r.Route("/api/v1/budget", func(r chi.Router) {
-		r.Get("/", h.GetMonthBudget)
-		r.Put("/categories/{id}", h.UpdateMonthlyPlanned)
-		r.Post("/reallocate", h.ReallocateFunds)
-		r.Post("/incomes", h.CreatePlannedIncome)
-		r.Get("/incomes", h.ListPlannedIncomes)
-		r.Patch("/incomes/{id}", h.UpdatePlannedIncome)
-		r.Delete("/incomes/{id}", h.DeletePlannedIncome)
-		r.Get("/cc-interlocks", h.ListCCDebtInterlocks)
-		r.Post("/cc-interlocks/{id}/resolve", h.ResolveCCDebtInterlock)
-		r.Get("/recommendations", h.GetSpendRecommendations)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/", h.GetMonthBudget)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Put("/categories/{id}", h.UpdateMonthlyPlanned)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Post("/reallocate", h.ReallocateFunds)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Post("/incomes", h.CreatePlannedIncome)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/incomes", h.ListPlannedIncomes)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Patch("/incomes/{id}", h.UpdatePlannedIncome)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Delete("/incomes/{id}", h.DeletePlannedIncome)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/cc-interlocks", h.ListCCDebtInterlocks)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember)).Post("/cc-interlocks/{id}/resolve", h.ResolveCCDebtInterlock)
+		r.With(middleware.RequireRole(middleware.RoleOwner, middleware.RoleMember, middleware.RoleReadOnly)).Get("/recommendations", h.GetSpendRecommendations)
 	})
 }

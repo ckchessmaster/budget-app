@@ -59,8 +59,8 @@ func NewCORSPolicy(origins []string) *CORSPolicy {
 	}
 	p.methodList = strings.Join([]string{corsMethodGET, corsMethodPOST, corsMethodPUT, corsMethodPATCH, corsMethodDELETE, corsMethodHEAD, corsMethodOPTIONS}, ", ")
 
-	// The frontend only ever sends a bearer token and a JSON body on top of Accept.
-	for _, header := range []string{"accept", "accept-language", "authorization", "content-type", "x-csrf-token"} {
+	// The frontend sends a bearer token, optional active workspace header, and JSON body on top of Accept.
+	for _, header := range []string{"accept", "accept-language", "authorization", "content-type", "x-csrf-token", "x-workspace-id"} {
 		p.allowedHeaders[header] = struct{}{}
 	}
 

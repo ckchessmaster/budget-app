@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { theme } from '$lib/stores/theme.svelte';
+	import WorkspaceSwitcher from '$lib/components/WorkspaceSwitcher.svelte';
 	import type { MonthSummary } from '$lib/types/budget';
 	import type { SolvencyReport } from '$lib/types/transaction';
 	import SolvencyPopover from './SolvencyPopover.svelte';
@@ -90,6 +91,8 @@
 					Budget App
 				</span>
 			</a>
+
+			<WorkspaceSwitcher />
 
 			<div class="inline-flex items-center rounded-lg border border-border bg-subtle p-0.5 shrink-0">
 				<button

@@ -17,9 +17,10 @@
 		incomes?: PlannedIncome[];
 		accounts: AccountItem[];
 		initialRules?: CategorizationRule[];
+		readOnly?: boolean;
 	}
 
-	let { categories, incomes = [], accounts, initialRules }: Props = $props();
+	let { categories, incomes = [], accounts, initialRules, readOnly = false }: Props = $props();
 
 	let rules = $state<CategorizationRule[]>([]);
 	let loading = $state(false);
@@ -177,17 +178,19 @@
 			</p>
 		</div>
 
-		<button
-			type="button"
-			data-testid="new-rule-btn"
-			onclick={() => {
-				editingRule = null;
-				isModalOpen = true;
-			}}
-			class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white"
-		>
-			+ New Rule
-		</button>
+		{#if !readOnly}
+			<button
+				type="button"
+				data-testid="new-rule-btn"
+				onclick={() => {
+					editingRule = null;
+					isModalOpen = true;
+				}}
+				class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white"
+			>
+				+ New Rule
+			</button>
+		{/if}
 	</div>
 
 	{#if errorMsg}
@@ -246,61 +249,63 @@
 						</div>
 					</div>
 
-					<div class="flex items-center gap-1.5 shrink-0">
-						<button
-							type="button"
-							aria-label={`Move rule ${idx + 1} up`}
-							disabled={idx === 0 || busyId === rule.id}
-							onclick={() => void handleMove(idx, -1)}
-							class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
-						>
-							↑
-						</button>
-						<button
-							type="button"
-							aria-label={`Move rule ${idx + 1} down`}
-							disabled={idx === rules.length - 1 || busyId === rule.id}
-							onclick={() => void handleMove(idx, 1)}
-							class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
-						>
-							↓
-						</button>
-						<button
-							type="button"
-							disabled={busyId === rule.id}
-							onclick={() => void handleToggleActive(rule)}
-							class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-						>
-							{rule.isActive ? 'Enabled' : 'Paused'}
-						</button>
-						<button
-							type="button"
-							disabled={busyId === rule.id}
-							onclick={() => void handleApplyNow(rule)}
-							class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
-						>
-							Apply Now
-						</button>
-						<button
-							type="button"
-							disabled={busyId === rule.id}
-							onclick={() => {
-								editingRule = rule;
-								isModalOpen = true;
-							}}
-							class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-						>
-							Edit
-						</button>
-						<button
-							type="button"
-							disabled={busyId === rule.id}
-							onclick={() => void handleDelete(rule)}
-							class="px-2 py-1 rounded border border-rose-200 dark:border-rose-500/30 text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
-						>
-							Delete
-						</button>
-					</div>
+					{#if !readOnly}
+						<div class="flex items-center gap-1.5 shrink-0">
+							<button
+								type="button"
+								aria-label={`Move rule ${idx + 1} up`}
+								disabled={idx === 0 || busyId === rule.id}
+								onclick={() => void handleMove(idx, -1)}
+								class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
+							>
+								↑
+							</button>
+							<button
+								type="button"
+								aria-label={`Move rule ${idx + 1} down`}
+								disabled={idx === rules.length - 1 || busyId === rule.id}
+								onclick={() => void handleMove(idx, 1)}
+								class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40"
+							>
+								↓
+							</button>
+							<button
+								type="button"
+								disabled={busyId === rule.id}
+								onclick={() => void handleToggleActive(rule)}
+								class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+							>
+								{rule.isActive ? 'Enabled' : 'Paused'}
+							</button>
+							<button
+								type="button"
+								disabled={busyId === rule.id}
+								onclick={() => void handleApplyNow(rule)}
+								class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
+							>
+								Apply Now
+							</button>
+							<button
+								type="button"
+								disabled={busyId === rule.id}
+								onclick={() => {
+									editingRule = rule;
+									isModalOpen = true;
+								}}
+								class="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+							>
+								Edit
+							</button>
+							<button
+								type="button"
+								disabled={busyId === rule.id}
+								onclick={() => void handleDelete(rule)}
+								class="px-2 py-1 rounded border border-rose-200 dark:border-rose-500/30 text-[11px] text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+							>
+								Delete
+							</button>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>

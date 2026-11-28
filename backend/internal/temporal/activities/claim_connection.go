@@ -102,6 +102,7 @@ func (a *ClaimActivities) ClaimConnectionActivity(
 			"workspace_id and user_id are required to claim a SimpleFIN connection",
 			"InvalidClaimScope", nil)
 	}
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 
 	var pending string
 	err := db.WithWorkspaceTx(ctx, a.Pool, scope.UserID, func(tx pgx.Tx) error {
@@ -166,6 +167,7 @@ func (a *ClaimActivities) FetchDiscoveredAccountsActivity(
 	ctx context.Context,
 	scope temporalinternal.SyncScope,
 ) (*FetchDiscoveredAccountsResult, error) {
+	ctx = db.WithWorkspaceID(ctx, scope.WorkspaceID)
 	var encryptedAccessURL string
 	err := db.WithWorkspaceTx(ctx, a.Pool, scope.UserID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `

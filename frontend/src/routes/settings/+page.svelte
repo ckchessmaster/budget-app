@@ -6,6 +6,7 @@
 	import SimpleFINSetupModal from '$lib/components/accounts/SimpleFINSetupModal.svelte';
 	import SimulatorWorkbench from '$lib/components/demo/SimulatorWorkbench.svelte';
 	import PushPromptModal from '$lib/components/notifications/PushPromptModal.svelte';
+	import HouseholdSection from '$lib/components/settings/HouseholdSection.svelte';
 	import {
 		detectPushEnvironment,
 		fetchPushConfig,
@@ -18,6 +19,7 @@
 	import { demo } from '$lib/stores/demo.svelte';
 	import { pwaInstall } from '$lib/stores/pwaInstall.svelte';
 	import { theme } from '$lib/stores/theme.svelte';
+	import { workspace } from '$lib/stores/workspace.svelte';
 
 	let workspaceNameInput = $state('');
 	let savingWorkspace = $state(false);
@@ -97,12 +99,22 @@
 			return;
 		}
 		await Promise.all([
+			workspace.load().catch(() => {}),
 			demo.load().catch((err) => {
 				demoError = err instanceof Error ? err.message : 'Failed to load settings';
 			}),
 			refreshLinkedAccounts()
 		]);
 		void refreshPushState();
+	});
+
+	let lastSettingsKey = $state('');
+	$effect(() => {
+		const key = `${workspace.activeWorkspaceId}:${demo.dataVersion}`;
+		if (key !== lastSettingsKey && auth.isAuthenticated) {
+			lastSettingsKey = key;
+			void refreshLinkedAccounts();
+		}
 	});
 
 	async function handleToggleDemo(e: Event) {
@@ -141,7 +153,9 @@
 		workspaceError = null;
 		workspaceFeedback = null;
 		try {
-			await demo.updateWorkspaceName(workspaceNameInput.trim());
+			const trimmed = workspaceNameInput.trim();
+			await demo.updateWorkspaceName(trimmed);
+			workspace.updateWorkspaceNameLocally(demo.workspaceId, trimmed);
 			workspaceFeedback = 'Workspace name updated.';
 		} catch (err) {
 			workspaceError = err instanceof Error ? err.message : 'Failed to update workspace';
@@ -216,6 +230,12 @@
 				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
 			>
 				Workspace
+			</a>
+			<a
+				href="#household"
+				class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 whitespace-nowrap"
+			>
+				Household
 			</a>
 			<a
 				href="#appearance"
@@ -379,48 +399,56 @@
 				{/if}
 
 				<div class="flex flex-wrap items-center gap-2 pt-1">
-					<button
-						type="button"
-						disabled={isSyncing}
-						onclick={() => void demo.triggerSyncAndPoll()}
-						class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white"
-					>
-						{isSyncing ? 'Syncing...' : 'Sync Now'}
-					</button>
-					<button
-						type="button"
-						onclick={() => (simplefinModalOpen = true)}
-						class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
-					>
-						{demo.simplefin.connected && !demo.isDemo ? 'Manage / Link Accounts' : 'Connect SimpleFIN'}
-					</button>
+					{#if workspace.canEdit}
+						<button
+							type="button"
+							disabled={isSyncing}
+							onclick={() => void demo.triggerSyncAndPoll()}
+							class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white"
+						>
+							{isSyncing ? 'Syncing...' : 'Sync Now'}
+						</button>
+					{/if}
+					{#if workspace.isOwner}
+						<button
+							type="button"
+							onclick={() => (simplefinModalOpen = true)}
+							class="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200"
+						>
+							{demo.simplefin.connected && !demo.isDemo ? 'Manage / Link Accounts' : 'Connect SimpleFIN'}
+						</button>
 
-					{#if demo.simplefin.connected}
-						{#if confirmDisconnect}
-							<button
-								type="button"
-								disabled={disconnecting}
-								onclick={handleDisconnect}
-								class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white"
-							>
-								{disconnecting ? 'Disconnecting...' : 'Confirm Disconnect'}
-							</button>
-							<button
-								type="button"
-								onclick={() => (confirmDisconnect = false)}
-								class="px-3 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-							>
-								Cancel
-							</button>
-						{:else}
-							<button
-								type="button"
-								onclick={() => (confirmDisconnect = true)}
-								class="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
-							>
-								Disconnect
-							</button>
+						{#if demo.simplefin.connected}
+							{#if confirmDisconnect}
+								<button
+									type="button"
+									disabled={disconnecting}
+									onclick={handleDisconnect}
+									class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white"
+								>
+									{disconnecting ? 'Disconnecting...' : 'Confirm Disconnect'}
+								</button>
+								<button
+									type="button"
+									onclick={() => (confirmDisconnect = false)}
+									class="px-3 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+								>
+									Cancel
+								</button>
+							{:else}
+								<button
+									type="button"
+									onclick={() => (confirmDisconnect = true)}
+									class="px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+								>
+									Disconnect
+								</button>
+							{/if}
 						{/if}
+					{:else}
+						<span class="text-xs text-slate-500 dark:text-slate-400">
+							Only the workspace owner can configure bank connections.
+						</span>
 					{/if}
 				</div>
 			</section>
@@ -456,17 +484,20 @@
 							type="text"
 							bind:value={workspaceNameInput}
 							maxlength="255"
+							disabled={!workspace.isOwner}
 							required
-							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100"
+							class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs text-slate-900 dark:text-slate-100 disabled:opacity-60"
 						/>
 					</div>
-					<button
-						type="submit"
-						disabled={savingWorkspace || !workspaceNameInput.trim()}
-						class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 disabled:opacity-50"
-					>
-						{savingWorkspace ? 'Saving...' : 'Save Name'}
-					</button>
+					{#if workspace.isOwner}
+						<button
+							type="submit"
+							disabled={savingWorkspace || !workspaceNameInput.trim()}
+							class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 disabled:opacity-50"
+						>
+							{savingWorkspace ? 'Saving...' : 'Save Name'}
+						</button>
+					{/if}
 				</form>
 
 				{#if workspaceFeedback}
@@ -501,6 +532,9 @@
 					</div>
 				{/if}
 			</section>
+
+			<!-- Section 3b: Household Sharing -->
+			<HouseholdSection />
 
 			<!-- Section 4: Appearance -->
 			<section
